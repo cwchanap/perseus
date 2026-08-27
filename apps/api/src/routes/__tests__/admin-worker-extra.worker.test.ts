@@ -24,7 +24,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
 		originalImageExists: vi.fn().mockResolvedValue(false),
 		puzzleExists: vi.fn().mockResolvedValue(false),
-		listPuzzles: vi.fn()
+		listFamilies: vi.fn()
 	};
 });
 
@@ -62,7 +62,6 @@ const baseEnv = {
 function buildFormData(): FormData {
 	const formData = new FormData();
 	formData.append('name', 'Test Puzzle');
-	formData.append('pieceCount', '225');
 	const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 	formData.append('image', blob, 'test.png');
 	return formData;
@@ -84,7 +83,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 		// Send a request with Content-Type multipart/form-data but an invalid body
 		// that will cause formData() to throw a parse error
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: {
 				cookie: 'session=valid.token',
@@ -104,12 +103,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 	it('returns 400 when name is missing from form data (line 236)', async () => {
 		const formData = new FormData();
 		// No name field
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -124,12 +122,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 	it('returns 400 when name exceeds 255 chars (line 241)', async () => {
 		const formData = new FormData();
 		formData.append('name', 'A'.repeat(256)); // 256 chars > 255 limit
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -141,34 +138,15 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(body.message).toBe('Name must be at most 255 characters');
 	});
 
-	it('returns 400 when pieceCount is missing from form data (line 246)', async () => {
+	it('returns 400 when pieceCount is provided in form data', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		// No pieceCount field
-
-		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
-			method: 'POST',
-			headers: { cookie: 'session=valid.token' },
-			body: formData
-		});
-
-		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as any;
-		expect(body.message).toBe('Piece count is required');
-	});
-
-	it('returns 400 when pieceCount does not match the selected aspect ratio', async () => {
-		const formData = new FormData();
-		formData.append('name', 'Test Puzzle');
-		formData.append('aspectRatio', '4:3');
-		formData.append('pieceCount', '100');
+		formData.append('pieceCount', '49');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -177,17 +155,16 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as any;
-		expect(body.message).toContain('Invalid piece count');
+		expect(body.message).toMatch(/pieceCount/i);
 	});
 
 	it('returns 400 when no image is provided in form data (line 272)', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		// No image field
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -209,12 +186,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([largeBuf], { type: 'image/png' });
 		formData.append('image', blob, 'large.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -234,7 +210,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			PUZZLE_WORKFLOW: { create: vi.fn() }
 		};
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -271,7 +247,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			}
 		};
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -311,7 +287,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			}
 		};
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -344,7 +320,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			// No PUZZLE_WORKFLOW binding
 		};
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -376,7 +352,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			// No PUZZLE_WORKFLOW binding
 		};
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -406,7 +382,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			PUZZLE_WORKFLOW: { create: vi.fn() }
 		};
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -419,47 +395,5 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(body.error).toBe('internal_error');
 		expect(body.message).toBe('Failed to create puzzle metadata');
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
-	});
-
-	it('returns 400 when pieceCount exceeds MAX_PIECES (250)', async () => {
-		const formData = new FormData();
-		formData.append('name', 'Huge Puzzle');
-		formData.append('pieceCount', '300');
-		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
-		formData.append('image', blob, 'test.png');
-
-		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
-			method: 'POST',
-			headers: { cookie: 'session=valid.token' },
-			body: formData
-		});
-
-		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('bad_request');
-		expect(body.message).toContain('between 4 and 250');
-	});
-
-	it('returns 400 when pieceCount is below minimum (4)', async () => {
-		const formData = new FormData();
-		formData.append('name', 'Tiny Puzzle');
-		formData.append('pieceCount', '2');
-		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
-		formData.append('image', blob, 'test.png');
-
-		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request('http://localhost/puzzles', {
-			method: 'POST',
-			headers: { cookie: 'session=valid.token' },
-			body: formData
-		});
-
-		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('bad_request');
-		expect(body.message).toContain('between 4 and 250');
 	});
 });

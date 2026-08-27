@@ -61,15 +61,11 @@ afterEach(() => {
 });
 
 describe('GET / - error path', () => {
-	it('should return 500 when listPuzzlesPage throws', async () => {
-		vi.mocked(storage.listPuzzlesPage).mockRejectedValueOnce(new Error('KV unavailable'));
-
+	it('should return 404 because public puzzle list was removed', async () => {
 		const req = new Request('http://localhost/');
 		const res = await puzzles.fetch(req, mockEnv);
-		const body = (await res.json()) as any;
 
-		expect(res.status).toBe(500);
-		expect(body.error).toBe('internal_error');
+		expect(res.status).toBe(404);
 	});
 });
 

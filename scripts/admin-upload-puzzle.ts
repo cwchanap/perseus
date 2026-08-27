@@ -16,30 +16,24 @@ import {
 	type AccessCredentials
 } from './startup/types';
 
-// This CLI targets local dev by default (ad-hoc single uploads). The bulk
-// uploader (admin:startup:*) defaults to production via DEFAULT_SERVER, but
-// here a localhost default matches the usage text and the runbook (§11 Local API).
-// PERSEUS_SERVER (arg or dotenv) still overrides.
 const LOCAL_SERVER = 'http://127.0.0.1:4690';
 
 interface Options extends AccessCredentials {
 	server: string;
 	imagePath: string;
 	name: string;
-	pieceCount: number;
 	aspectRatio?: string;
 	category?: string;
 }
 
 function usage(exitCode = 1): never {
 	console.error(`Usage:
-  bun run admin:upload -- --image ./puzzle.jpg --name "Puzzle Name" --pieces 48 --aspect 3:4
+  bun run admin:upload -- --image ./puzzle.jpg --name "Puzzle Name" --aspect 1:1
 
 Options:
   --server <url>              API server base URL (default: http://127.0.0.1:4690)
   --image <path>              Image file to upload
-  --name <value>              Puzzle name
-  --pieces <count>            Piece count
+  --name <value>              Puzzle family name
   --aspect <ratio>            Optional aspect ratio: 1:1, 4:3, or 3:4
   --category <name>           Optional category
   --cf-access-token <jwt>     Access JWT (or set CF_ACCESS_TOKEN)
@@ -74,10 +68,7 @@ async function parseOptions(): Promise<Options> {
 
 	const imagePath = readArg(args, '--image');
 	const name = readArg(args, '--name');
-	const pieceCountRaw = readArg(args, '--pieces');
 
-	// Load the same dotenv map (apps/api/.env) used by the bulk uploader so
-	// credentials kept there are available without exporting them to the shell.
 	const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 	const dotenv = await loadDotEnvMap(root);
 	applyDotenvOverrides(dotenv);
@@ -101,19 +92,12 @@ async function parseOptions(): Promise<Options> {
 	}
 	const skipAccess = wantSkipAccess || isLocalServer(server);
 
-	if (!imagePath || !name || !pieceCountRaw) usage();
-
-	const pieceCount = Number.parseInt(pieceCountRaw, 10);
-	if (!Number.isInteger(pieceCount) || String(pieceCount) !== pieceCountRaw) {
-		console.error('--pieces must be a base-10 integer');
-		process.exit(1);
-	}
+	if (!imagePath || !name) usage();
 
 	return {
 		server,
 		imagePath,
 		name,
-		pieceCount,
 		aspectRatio,
 		category,
 		cfAccessToken,
@@ -140,8 +124,6 @@ async function resolveAndProbeAccess(options: Options): Promise<void> {
 
 	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
 
-	// Skip JWT resolution when service tokens are available (same logic as
-	// the bulk uploader — service tokens are the recommended automation path).
 	if (!hasServiceToken) {
 		options.cfAccessToken = await resolveAccessToken({
 			explicit: options.cfAccessToken,
@@ -205,12 +187,11 @@ async function main() {
 
 	const formData = new FormData();
 	formData.append('name', options.name);
-	formData.append('pieceCount', String(options.pieceCount));
 	if (options.aspectRatio) formData.append('aspectRatio', options.aspectRatio);
 	if (options.category) formData.append('category', options.category);
 	formData.append('image', image, basename(options.imagePath));
 
-	const uploadResponse = await fetch(`${options.server}/api/admin/puzzles`, {
+	const uploadResponse = await fetch(`${options.server}/api/admin/puzzle-families`, {
 		method: 'POST',
 		headers: baseHeaders,
 		body: formData,

@@ -37,7 +37,8 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getAuthoritativeStatus: vi.fn(),
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
-		listPuzzles: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
 		originalImageExists: vi.fn().mockResolvedValue(false),
 		puzzleExists: vi.fn().mockResolvedValue(false),
 		releaseIdempotencyKey: vi.fn(),
@@ -100,7 +101,6 @@ const baseEnv = {
 function buildFormData(): FormData {
 	const formData = new FormData();
 	formData.append('name', 'Test Puzzle');
-	formData.append('pieceCount', '225');
 	const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 	formData.append('image', blob, 'test.png');
 	return formData;
@@ -113,7 +113,7 @@ function createRequest(idempotencyKey?: string): Request {
 	if (idempotencyKey) {
 		headers['Idempotency-Key'] = idempotencyKey;
 	}
-	return new Request('http://localhost/puzzles', {
+	return new Request('http://localhost/puzzle-families', {
 		method: 'POST',
 		headers,
 		body: buildFormData()
@@ -899,7 +899,7 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		});
 		vi.mocked(storage.releaseIdempotencyKey).mockRejectedValue(new Error('DO unavailable'));
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});

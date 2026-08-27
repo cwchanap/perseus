@@ -29,7 +29,8 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
 		originalImageExists: vi.fn().mockResolvedValue(false),
 		puzzleExists: vi.fn().mockResolvedValue(false),
-		listPuzzles: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
 		reserveIdempotencyKey: vi.fn(),
 		commitIdempotencyKey: vi.fn(),
 		failIdempotencyKey: vi.fn(),
@@ -321,7 +322,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 		vi.clearAllMocks();
 	});
 
-	describe('DELETE /puzzles/:id', () => {
+	describe('DELETE /puzzle-family-delete/:familyId', () => {
 		it('should return 500 when some assets fail to delete', async () => {
 			const familyId = DELETE_FAMILY_ID;
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -338,7 +339,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				PUZZLES_BUCKET: {} as R2Bucket
 			};
 
-			const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+			const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 				method: 'POST',
 				headers: { cookie: 'session=valid.token' }
 			});
@@ -378,8 +379,8 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 		vi.clearAllMocks();
 	});
 
-	describe('POST /puzzles', () => {
-		it('should reject pieceCount with trailing characters', async () => {
+	describe('POST /puzzle-families', () => {
+		it('should reject pieceCount in the form', async () => {
 			const mockEnv = {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
@@ -391,11 +392,11 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225abc');
+			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token'
@@ -408,7 +409,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			expect(res.status).toBe(400);
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('bad_request');
-			expect(body.message).toContain('Invalid piece count');
+			expect(body.message).toMatch(/pieceCount/i);
 		});
 
 		it('should accept a portrait aspect ratio and store matching grid metadata', async () => {
@@ -426,12 +427,11 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Portrait Puzzle');
-			formData.append('pieceCount', '48');
 			formData.append('aspectRatio', '3:4');
 			const blob = new Blob([PNG_3X4], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token'
@@ -477,13 +477,12 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			};
 			const formData = new FormData();
 			formData.append('name', 'Tombstoned Puzzle');
-			formData.append('pieceCount', '48');
 			formData.append('aspectRatio', '3:4');
 			formData.append('image', new Blob([PNG_3X4], { type: 'image/png' }), 'test.png');
 
 			try {
 				const res = await admin.fetch(
-					new Request('http://localhost/puzzles', {
+					new Request('http://localhost/puzzle-families', {
 						method: 'POST',
 						headers: { cookie: 'session=valid.token' },
 						body: formData
@@ -539,11 +538,10 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			// Create form data
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token'
@@ -596,11 +594,10 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token'
@@ -640,7 +637,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 		vi.clearAllMocks();
 	});
 
-	describe('POST /puzzles', () => {
+	describe('POST /puzzle-families', () => {
 		it('should reject file with spoofed MIME type but invalid magic bytes', async () => {
 			const mockEnv = {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -653,12 +650,11 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			// File claims to be PNG but has invalid magic bytes
 			const blob = new Blob(['fake image data'], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token'
@@ -693,11 +689,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			]);
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([jpegHeader], { type: 'image/jpeg' });
 			formData.append('image', blob, 'test.jpg');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token'
@@ -743,11 +738,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -776,11 +770,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -818,11 +811,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -887,11 +879,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -961,11 +952,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1026,11 +1016,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1072,11 +1061,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1139,11 +1127,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1197,11 +1184,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1251,11 +1237,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1317,11 +1302,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1424,11 +1408,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1518,11 +1501,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1576,11 +1558,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
-			formData.append('pieceCount', '225');
 			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
-			const req = new Request('http://localhost/puzzles', {
+			const req = new Request('http://localhost/puzzle-families', {
 				method: 'POST',
 				headers: {
 					cookie: 'session=valid.token',
@@ -1636,11 +1617,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const formData = new FormData();
 			formData.append('name', 'Losing Puzzle');
-			formData.append('pieceCount', '225');
 			formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
 
 			const response = await admin.fetch(
-				new Request('http://localhost/puzzles', {
+				new Request('http://localhost/puzzle-families', {
 					method: 'POST',
 					headers: {
 						cookie: 'session=valid.token',
@@ -1690,7 +1670,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	}
 
 	it('should return 400 for invalid UUID', async () => {
-		const req = new Request('http://localhost/puzzle-delete/not-a-uuid', {
+		const req = new Request('http://localhost/puzzle-family-delete/not-a-uuid', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1714,7 +1694,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1734,7 +1714,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1757,7 +1737,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1779,7 +1759,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1801,7 +1781,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1850,7 +1830,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1880,7 +1860,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1910,7 +1890,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			PUZZLES_BUCKET: {} as R2Bucket
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1954,11 +1934,10 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -2011,11 +1990,10 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: {
 				cookie: 'session=valid.token',
@@ -2072,11 +2050,10 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: {
 				cookie: 'session=valid.token',
@@ -2103,7 +2080,7 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 	});
 });
 
-describe('Admin Routes - GET /puzzles', () => {
+describe('Admin Routes - GET /puzzle-families', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -2113,33 +2090,69 @@ describe('Admin Routes - GET /puzzles', () => {
 		PUZZLE_METADATA: {} as KVNamespace
 	};
 
-	it('returns the full puzzle list without an application session cookie', async () => {
-		const mockPuzzleList = [
-			{ id: '550e8400-e29b-41d4-a716-446655440000', name: 'Test', pieceCount: 4, status: 'ready' }
-		];
-		(storage.listPuzzles as ReturnType<typeof vi.fn>).mockResolvedValue({
-			puzzles: mockPuzzleList
+	it('returns the full family list without an application session cookie', async () => {
+		const familyId = '550e8400-e29b-41d4-a716-446655440000';
+		const family = makeFamilyMetadata(familyId, 'ready');
+		const enriched = {
+			id: familyId,
+			name: 'Test',
+			aspectRatio: '1:1' as const,
+			status: 'ready' as const,
+			createdAt: family.createdAt,
+			variants: {
+				easy: {
+					id: family.variants.easy,
+					difficulty: 'easy' as const,
+					pieceCount: 16,
+					status: 'ready' as const
+				},
+				normal: {
+					id: family.variants.normal,
+					difficulty: 'normal' as const,
+					pieceCount: 49,
+					status: 'ready' as const
+				},
+				hard: {
+					id: family.variants.hard,
+					difficulty: 'hard' as const,
+					pieceCount: 100,
+					status: 'ready' as const
+				}
+			}
+		};
+		(storage.listFamilies as ReturnType<typeof vi.fn>).mockResolvedValue({
+			families: [
+				{
+					id: familyId,
+					name: 'Test',
+					status: 'ready',
+					createdAt: family.createdAt,
+					aspectRatio: '1:1'
+				}
+			]
 		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(family);
+		(storage.enrichFamilySummary as ReturnType<typeof vi.fn>).mockResolvedValue(enriched);
 
-		const req = new Request('http://localhost/puzzles');
+		const req = new Request('http://localhost/puzzle-families');
 
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		expect(body.puzzles).toEqual(mockPuzzleList);
+		expect(body.families).toEqual([enriched]);
 	});
 
-	it('should return 500 when listPuzzles throws', async () => {
-		(storage.listPuzzles as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
+	it('should return 500 when listFamilies throws', async () => {
+		(storage.listFamilies as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
 
-		const req = new Request('http://localhost/puzzles');
+		const req = new Request('http://localhost/puzzle-families');
 
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as { error: string; message: string };
-		expect(body).toEqual({ error: 'internal_error', message: 'Failed to list puzzles' });
+		expect(body).toEqual({ error: 'internal_error', message: 'Failed to list puzzle families' });
 	});
 });
 
@@ -2182,7 +2195,7 @@ describe('Admin Routes - Force Delete', () => {
 			}
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${forceFamilyId}?force=true`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${forceFamilyId}?force=true`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -2233,7 +2246,7 @@ describe('Admin Routes - Force Delete', () => {
 			}
 		};
 
-		const req = new Request(`http://localhost/puzzle-delete/${forceFamilyId}?force=true`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${forceFamilyId}?force=true`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -2277,12 +2290,11 @@ describe('Admin Routes - Category Validation', () => {
 	it('should return 400 for an invalid category', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		formData.append('category', 'InvalidCategory');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -2302,12 +2314,11 @@ describe('Admin Routes - Category Validation', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Nature Puzzle');
-		formData.append('pieceCount', '225');
 		formData.append('category', 'Nature');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData

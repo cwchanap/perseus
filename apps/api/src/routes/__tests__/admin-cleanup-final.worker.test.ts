@@ -16,7 +16,8 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		failIdempotencyKey: vi.fn(),
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
-		listPuzzles: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
 		originalImageExists: vi.fn(),
 		puzzleExists: vi.fn(),
 		releaseIdempotencyKey: vi.fn(),
@@ -79,9 +80,8 @@ function createEnv() {
 function createRequest(idempotencyKey: string): Request {
 	const formData = new FormData();
 	formData.append('name', 'Cleanup Puzzle');
-	formData.append('pieceCount', '225');
 	formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'puzzle.png');
-	return new Request('http://localhost/puzzles', {
+	return new Request('http://localhost/puzzle-families', {
 		method: 'POST',
 		headers: {
 			cookie: 'session=valid.token',

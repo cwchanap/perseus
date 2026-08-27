@@ -46,7 +46,8 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 			.mockResolvedValue({ success: true }),
 		originalImageExists: vi.fn().mockResolvedValue(false),
 		puzzleExists: vi.fn().mockResolvedValue(false),
-		listPuzzles: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
 		deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
 		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
 		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
@@ -92,7 +93,6 @@ const baseEnv = {
 function buildFormData(): FormData {
 	const formData = new FormData();
 	formData.append('name', 'Coverage Puzzle');
-	formData.append('pieceCount', '225');
 	const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 	formData.append('image', blob, 'test.png');
 	return formData;
@@ -124,7 +124,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			...baseEnv,
 			PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) }
 		};
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -142,7 +142,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		// attempts to clean up the ownership row just inserted.
 		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down') as any);
 		const mockEnv = { ...baseEnv };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -165,7 +165,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			return {} as any;
 		});
 		const mockEnv = { ...baseEnv };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -191,7 +191,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 				)
 			}
 		};
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -222,7 +222,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 				)
 			}
 		};
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -247,7 +247,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		} as any);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${VALID_UUID}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -275,7 +275,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${VALID_UUID}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});

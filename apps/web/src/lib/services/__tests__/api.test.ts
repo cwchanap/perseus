@@ -63,10 +63,13 @@ describe('API Service - deletePuzzle', () => {
 			warning: 'Puzzle metadata deleted but some assets failed to delete',
 			failedAssets: ['puzzles/abc/pieces/0.png']
 		});
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzle-delete\/abc$/), {
-			method: 'POST',
-			credentials: 'include'
-		});
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/admin\/puzzle-family-delete\/abc$/),
+			{
+				method: 'POST',
+				credentials: 'include'
+			}
+		);
 	});
 
 	it('returns null for 204 responses', async () => {
@@ -82,10 +85,13 @@ describe('API Service - deletePuzzle', () => {
 		const result = await deletePuzzle('abc');
 
 		expect(result).toBeNull();
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzle-delete\/abc$/), {
-			method: 'POST',
-			credentials: 'include'
-		});
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/admin\/puzzle-family-delete\/abc$/),
+			{
+				method: 'POST',
+				credentials: 'include'
+			}
+		);
 	});
 });
 
@@ -336,7 +342,7 @@ describe('API Service - createPuzzle', () => {
 
 		const image = new File(['data'], 'test.png', { type: 'image/png' });
 		const category: PuzzleCategory = 'Animals';
-		await createPuzzle('Test Puzzle', 25, image, category);
+		await createPuzzle('Test Puzzle', image, category);
 
 		expect(capturedBody).toBeInstanceOf(FormData);
 		expect(capturedBody!.get('category')).toBe('Animals');
@@ -358,7 +364,7 @@ describe('API Service - createPuzzle', () => {
 		);
 
 		const image = new File(['data'], 'test.png', { type: 'image/png' });
-		await createPuzzle('Test Puzzle', 25, image, undefined);
+		await createPuzzle('Test Puzzle', image, undefined);
 
 		expect(capturedBody).toBeInstanceOf(FormData);
 		expect(capturedBody!.get('category')).toBeNull();
@@ -380,7 +386,7 @@ describe('API Service - createPuzzle', () => {
 		);
 
 		const image = new File(['data'], 'test.png', { type: 'image/png' });
-		await createPuzzle('Test Puzzle', 48, image, undefined, '3:4');
+		await createPuzzle('Test Puzzle', image, undefined, '3:4');
 
 		expect(capturedBody).toBeInstanceOf(FormData);
 		expect(capturedBody!.get('aspectRatio')).toBe('3:4');
@@ -655,15 +661,15 @@ describe('API Service - player allowlist', () => {
 // ─── fetchAdminPuzzles ───────────────────────────────────────────────────────
 
 describe('API Service - fetchAdminPuzzles', () => {
-	it('returns list of puzzles including non-ready ones', async () => {
-		const mockPuzzles = [
-			{ id: 'p1', name: 'Puzzle 1', pieceCount: 25, status: 'ready' },
-			{ id: 'p2', name: 'Puzzle 2', pieceCount: 9, status: 'processing' }
+	it('returns list of puzzle families including non-ready ones', async () => {
+		const mockFamilies = [
+			{ id: 'f1', name: 'Family 1', aspectRatio: '1:1', status: 'ready', variants: [] },
+			{ id: 'f2', name: 'Family 2', aspectRatio: '1:1', status: 'processing', variants: [] }
 		];
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: mockPuzzles }), {
+				new Response(JSON.stringify({ families: mockFamilies }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				})
@@ -671,9 +677,9 @@ describe('API Service - fetchAdminPuzzles', () => {
 		);
 
 		const result = await fetchAdminPuzzles();
-		expect(result).toEqual(mockPuzzles);
+		expect(result).toEqual(mockFamilies);
 		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/admin\/puzzles$/),
+			expect.stringMatching(/\/api\/admin\/puzzle-families$/),
 			expect.objectContaining({ credentials: 'include' })
 		);
 	});
@@ -699,7 +705,7 @@ describe('API Service - deletePuzzle with force option', () => {
 		);
 
 		await deletePuzzle('abc', { force: true });
-		expect(capturedUrl).toMatch(/\/api\/admin\/puzzle-delete\/abc\?force=true$/);
+		expect(capturedUrl).toMatch(/\/api\/admin\/puzzle-family-delete\/abc\?force=true$/);
 	});
 
 	it('does not append ?force=true when force option is false', async () => {

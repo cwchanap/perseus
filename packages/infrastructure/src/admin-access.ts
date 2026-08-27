@@ -18,16 +18,16 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  *   /eng/exec wins, and NO rule is inherited from /eng.
  *
  * PATH SCOPING (resolved): CLI_ACCESS_PATHS includes the exact path
- * '/api/admin/puzzles' (for POST = create + GET = list). The per-id delete
- * route lives at POST /api/admin/puzzle-delete/:id — a SIBLING of (not a
- * sub-path of) '/api/admin/puzzles' — so it does NOT inherit the CLI app's
+ * '/api/admin/puzzle-families' (for POST = create + GET = list). The per-id delete
+ * route lives at POST /api/admin/puzzle-family-delete/:familyId — a SIBLING of (not a
+ * sub-path of) '/api/admin/puzzle-families' — so it does NOT inherit the CLI app's
  * policies. It inherits only the broad admin app's email+posture policy,
  * which has no Service Auth policy, so a service-token holder cannot reach the
  * delete endpoint. Cloudflare Access is path-based, not method-based, which is
  * why the delete route was moved off the inherited sub-path rather than scoped
  * by HTTP method.
  */
-export const CLI_ACCESS_PATHS = ['/api/admin/puzzles'] as const;
+export const CLI_ACCESS_PATHS = ['/api/admin/puzzle-families'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 /** Default lifetime for the non-interactive CLI service token (90 days). */
 export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h';
@@ -288,7 +288,7 @@ export function buildCliAccessApplicationArgs(
 		accountId: args.accountId,
 		name: CLI_ACCESS_APPLICATION_NAME,
 		type: 'self_hosted',
-		domain: `${hostname}/api/admin/puzzles`,
+		domain: `${hostname}/api/admin/puzzle-families`,
 		destinations: buildCliAccessDestinations(hostname),
 		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 		...ADMIN_ACCESS_APP_FLAGS,

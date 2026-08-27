@@ -27,7 +27,8 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
 		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
 		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
-		listPuzzles: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
 		originalImageExists: vi.fn().mockResolvedValue(false),
 		puzzleExists: vi.fn().mockResolvedValue(false),
 		releaseIdempotencyKey: vi.fn(),
@@ -89,7 +90,7 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${VALID_UUID}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -136,7 +137,7 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${VALID_UUID}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});

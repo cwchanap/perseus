@@ -5,15 +5,12 @@ import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
 	MAX_FILE_SIZE,
 	MAX_IMAGE_DIMENSION,
-	MAX_PIECES,
 	PUZZLE_CATEGORIES,
 	ALLOWED_MIME_TYPES,
 	ErrorCode,
 	aspectRatiosMatch,
-	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
 	isPuzzleId,
-	isValidPieceCountForAspectRatio,
 	stripIdempotencyKey,
 	PUZZLE_DIFFICULTIES
 } from '@perseus/types';
@@ -33,7 +30,8 @@ import {
 	originalImageExists,
 	getFamily,
 	getPuzzle,
-	listPuzzles,
+	listFamilies,
+	enrichFamilySummary,
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	writeCleanupRecord,
@@ -746,14 +744,23 @@ admin.delete('/player-allowlist/:email', async (c) => {
 	}
 });
 
-// GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)
-admin.get('/puzzles', async (c) => {
+// GET /api/admin/puzzle-families - List all families for admin (includes processing/failed)
+admin.get('/puzzle-families', async (c) => {
 	try {
-		const { puzzles } = await listPuzzles(c.env.PUZZLE_METADATA);
-		return c.json({ puzzles });
+		const { families: summaries } = await listFamilies(c.env.PUZZLE_METADATA);
+		const families = (
+			await Promise.all(
+				summaries.map(async (summary) => {
+					const family = await getFamily(c.env.PUZZLE_METADATA, summary.id);
+					if (!family) return null;
+					return enrichFamilySummary(c.env.PUZZLE_METADATA, family);
+				})
+			)
+		).filter((family) => family !== null);
+		return c.json({ families });
 	} catch (error) {
-		console.error('Failed to list puzzles for admin', error);
-		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+		console.error('Failed to list puzzle families for admin', error);
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzle families' }, 500);
 	}
 });
 
@@ -794,8 +801,8 @@ function jitteredDelay(baseMs: number): number {
 	return baseMs * (0.8 + Math.random() * 0.4);
 }
 
-// POST /api/admin/puzzles - Create new puzzle
-admin.post('/puzzles', async (c) => {
+// POST /api/admin/puzzle-families - Create new puzzle family (Easy/Normal/Hard variants)
+admin.post('/puzzle-families', async (c) => {
 	let id = '';
 	let reservedIdempotencyKey: string | undefined;
 	// Set to true after PUZZLE_WORKFLOW.create() succeeds. The outer catch
@@ -846,9 +853,18 @@ admin.post('/puzzles', async (c) => {
 			return c.json({ error: 'bad_request', message: 'Invalid form data' }, 400);
 		}
 		const name = formData.get('name');
-		const pieceCountStr = formData.get('pieceCount');
 		const aspectRatioStr = formData.get('aspectRatio');
 		const image = formData.get('image') as File | string | null;
+
+		if (formData.get('pieceCount') !== null) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: 'pieceCount is not accepted; families generate Easy, Normal, and Hard variants'
+				},
+				400
+			);
+		}
 
 		// Validate name
 		if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -860,11 +876,6 @@ admin.post('/puzzles', async (c) => {
 			return c.json({ error: 'bad_request', message: 'Name must be at most 255 characters' }, 400);
 		}
 
-		// Validate piece count for the selected fixed aspect ratio.
-		if (!pieceCountStr) {
-			return c.json({ error: 'bad_request', message: 'Piece count is required' }, 400);
-		}
-
 		const aspectRatio =
 			typeof aspectRatioStr === 'string' && aspectRatioStr.trim().length > 0
 				? aspectRatioStr.trim()
@@ -874,37 +885,6 @@ admin.post('/puzzles', async (c) => {
 				{
 					error: 'bad_request',
 					message: 'Invalid aspect ratio. Allowed: 1:1, 4:3, 3:4'
-				},
-				400
-			);
-		}
-
-		const pieceCount = Number(pieceCountStr.toString());
-		if (!Number.isFinite(pieceCount) || !Number.isInteger(pieceCount)) {
-			return c.json(
-				{
-					error: 'bad_request',
-					message: `Invalid piece count for ${aspectRatio}`
-				},
-				400
-			);
-		}
-
-		if (pieceCount < 4 || pieceCount > MAX_PIECES) {
-			return c.json(
-				{
-					error: 'bad_request',
-					message: `Piece count must be between 4 and ${MAX_PIECES}`
-				},
-				400
-			);
-		}
-
-		if (!isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
-			return c.json(
-				{
-					error: 'bad_request',
-					message: `Invalid piece count for ${aspectRatio}`
 				},
 				400
 			);
@@ -1006,8 +986,7 @@ admin.post('/puzzles', async (c) => {
 			// never decodes or interprets the value, only reserves/commits it
 			// as a dedup identifier. This is intentionally asymmetric with the
 			// seed-upload CLI (scripts/startup/upload.ts), which builds a
-			// composite dedup key from name+pieceCount+aspectRatio joined by
-			// NUL bytes (invalid in HTTP headers) and SHA-256 hashes it to a
+			// composite dedup key from name+aspectRatio joined by NUL bytes
 			// hex string before sending. The hash is a client-side convenience
 			// for generating a collision-resistant, header-safe token from
 			// structured inputs; the server's regex only ensures the token is
@@ -1772,7 +1751,7 @@ admin.post('/puzzles', async (c) => {
 			reservedIdempotencyKey = undefined;
 		}
 
-		return c.json(familyMetadata, 201);
+		return c.json(stripIdempotencyKey(familyMetadata), 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
 		// If the workflow already started, FAIL (not release) the reservation.
@@ -1791,14 +1770,14 @@ admin.post('/puzzles', async (c) => {
 	}
 });
 
-// POST /api/admin/puzzle-delete/:id - Delete puzzle
-// Moved off the /api/admin/puzzles sub-path so the narrow CLI Access app's
-// exact path '/api/admin/puzzles' no longer inherits to the delete route.
-// '/api/admin/puzzle-delete/:id' is a sibling path that inherits the broad
+// POST /api/admin/puzzle-family-delete/:familyId - Delete puzzle family
+// Moved off the /api/admin/puzzle-families sub-path so the narrow CLI Access app's
+// exact path '/api/admin/puzzle-families' no longer inherits to the delete route.
+// '/api/admin/puzzle-family-delete/:familyId' is a sibling path that inherits the broad
 // admin app's email+posture policy only (no service token), so a service-token
 // holder cannot reach the delete endpoint at the Access gate.
-admin.post('/puzzle-delete/:id', async (c) => {
-	const id = c.req.param('id');
+admin.post('/puzzle-family-delete/:familyId', async (c) => {
+	const id = c.req.param('familyId');
 	const force = c.req.query('force') === 'true';
 
 	// Validate UUID format (shared with the completion route via @perseus/types)

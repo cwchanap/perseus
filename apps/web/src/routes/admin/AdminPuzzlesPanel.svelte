@@ -8,12 +8,13 @@
 		ApiError,
 		deletePuzzle,
 		fetchAdminPuzzles,
-		getReferenceImageUrl,
-		getThumbnailUrl
+		getFamilyThumbnailUrl,
+		getReferenceImageUrl
 	} from '$lib/services/api';
 	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
-	import type { PuzzleStatus, PuzzleSummary } from '$lib/types/puzzle';
-	import { filterAdminPuzzles, pageSlice } from './adminPuzzleList';
+	import type { PuzzleStatus } from '$lib/types/puzzle';
+	import type { PuzzleFamilySummary } from '@perseus/types';
+	import { filterAdminPuzzles, formatFamilyPieceCounts, pageSlice } from './adminPuzzleList';
 
 	// Reuses the session persistence adapter so the localStorage key prefix
 	// (puzzle-progress-) stays encapsulated in one place. Admin only needs the
@@ -21,7 +22,7 @@
 	const sessionStorageAdapter = createSessionStorageAdapter();
 	const PAGE_SIZE = 20;
 
-	let puzzles: PuzzleSummary[] = $state([]);
+	let puzzles: PuzzleFamilySummary[] = $state([]);
 	let loadingPuzzles = $state(true);
 	let puzzlesError: string | null = $state(null);
 	let puzzlesFetchInFlight = $state(false);
@@ -34,7 +35,7 @@
 	let categoryFilter = $state<'all' | PuzzleCategory>('all');
 	let statusFilter = $state<'all' | PuzzleStatus>('all');
 	let pageIndex = $state(0);
-	let previewPuzzle: PuzzleSummary | null = $state(null);
+	let previewFamily: PuzzleFamilySummary | null = $state(null);
 	const hasActiveCriteria = $derived(
 		searchQuery.trim().length > 0 || categoryFilter !== 'all' || statusFilter !== 'all'
 	);
@@ -99,7 +100,7 @@
 		}
 	}
 
-	async function loadPuzzles(silent = false): Promise<PuzzleSummary[]> {
+	async function loadPuzzles(silent = false): Promise<PuzzleFamilySummary[]> {
 		if (!silent) {
 			loadingPuzzles = true;
 			puzzlesError = null;
@@ -121,16 +122,21 @@
 		}
 	}
 
-	async function handleDelete(puzzleId: string, isProcessing: boolean = false) {
+	async function handleDelete(familyId: string, isProcessing: boolean = false) {
 		const confirmMessage = isProcessing
-			? 'This puzzle is still processing. Force delete may leave orphaned assets. Continue?'
-			: 'Are you sure you want to delete this puzzle?';
+			? 'This puzzle family is still processing. Force delete may leave orphaned assets. Continue?'
+			: 'Are you sure you want to delete this puzzle family?';
 		if (!confirm(confirmMessage)) return;
 
-		deletingId = puzzleId;
+		deletingId = familyId;
 		try {
-			const deleteResult = await deletePuzzle(puzzleId, { force: isProcessing });
-			sessionStorageAdapter.clearSession(puzzleId);
+			const deleteResult = await deletePuzzle(familyId, { force: isProcessing });
+			const family = puzzles.find((entry) => entry.id === familyId);
+			if (family) {
+				for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+					sessionStorageAdapter.clearSession(family.variants[difficulty].id);
+				}
+			}
 			if (deleteResult && 'partialSuccess' in deleteResult && deleteResult.partialSuccess) {
 				showSuccess(deleteResult.warning);
 			}
@@ -151,11 +157,11 @@
 	}
 
 	function dismissPreview() {
-		previewPuzzle = null;
+		previewFamily = null;
 	}
 
 	function handlePreviewKeyDown(event: KeyboardEvent) {
-		if (event.key !== 'Escape' || previewPuzzle === null) return;
+		if (event.key !== 'Escape' || previewFamily === null) return;
 		event.preventDefault();
 		dismissPreview();
 	}
@@ -164,8 +170,8 @@
 <svelte:window onkeydown={handlePreviewKeyDown} />
 
 <ReferenceOverlay
-	imageUrl={previewPuzzle ? getReferenceImageUrl(previewPuzzle.id) : null}
-	active={previewPuzzle !== null}
+	imageUrl={previewFamily ? getReferenceImageUrl(previewFamily.variants.easy.id) : null}
+	active={previewFamily !== null}
 	dismissible
 	onDismiss={dismissPreview}
 />
@@ -312,12 +318,12 @@ bg-(--bg-2)"
 							<button
 								type="button"
 								aria-label={`View full image for ${puzzle.name}`}
-								onclick={() => (previewPuzzle = puzzle)}
+								onclick={() => (previewFamily = puzzle)}
 								class="h-12 w-12 shrink-0 cursor-zoom-in focus-visible:outline-2
 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
 							>
 								<img
-									src={getThumbnailUrl(puzzle.id)}
+									src={getFamilyThumbnailUrl(puzzle.id)}
 									alt={puzzle.name}
 									class="h-full w-full object-cover"
 								/>
@@ -358,12 +364,7 @@ tracking-[0.15em] text-(--green)"
 								{/if}
 							</div>
 							<span class="text-[0.65rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-								{puzzle.pieceCount} pieces
-								{#if puzzle.status === 'processing' && puzzle.progress}
-									<span class="text-(--accent)">
-										({puzzle.progress.generatedPieces}/{puzzle.progress.totalPieces})
-									</span>
-								{/if}
+								Easy / Normal / Hard: {formatFamilyPieceCounts(puzzle)} pieces
 							</span>
 						</div>
 					</div>
@@ -375,7 +376,7 @@ tracking-[0.15em] text-(--green)"
 text-[0.55rem] font-(--font-display) font-semibold tracking-[0.15em]
 text-(--hot) transition-all duration-150 hover:border-(--hot)
 hover:bg-(--hot-glow) disabled:cursor-not-allowed disabled:opacity-40"
-						title={puzzle.status === 'processing' ? 'Force delete stuck puzzle' : 'Delete puzzle'}
+						title={puzzle.status === 'processing' ? 'Force delete stuck family' : 'Delete family'}
 					>
 						{#if deletingId === puzzle.id}
 							...
