@@ -164,6 +164,36 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
+	it('returns 409 when committing the alive pending reservation fails', async () => {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: true,
+			familyId: 'existing-puzzle',
+			status: 'pending'
+		});
+		vi.mocked(storage.getFamily).mockResolvedValue({
+			id: 'existing-puzzle',
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			status: 'processing',
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
+		} as any);
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValueOnce(new Error('DO write failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const workflow = createWorkflow('running');
+
+		const response = await admin.fetch(createRequest('alive-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = (await response.json()) as any;
+		expect(body.message).toBe('Idempotency-Key in flight; reservation commit failed, retry');
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
 	it('returns 500 after all post-create idempotency commit retries fail transiently', async () => {
 		vi.useFakeTimers();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
@@ -191,6 +221,35 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(workflow.get).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns 500 from orphan cleanup when a commit conflict winner has no family metadata', async () => {
+		vi.useFakeTimers();
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			familyId: 'new-puzzle',
+			status: 'pending'
+		});
+		// Conflict-shaped failure: the reservation was reclaimed by a retry,
+		// so the route attempts orphaned-workflow cleanup. The family KV row
+		// is missing (already reaped), so cleanup aborts with 500.
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(
+			new Error('Idempotency key owned by another puzzle')
+		);
+		vi.mocked(storage.getFamily).mockResolvedValue(null);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const workflow = createWorkflow();
+
+		const responsePromise = admin.fetch(createRequest('conflict-key'), createEnv(workflow) as any);
+		await vi.runAllTimersAsync();
+		const response = await responsePromise;
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as any;
+		expect(body.message).toContain(
+			'Idempotency reservation was reclaimed by a retry; family metadata missing'
+		);
+		expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 	});
 
 	it('fails (not releases) the reservation when an error reaches the outer catch after workflow.create() succeeds', async () => {

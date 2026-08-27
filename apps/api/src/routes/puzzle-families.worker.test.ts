@@ -171,7 +171,8 @@ describe('Puzzle Family Routes', () => {
 			{ query: 'offset=-5', offset: 0, limit: 20 },
 			{ query: 'limit=abc', offset: 0, limit: 20 },
 			{ query: 'limit=0', offset: 0, limit: 20 },
-			{ query: 'limit=999', offset: 0, limit: 20 }
+			{ query: 'limit=999', offset: 0, limit: 20 },
+			{ query: 'offset=3&limit=5', offset: 3, limit: 5 }
 		])(
 			'falls back to defaults for invalid pagination query $query',
 			async ({ query, offset, limit }) => {
@@ -570,6 +571,40 @@ describe('Puzzle Family Routes', () => {
 			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(3);
 			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 			expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
+		});
+
+		it('logs cleanup failures when metadata-creation rollback itself fails', async () => {
+			mockSignedInSession();
+			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+			vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
+			vi.mocked(storage.createPuzzleMetadata).mockRejectedValue(new Error('KV unavailable'));
+			vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({
+				success: false,
+				error: new Error('family KV delete failed')
+			});
+			vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
+			vi.mocked(storage.deleteOriginalImage).mockResolvedValue({
+				success: false,
+				error: new Error('R2 delete failed')
+			});
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const res = await puzzleFamilies.fetch(signedInPostRequest(familyForm()), mockEnv as any);
+
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: 'internal_error',
+				message: 'Failed to create puzzle metadata'
+			});
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup puzzle family metadata after metadata creation failure:',
+				expect.any(Error)
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup original image after metadata creation failure:',
+				expect.any(Error)
+			);
+			consoleSpy.mockRestore();
 		});
 
 		it('creates a family with three variant UUIDs and no pieceCount', async () => {

@@ -680,6 +680,105 @@ describe('player avatar route (Worker)', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('logs when the losing versioned object delete fails after a prior token', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		profileStore.set('p1', {
+			displayName: null,
+			avatarUrl: '/api/player/p1/avatar',
+			avatarUpdateToken: 'prior-token'
+		});
+		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
+			async (_db, playerId, avatarUrl, updatedAt) => {
+				profileStore.set(playerId, {
+					displayName: null,
+					avatarUrl,
+					updatedAt,
+					avatarUpdateToken: 'winning-token'
+				});
+			}
+		);
+		vi.mocked(bucket.delete).mockRejectedValueOnce(new Error('R2 delete down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const form = new FormData();
+		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to delete losing R2 object:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('logs when the losing versioned object delete fails from no prior token', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
+			async (_db, playerId, avatarUrl, updatedAt) => {
+				profileStore.set(playerId, {
+					displayName: null,
+					avatarUrl,
+					updatedAt,
+					avatarUpdateToken: 'winning-token'
+				});
+			}
+		);
+		vi.mocked(bucket.delete).mockRejectedValueOnce(new Error('R2 delete down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const form = new FormData();
+		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to delete losing R2 object:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('logs when the no-prior-token cleanup re-read throws', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.getProfileOverride)
+			.mockResolvedValueOnce(null)
+			.mockRejectedValueOnce(new Error('D1 re-read down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const form = new FormData();
+		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(bucket.delete).not.toHaveBeenCalled();
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to re-read override for cleanup:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
 	it('GET avatar serves the stored image from R2', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;

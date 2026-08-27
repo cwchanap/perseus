@@ -378,6 +378,42 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			const { deletePuzzleFamilyOwnership } = await import('@perseus/shared');
 			expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		});
+
+		it('should return 500 before destructive work when the cleanup record cannot be persisted', async () => {
+			const familyId = DELETE_FAMILY_ID;
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+				makeFamilyMetadata(familyId, 'ready')
+			);
+			(storage.deleteFamilyCleanupAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true,
+				failedKeys: []
+			});
+			(storage.writeCleanupRecord as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('KV write failed')
+			);
+
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket
+			};
+
+			const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
+				method: 'POST',
+				headers: { cookie: 'session=valid.token' }
+			});
+
+			const res = await admin.fetch(req, mockEnv);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toContain('Failed to persist durable cleanup record');
+			// No destructive work may happen without the durable record.
+			expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+			expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
+			expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		});
 	});
 });
 
@@ -472,6 +508,94 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 					status: 'processing'
 				})
 			);
+		});
+
+		it('logs when family metadata rollback fails during a metadata creation failure', async () => {
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('variant KV write failed')
+			);
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+				success: false,
+				error: new Error('family KV delete failed')
+			});
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockResolvedValue(undefined)
+				}
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Portrait Puzzle');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([PNG_3X4], { type: 'image/png' }), 'test.png');
+
+			const req = new Request('http://localhost/puzzle-families', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: 'internal_error',
+				message: 'Failed to create puzzle metadata'
+			});
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup puzzle family metadata after metadata creation failure:',
+				expect.any(Error)
+			);
+			expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
+			consoleSpy.mockRestore();
+		});
+
+		it('logs and continues when the tombstone check itself fails', async () => {
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			dbContextMock.completionWrites.isPuzzleTombstoned.mockRejectedValueOnce(
+				new Error('D1 tombstone check failed')
+			);
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockResolvedValue(undefined)
+				}
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Tombstone Check Fails');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([PNG_3X4], { type: 'image/png' }), 'test.png');
+
+			const req = new Request('http://localhost/puzzle-families', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(201);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Tombstone check failed for puzzle'),
+				expect.any(Error)
+			);
+			consoleSpy.mockRestore();
 		});
 
 		it('rejects a tombstoned generated ID before publishing Worker data', async () => {
