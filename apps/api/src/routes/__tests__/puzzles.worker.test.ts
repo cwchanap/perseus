@@ -308,6 +308,34 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(body.error).toBe('not_found');
 		});
 
+		it('should return 404 when the reference image key is missing', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				familyId: '223e4567-e89b-42d3-a456-426614174000',
+				difficulty: 'easy',
+				name: 'Test',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
+			} as any);
+			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(null);
+
+			const req = new Request(`http://localhost/${validUuid}/reference`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(404);
+			expect(body.error).toBe('not_found');
+			expect(body.message).toBe('Reference image not found');
+		});
+
 		it('should return 404 when original image is missing', async () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
@@ -544,6 +572,21 @@ describe('Puzzle Routes - UUID Validation', () => {
 				expect(res.status).toBe(404);
 				expect(((await res.json()) as any).error).toBe('not_found');
 			}
+		});
+
+		it.each([
+			['thumbnail', `/${validUuid}/thumbnail`],
+			['reference', `/${validUuid}/reference`],
+			['piece image', `/${validUuid}/pieces/0/image`]
+		])('returns 500 for %s when family metadata is corrupt', async (_asset, path) => {
+			mockReadyVariant();
+			vi.mocked(storage.getFamily).mockRejectedValueOnce(new Error('Corrupt family metadata'));
+
+			const res = await puzzles.fetch(new Request(`http://localhost${path}`), mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(500);
+			expect(body.error).toBe('internal_error');
 		});
 
 		it('returns 500 when family metadata is corrupt', async () => {
