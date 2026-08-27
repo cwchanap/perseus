@@ -249,9 +249,10 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 	it('logs error when metadata cleanup fails after workflow trigger failure (line 395)', async () => {
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 		// Metadata cleanup fails, image cleanup succeeds
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed after workflow trigger')
 		} as any);
@@ -282,13 +283,15 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(body.error).toBe('internal_error');
 		// Metadata cleanup failure keeps the reservation and surfaces a stuck-puzzle message.
 		expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledTimes(1);
 	});
 
 	it('logs error when image cleanup fails after workflow trigger failure', async () => {
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 		// Metadata cleanup succeeds, but image cleanup fails
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({
 			success: false,
@@ -326,9 +329,10 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 	it('logs error when metadata cleanup fails after workflow binding is missing', async () => {
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 		// Metadata cleanup fails
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
 		} as any);
@@ -352,13 +356,14 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
 		expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledTimes(1);
 	});
 
 	it('logs error when image cleanup fails after workflow binding is missing', async () => {
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		// Image cleanup fails
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({
 			success: false,

@@ -758,7 +758,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			};
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,
-				puzzleId: 'original-uuid'
+				familyId: 'original-uuid'
 			});
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(existingPuzzle);
 
@@ -829,10 +829,11 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 		it('should create puzzle with idempotencyKey when first reserve', async () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'new-uuid',
+				familyId: 'new-uuid',
 				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -868,12 +869,11 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				'abc123def456',
 				'new-uuid'
 			);
-			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				expect.objectContaining({
-					idempotencyKey: 'abc123def456'
-				})
+				expect.objectContaining({ id: 'new-uuid' })
 			);
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledTimes(3);
 		});
 
 		it('fails reservation (not release) when metadata cleanup fails after workflow trigger', async () => {
@@ -884,10 +884,11 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// metadata. The orphan remains in KV for operator force-delete.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'reserved-uuid',
+				familyId: 'reserved-uuid',
 				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: false,
@@ -953,11 +954,15 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// path.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'reserved-uuid',
+				familyId: 'reserved-uuid',
 				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true
 			});
@@ -1022,11 +1027,15 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// alongside the orphan. Fail the reservation instead.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'reserved-uuid',
+				familyId: 'reserved-uuid',
 				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true
 			});
@@ -1077,7 +1086,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 		it('should return 409 when key is reserved but metadata is missing', async () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,
-				puzzleId: 'original-uuid',
+				familyId: 'original-uuid',
 				status: 'pending'
 			});
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -1118,7 +1127,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// puzzle (200) instead of bricking the key or creating a duplicate.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,
-				puzzleId: 'original-uuid',
+				familyId: 'original-uuid',
 				status: 'committed'
 			});
 			const existingPuzzle = {
@@ -1191,18 +1200,19 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
 				.mockResolvedValueOnce({
 					existing: true,
-					puzzleId: 'deleted-uuid',
+					familyId: 'deleted-uuid',
 					status: 'committed'
 				})
 				.mockResolvedValueOnce({
 					existing: false,
-					puzzleId: 'replacement-uuid',
+					familyId: 'replacement-uuid',
 					status: 'pending'
 				});
 			// Both reads (initial + retry) return null — puzzle is gone.
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -1238,10 +1248,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				'abc123def456',
 				'deleted-uuid'
 			);
-			// Created a replacement puzzle under the re-reserved id.
-			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			// Created a replacement family under the re-reserved id.
+			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				expect.objectContaining({ id: 'replacement-uuid', idempotencyKey: 'abc123def456' })
+				expect.objectContaining({ id: 'replacement-uuid' })
 			);
 		});
 
@@ -1251,7 +1261,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// of a live puzzle. Fail closed: 409 so the client retries.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'live-uuid',
+				familyId: 'live-uuid',
 				status: 'committed'
 			});
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -1300,31 +1310,29 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
 				.mockResolvedValueOnce({
 					existing: true,
-					puzzleId: 'failed-uuid',
+					familyId: 'failed-uuid',
 					status: 'committed'
 				})
 				.mockResolvedValueOnce({
 					existing: false,
-					puzzleId: 'replacement-uuid',
+					familyId: 'replacement-uuid',
 					status: 'pending'
 				});
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue({
 				id: 'failed-uuid',
 				name: 'Test Puzzle',
-				pieceCount: 225,
 				status: 'failed',
 				aspectRatio: '1:1',
-				gridCols: 15,
-				gridRows: 15,
-				imageWidth: 0,
-				imageHeight: 0,
-				createdAt: 1700000000000,
-				pieces: [],
-				version: 0,
-				progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
+				variants: {
+					easy: '423e4567-e89b-42d3-a456-426614174010',
+					normal: '523e4567-e89b-42d3-a456-426614174011',
+					hard: '623e4567-e89b-42d3-a456-426614174012'
+				},
+				createdAt: 1700000000000
 			});
 			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -1360,14 +1368,14 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				'abc123def456',
 				'failed-uuid'
 			);
-			// Created a replacement puzzle under the re-reserved id.
-			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			// Created a replacement family under the re-reserved id.
+			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				expect.objectContaining({ id: 'replacement-uuid', idempotencyKey: 'abc123def456' })
+				expect.objectContaining({ id: 'replacement-uuid' })
 			);
 			expect(mockEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledWith({
 				id: 'replacement-uuid',
-				params: { puzzleId: 'replacement-uuid' }
+				params: { familyId: 'replacement-uuid' }
 			});
 			// Committed the new reservation.
 			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
@@ -1396,17 +1404,17 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
 				.mockResolvedValueOnce({
 					existing: true,
-					puzzleId: 'failed-uuid',
+					familyId: 'failed-uuid',
 					status: 'committed'
 				})
 				.mockResolvedValueOnce({
 					existing: true,
-					puzzleId: 'deleted-uuid',
+					familyId: 'deleted-uuid',
 					status: 'committed'
 				})
 				.mockResolvedValueOnce({
 					existing: false,
-					puzzleId: 'fresh-uuid',
+					familyId: 'fresh-uuid',
 					status: 'pending'
 				});
 			// First getPuzzle ('failed-uuid') returns failed metadata; second
@@ -1431,6 +1439,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -1462,14 +1471,14 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(res.status).toBe(201);
 			// Created the replacement under the rereserved id ('fresh-uuid'),
 			// NOT the stale committed id ('deleted-uuid'). Overwriting id with
-			// reclaimed.puzzleId was the bug.
-			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			// reclaimed.familyId was the bug.
+			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				expect.objectContaining({ id: 'fresh-uuid', idempotencyKey: 'abc123def456' })
+				expect.objectContaining({ id: 'fresh-uuid' })
 			);
 			expect(mockEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledWith({
 				id: 'fresh-uuid',
-				params: { puzzleId: 'fresh-uuid' }
+				params: { familyId: 'fresh-uuid' }
 			});
 			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA_DO,
@@ -1503,7 +1512,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// the puzzle is stuck and the key should be reclaimed instead.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,
-				puzzleId: 'original-uuid',
+				familyId: 'original-uuid',
 				status: 'pending'
 			});
 			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1570,7 +1579,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// and metadata so a client retry can commit.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'new-uuid',
+				familyId: 'new-uuid',
 				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -1624,10 +1633,11 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 		it('fences and finishes a losing creation before removing its cleanup record', async () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'losing-uuid',
+				familyId: 'losing-uuid',
 				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockRejectedValue(
 				new Error('Cannot committed reservation in status failed')
@@ -2006,6 +2016,7 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 
 	it('should cleanup R2 image when metadata creation fails', async () => {
 		(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 		(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('KV write failed')
 		);
@@ -2046,10 +2057,11 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 		// and a retry reclaims through the DO's serialized path.
 		(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 			existing: false,
-			puzzleId: 'reserved-uuid',
+			familyId: 'reserved-uuid',
 			status: 'pending'
 		});
 		(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 		(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('KV write failed')
 		);
@@ -2110,10 +2122,11 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 		// is no orphan — release the reservation so a retry can create fresh.
 		(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 			existing: false,
-			puzzleId: 'reserved-uuid',
+			familyId: 'reserved-uuid',
 			status: 'pending'
 		});
 		(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 		(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('KV write failed')
 		);
