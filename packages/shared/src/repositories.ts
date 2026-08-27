@@ -4,6 +4,7 @@ import type { AppDb, NewPuzzleFamilyRow, PlayerProfileRow } from './types';
 import { puzzleFamilies, playerProfiles, playerAchievements } from './schema';
 import {
 	interpretVersionedCompletionWrite,
+	type CompletionMutationFacts,
 	type CompletionWriteExecutor,
 	type VersionedCompletionResult,
 	type VersionedCompletionWrite
@@ -353,10 +354,12 @@ export async function recordVersionedCompletion(
 				familyId: identity.familyId,
 				difficulty: identity.difficulty,
 				resultClass: request.resultClass,
-				completedAt: result.completedAt
+				completedAt: result.completedAt,
+				elapsedActiveSeconds: request.elapsedActiveSeconds
 			},
 			newAchievements,
-			result.status === 'recorded'
+			result.status === 'recorded',
+			execution.status === 'stored' ? execution.mutations : undefined
 		);
 		return { ...result, awards };
 	}
@@ -632,9 +635,12 @@ export async function resolveLeaderboardIdentities(
 			.where(inArray(playerProfiles.playerId, chunk))
 			.all();
 		for (const row of rows) {
+			const trimmed = row.displayName?.trim();
+			const name =
+				trimmed && isPublicSafeDisplayName(trimmed) ? trimmed : fallbackPlayerName(row.playerId);
 			result.set(row.playerId, {
 				id: row.playerId,
-				name: row.displayName?.trim() || fallbackPlayerName(row.playerId),
+				name,
 				avatarUrl: row.avatarUrl ?? null
 			});
 		}
@@ -1136,9 +1142,11 @@ export async function deriveCompletionAwards(
 		difficulty: PuzzleDifficulty;
 		resultClass: ResultClass;
 		completedAt: number;
+		elapsedActiveSeconds: number | null;
 	},
 	newAchievements: AchievementId[],
-	wasRecorded: boolean
+	wasRecorded: boolean,
+	mutations?: CompletionMutationFacts
 ): Promise<CompletionAwardsResult> {
 	if (!wasRecorded) {
 		const awards: CompletionAwardsResult = {};
@@ -1146,52 +1154,30 @@ export async function deriveCompletionAwards(
 		return awards;
 	}
 	const awards: CompletionAwardsResult = {};
-	const firstClearRows = await db.all<{ firstCompletedAt: number }>(sql`
-		SELECT first_completed_at AS "firstCompletedAt"
-		FROM player_difficulty_completions
-		WHERE player_id = ${playerId}
-			AND family_id = ${input.familyId}
-			AND difficulty = ${input.difficulty}
-		LIMIT 1
-	`);
-	if (firstClearRows[0]?.firstCompletedAt === input.completedAt) {
+	if (mutations?.firstClearInserted) {
 		awards.clearPoints = UNIQUE_CLEAR_POINTS[input.difficulty];
 	}
 	if (newAchievements.length > 0) awards.achievements = newAchievements;
-	const masteryRows = await db.all<{ badge: MasteryBadge }>(sql`
-		SELECT badge
-		FROM player_variant_mastery
-		WHERE player_id = ${playerId}
-			AND puzzle_id = ${input.puzzleId}
-			AND earned_at = ${input.completedAt}
-	`);
-	if (masteryRows.length > 0) {
-		awards.mastery = masteryRows.map((row) => row.badge);
+	if (mutations && mutations.masteryInserted.length > 0) {
+		awards.mastery = mutations.masteryInserted;
 	}
-	if (input.resultClass === 'standard_timed' || input.resultClass === 'rotation_timed') {
+	const improvedStandard =
+		input.resultClass === 'standard_timed' && mutations?.personalBestImproved.standard;
+	const improvedRotation =
+		input.resultClass === 'rotation_timed' && mutations?.personalBestImproved.rotation;
+	if ((improvedStandard || improvedRotation) && input.elapsedActiveSeconds !== null) {
 		const mode: CompetitiveMode = input.resultClass === 'standard_timed' ? 'standard' : 'rotation';
-		const bestRows = await db.all<{ bestTimeSeconds: number; achievedAt: number }>(sql`
-			SELECT best_time_seconds AS "bestTimeSeconds", achieved_at AS "achievedAt"
-			FROM puzzle_best_times
-			WHERE player_id = ${playerId}
-				AND puzzle_id = ${input.puzzleId}
-				AND result_class = ${input.resultClass}
-			LIMIT 1
-		`);
-		const best = bestRows[0];
-		if (best && Number(best.achievedAt) === input.completedAt) {
-			awards.personalBest = {
-				bestTimeSeconds: Number(best.bestTimeSeconds),
-				isNew: true
-			};
-			const board = await listPuzzleLeaderboard(db, {
-				familyId: input.familyId,
-				difficulty: input.difficulty,
-				mode,
-				viewerPlayerId: playerId
-			});
-			if (board.me) awards.puzzleRank = board.me.rank;
-		}
+		awards.personalBest = {
+			bestTimeSeconds: input.elapsedActiveSeconds,
+			isNew: true
+		};
+		const board = await listPuzzleLeaderboard(db, {
+			familyId: input.familyId,
+			difficulty: input.difficulty,
+			mode,
+			viewerPlayerId: playerId
+		});
+		if (board.me) awards.puzzleRank = board.me.rank;
 	}
 	return awards;
 }

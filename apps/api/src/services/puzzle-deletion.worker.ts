@@ -30,6 +30,7 @@ export async function completeWorkerPuzzleDeletion(env: Env, record: CleanupReco
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		await completionWrites.finishPuzzleDeletion(record.variantIds[difficulty]);
 	}
+	await completionWrites.finishFamilyFirstClears(record.familyId);
 }
 
 export async function finishWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
