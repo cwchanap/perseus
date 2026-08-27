@@ -1521,6 +1521,20 @@ describe('puzzle family contracts', () => {
 		).toBe(false);
 	});
 
+	it('rejects a family summary when variant difficulty does not match its Record key', () => {
+		expect(
+			isPuzzleFamilySummary(
+				makeFamilySummary({
+					variants: {
+						easy: makeVariantSummary('hard'),
+						normal: makeVariantSummary('normal'),
+						hard: makeVariantSummary('easy')
+					}
+				})
+			)
+		).toBe(false);
+	});
+
 	it('validates variant summaries for each fixed difficulty', () => {
 		for (const difficulty of PUZZLE_DIFFICULTIES) {
 			expect(isPuzzleVariantSummary(makeVariantSummary(difficulty), '4:3')).toBe(true);
