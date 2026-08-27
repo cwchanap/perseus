@@ -437,7 +437,7 @@ interface PlayerStatQueryRow extends PlayerStat {
 }
 
 function playerStatsCursorPredicate(cursor: PlayerStatsCursor) {
-	if (cursor.version === 3 && cursor.group === 1) {
+	if (cursor.group === 1) {
 		return sql`"sortGroup" = 1 AND (
 			"familyId" > ${cursor.familyId}
 			OR ("familyId" = ${cursor.familyId} AND "difficulty" > ${cursor.difficulty})
