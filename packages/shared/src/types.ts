@@ -9,6 +9,8 @@ export type PuzzleCompletionRunRow = typeof schema.puzzleCompletionRuns.$inferSe
 export type NewPuzzleCompletionRunRow = typeof schema.puzzleCompletionRuns.$inferInsert;
 export type PuzzleRow = typeof schema.puzzles.$inferSelect;
 export type NewPuzzleRow = typeof schema.puzzles.$inferInsert;
+export type PuzzleFamilyRow = typeof schema.puzzleFamilies.$inferSelect;
+export type NewPuzzleFamilyRow = typeof schema.puzzleFamilies.$inferInsert;
 
 /**
  * Cross-runtime Drizzle client. Both `drizzle-orm/d1` (D1Database) and

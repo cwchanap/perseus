@@ -23,6 +23,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	// In-memory stores backing the mocked list repositories so the list
 	// routes can be exercised end-to-end without a real D1 binding.
 	const puzzlesStore = new Map<string, unknown[]>();
+	const familiesStore = new Map<string, unknown[]>();
 	const statsStore = new Map<string, unknown[]>();
 	return {
 		...actual,
@@ -33,6 +34,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		// Exposed for test-only reset between cases.
 		__store: store,
 		__puzzlesStore: puzzlesStore,
+		__familiesStore: familiesStore,
 		__statsStore: statsStore,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
 		// Field-specific upserts mirror the real ON CONFLICT behavior: each
@@ -75,6 +77,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		listPlayerPuzzles: vi.fn(
 			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
+				nextCursor: undefined
+			})
+		),
+		listPlayerPuzzleFamilies: vi.fn(
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
+				rows: familiesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
 		),
@@ -1089,41 +1097,51 @@ describe('player lists (Worker)', () => {
 	beforeEach(async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__puzzlesStore.clear();
+		(shared as any).__familiesStore.clear();
 		(shared as any).__statsStore.clear();
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 	});
 
-	it('GET puzzles returns owned puzzles', async () => {
+	it('GET puzzle-families returns owned families', async () => {
 		const shared = await import('@perseus/shared');
-		(shared as any).__puzzlesStore.set('p1', [
-			{ id: 'pz1', name: 'Cat', pieceCount: 4, status: 'ready', createdAt: 1 }
+		(shared as any).__familiesStore.set('p1', [
+			{
+				id: 'a0000000-0000-4000-8000-000000000001',
+				name: 'Cat',
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: 1
+			}
 		]);
 		const res = await buildApp().request(
-			'/api/player/puzzles',
+			'/api/player/puzzle-families',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		expect(body.puzzles).toHaveLength(1);
-		expect(body.puzzles[0].name).toBe('Cat');
+		expect(body.families).toHaveLength(1);
+		expect(body.families[0].name).toBe('Cat');
+		expect(body.families[0].aspectRatio).toBe('1:1');
+		expect(body.families[0].pieceCount).toBeUndefined();
+		expect(body.families[0].variants).toBeUndefined();
 	});
 
-	it('GET puzzles forwards limit and cursor query params', async () => {
-		const { listPlayerPuzzles } = await import('@perseus/shared');
+	it('GET puzzle-families forwards limit and cursor query params', async () => {
+		const { listPlayerPuzzleFamilies } = await import('@perseus/shared');
 		await buildApp().request(
-			'/api/player/puzzles?limit=5&cursor=100',
+			'/api/player/puzzle-families?limit=5&cursor=100',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
-		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
+		expect(listPlayerPuzzleFamilies).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
 			cursor: '100'
 		});
 	});
 
-	it('GET puzzles requires authentication', async () => {
-		const res = await buildApp().request('/api/player/puzzles', {}, DUMMY_ENV);
+	it('GET puzzle-families requires authentication', async () => {
+		const res = await buildApp().request('/api/player/puzzle-families', {}, DUMMY_ENV);
 		expect(res.status).toBe(401);
 	});
 
@@ -1265,6 +1283,7 @@ describe('player response validation (Worker)', () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__store?.clear();
 		(shared as any).__puzzlesStore?.clear();
+		(shared as any).__familiesStore?.clear();
 		(shared as any).__statsStore?.clear();
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 	});
@@ -1285,13 +1304,18 @@ describe('player response validation (Worker)', () => {
 		expect(((await res.json()) as any).error).toBe('internal_error');
 	});
 
-	it('GET puzzles returns 500 when a projected row fails validation', async () => {
+	it('GET puzzle-families returns 500 when a projected row fails validation', async () => {
 		const shared = await import('@perseus/shared');
-		(shared as any).__puzzlesStore.set('p1', [
-			{ id: 'pz1', pieceCount: 4, status: 'ready', createdAt: 1 }
+		(shared as any).__familiesStore.set('p1', [
+			{
+				id: 'a0000000-0000-4000-8000-000000000001',
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: 1
+			}
 		]);
 		const res = await buildApp().request(
-			'/api/player/puzzles',
+			'/api/player/puzzle-families',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);

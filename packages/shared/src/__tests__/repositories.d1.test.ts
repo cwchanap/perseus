@@ -17,6 +17,11 @@ import {
 	insertPuzzleOwnership,
 	ensurePuzzleOwnership,
 	listPlayerPuzzles,
+	insertPuzzleFamilyOwnership,
+	ensurePuzzleFamilyOwnership,
+	deletePuzzleFamilyOwnership,
+	setPuzzleFamilyStatus,
+	listPlayerPuzzleFamilies,
 	SYSTEM_OWNER_ID
 } from '../repositories';
 
@@ -61,6 +66,7 @@ beforeEach(async () => {
 	await d1.prepare('DELETE FROM puzzle_completion_runs').run();
 	await d1.prepare('DELETE FROM puzzle_stats').run();
 	await d1.prepare('DELETE FROM puzzles').run();
+	await d1.prepare('DELETE FROM puzzle_families').run();
 	await d1.prepare('DELETE FROM player_profiles').run();
 	await d1.prepare('DELETE FROM player_completion_usage').run();
 	await d1.prepare('DELETE FROM puzzle_deletion_tombstones').run();
@@ -1198,5 +1204,224 @@ describe('listPlayerPuzzles composite cursor against real D1', () => {
 		expect(page2.rows).toHaveLength(1);
 		expect(page2.rows[0].id).toBe('pzA');
 		expect(page2.nextCursor).toBeUndefined();
+	});
+});
+
+describe('puzzle family ownership against real D1', () => {
+	it('insertPuzzleFamilyOwnership + listPlayerPuzzleFamilies', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam1',
+			ownerId: 'p1',
+			name: 'Cat Family',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 10
+		});
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam2',
+			ownerId: 'p2',
+			name: 'Other Family',
+			aspectRatio: '4:3',
+			status: 'ready',
+			createdAt: 20
+		});
+		const list = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10 });
+		expect(list.rows).toHaveLength(1);
+		expect(list.rows[0].name).toBe('Cat Family');
+		expect(list.rows[0].aspectRatio).toBe('1:1');
+	});
+
+	it('lists processing, ready, and failed families for the owner', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-ready',
+			ownerId: 'p1',
+			name: 'Ready',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1
+		});
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-processing',
+			ownerId: 'p1',
+			name: 'Processing',
+			aspectRatio: '3:4',
+			status: 'processing',
+			createdAt: 2
+		});
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-failed',
+			ownerId: 'p1',
+			name: 'Failed',
+			aspectRatio: '4:3',
+			status: 'failed',
+			createdAt: 3
+		});
+		const list = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10 });
+		expect(list.rows).toHaveLength(3);
+		expect(list.rows.map((row) => row.status)).toEqual(['failed', 'processing', 'ready']);
+	});
+
+	it('setPuzzleFamilyStatus updates mirrored status', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-status',
+			ownerId: 'p1',
+			name: 'Status Family',
+			aspectRatio: '1:1',
+			status: 'processing',
+			createdAt: 1
+		});
+		await setPuzzleFamilyStatus(db, 'fam-status', 'ready');
+		const list = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10 });
+		expect(list.rows[0].status).toBe('ready');
+	});
+
+	it('deletePuzzleFamilyOwnership removes the row', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-delete',
+			ownerId: 'p1',
+			name: 'Delete Me',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1
+		});
+		await deletePuzzleFamilyOwnership(db, 'fam-delete');
+		const list = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10 });
+		expect(list.rows).toHaveLength(0);
+	});
+
+	it('ensurePuzzleFamilyOwnership leaves an existing row untouched (ON CONFLICT DO NOTHING)', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-owned',
+			ownerId: 'p1',
+			name: 'Real Owner Name',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 10
+		});
+		await ensurePuzzleFamilyOwnership(db, {
+			id: 'fam-owned',
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Backfill Name',
+			aspectRatio: '4:3',
+			status: 'failed',
+			createdAt: 999
+		});
+		const owned = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10 });
+		expect(owned.rows).toHaveLength(1);
+		expect(owned.rows[0].name).toBe('Real Owner Name');
+		expect(owned.rows[0].ownerId).toBe('p1');
+		expect(owned.rows[0].aspectRatio).toBe('1:1');
+	});
+});
+
+describe('listPlayerPuzzleFamilies composite cursor against real D1', () => {
+	it('paginates with (createdAt, id) cursor without skipping rows', async () => {
+		for (let i = 0; i < 5; i++) {
+			await insertPuzzleFamilyOwnership(db, {
+				id: `fam${i}`,
+				ownerId: 'p1',
+				name: `Family ${i}`,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: i * 10
+			});
+		}
+		const page1 = await listPlayerPuzzleFamilies(db, 'p1', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.nextCursor).toBeDefined();
+		expect(page1.rows[0].createdAt).toBe(40);
+		expect(page1.rows[1].createdAt).toBe(30);
+
+		const page2 = await listPlayerPuzzleFamilies(db, 'p1', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(2);
+		expect(page2.nextCursor).toBeDefined();
+		expect(page2.rows[0].createdAt).toBe(20);
+		expect(page2.rows[1].createdAt).toBe(10);
+
+		const page3 = await listPlayerPuzzleFamilies(db, 'p1', {
+			limit: 2,
+			cursor: page2.nextCursor!
+		});
+		expect(page3.rows).toHaveLength(1);
+		expect(page3.nextCursor).toBeUndefined();
+		expect(page3.rows[0].createdAt).toBe(0);
+	});
+
+	it('isolates players (no cross-player leak on pagination)', async () => {
+		for (let i = 0; i < 3; i++) {
+			await insertPuzzleFamilyOwnership(db, {
+				id: `alice-fam${i}`,
+				ownerId: 'alice',
+				name: `Alice ${i}`,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: i
+			});
+			await insertPuzzleFamilyOwnership(db, {
+				id: `bob-fam${i}`,
+				ownerId: 'bob',
+				name: `Bob ${i}`,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: i + 100
+			});
+		}
+		const page1 = await listPlayerPuzzleFamilies(db, 'alice', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.rows.every((row) => row.ownerId === 'alice')).toBe(true);
+
+		const page2 = await listPlayerPuzzleFamilies(db, 'alice', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(1);
+		expect(page2.rows[0].ownerId).toBe('alice');
+	});
+
+	it('malformed cursor falls back to timestamp-only filter', async () => {
+		for (let i = 0; i < 3; i++) {
+			await insertPuzzleFamilyOwnership(db, {
+				id: `fam${i}`,
+				ownerId: 'p1',
+				name: `Family ${i}`,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: i * 10
+			});
+		}
+		const result = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10, cursor: '10' });
+		expect(result.rows).toHaveLength(1);
+		expect(result.rows[0].id).toBe('fam0');
+	});
+
+	it('garbage cursor returns no rows', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam1',
+			ownerId: 'p1',
+			name: 'Family',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1
+		});
+		const result = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10, cursor: 'garbage' });
+		expect(result.rows).toHaveLength(0);
+	});
+
+	it('floors fractional limits to an integer', async () => {
+		for (let i = 0; i < 3; i++) {
+			await insertPuzzleFamilyOwnership(db, {
+				id: `fam${i}`,
+				ownerId: 'p1',
+				name: `Family ${i}`,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: i
+			});
+		}
+		const result = await listPlayerPuzzleFamilies(db, 'p1', { limit: 1.5 });
+		expect(result.rows).toHaveLength(1);
 	});
 });
