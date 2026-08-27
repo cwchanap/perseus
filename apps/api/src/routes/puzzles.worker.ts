@@ -4,12 +4,12 @@ import { Hono } from 'hono';
 import { stripIdempotencyKey } from '@perseus/types';
 import type { Env } from '../worker';
 import {
-	getPuzzle,
 	getThumbnailKey,
 	getPieceKey,
 	getImage,
 	resolveVariantReferenceKey
 } from '../services/storage.worker';
+import { resolvePlayableVariant } from '../services/variant-playability.worker';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
@@ -39,15 +39,15 @@ puzzles.get('/:id', async (c) => {
 	}
 
 	try {
-		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
-
-		if (!puzzle) {
+		const resolved = await resolvePlayableVariant(c.env.PUZZLE_METADATA, id);
+		if (!resolved.playable) {
+			if (resolved.status === 500) {
+				console.error(`Failed to resolve family for puzzle ${id}:`, resolved.error);
+				return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
+			}
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
-
-		if (puzzle.status !== 'ready') {
-			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-		}
+		const { puzzle } = resolved;
 
 		// Check R2 for original image existence rather than hardcoding true —
 		// puzzles created before the reference-upload patch won't have the asset.
@@ -81,15 +81,15 @@ puzzles.get('/:id/thumbnail', async (c) => {
 	}
 
 	try {
-		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
-
-		if (!puzzle) {
+		const resolved = await resolvePlayableVariant(c.env.PUZZLE_METADATA, id);
+		if (!resolved.playable) {
+			if (resolved.status === 500) {
+				console.error(`Failed to resolve family for puzzle ${id}:`, resolved.error);
+				return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
+			}
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
-
-		if (puzzle.status !== 'ready') {
-			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-		}
+		const { puzzle } = resolved;
 
 		const image = await getImage(c.env.PUZZLES_BUCKET, getThumbnailKey(puzzle.familyId));
 
@@ -120,13 +120,15 @@ puzzles.get('/:id/reference', async (c) => {
 	}
 
 	try {
-		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
-
-		if (!puzzle) {
-			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-		}
-
-		if (puzzle.status !== 'ready') {
+		const resolved = await resolvePlayableVariant(c.env.PUZZLE_METADATA, id);
+		if (!resolved.playable) {
+			if (resolved.status === 500) {
+				console.error(`Failed to resolve family for puzzle ${id}:`, resolved.error);
+				return c.json(
+					{ error: 'internal_error', message: 'Failed to retrieve reference image' },
+					500
+				);
+			}
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
@@ -169,15 +171,15 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 	}
 
 	try {
-		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
-
-		if (!puzzle) {
+		const resolved = await resolvePlayableVariant(c.env.PUZZLE_METADATA, id);
+		if (!resolved.playable) {
+			if (resolved.status === 500) {
+				console.error(`Failed to resolve family for puzzle ${id}:`, resolved.error);
+				return c.json({ error: 'internal_error', message: 'Failed to retrieve piece image' }, 500);
+			}
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
-
-		if (puzzle.status !== 'ready') {
-			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-		}
+		const { puzzle } = resolved;
 
 		if (typeof puzzle.pieceCount !== 'number' || !Number.isFinite(puzzle.pieceCount)) {
 			return c.json({ error: 'unavailable', message: 'Puzzle metadata incomplete' }, 409);

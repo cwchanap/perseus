@@ -7,12 +7,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
+import { makeFamilyMetadata } from './helpers/family-fixtures';
 
 vi.mock('../../services/storage.worker', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
 	return {
 		...actual,
 		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
 		listPuzzlesPage: vi.fn(),
 		getImage: vi.fn(),
 		resolveVariantReferenceKey: vi.fn()
@@ -50,9 +52,13 @@ let consoleSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
 	consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 	vi.mocked(storage.getPuzzle).mockReset();
+	vi.mocked(storage.getFamily).mockReset();
 	vi.mocked(storage.listPuzzlesPage).mockReset();
 	vi.mocked(storage.getImage).mockReset();
 	vi.mocked(storage.resolveVariantReferenceKey).mockReset();
+	vi.mocked(storage.getFamily).mockImplementation(async (_kv, familyId) =>
+		makeFamilyMetadata(familyId, 'ready')
+	);
 	mockEnv.PUZZLES_BUCKET.head = vi.fn().mockResolvedValue(null);
 });
 

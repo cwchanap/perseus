@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
+import { makeFamilyMetadata } from './helpers/family-fixtures';
 
 const dbContextMock = vi.hoisted(() => ({
 	db: {},
@@ -38,6 +39,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		deletePuzzleMetadata: vi.fn(),
 		deleteOriginalImage: vi.fn(),
 		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
 		listPuzzlesPage: vi.fn(),
 		getImage: vi.fn(),
 		resolveVariantReferenceKey: vi.fn()
@@ -55,6 +57,12 @@ describe('Puzzle Routes - UUID Validation', () => {
 			create: vi.fn().mockResolvedValue({ id: 'workflow-id' })
 		}
 	};
+
+	beforeEach(() => {
+		vi.mocked(storage.getFamily).mockImplementation(async (_kv, familyId) =>
+			makeFamilyMetadata(familyId, 'ready')
+		);
+	});
 
 	describe('GET /:id', () => {
 		it('should return 400 for invalid UUID format', async () => {
@@ -471,6 +479,82 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(res.status).toBe(200);
 			expect(res.headers.get('Content-Type')).toBe('image/png');
 			expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
+		});
+	});
+
+	describe('parent family readiness gate', () => {
+		const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+		const familyId = '223e4567-e89b-42d3-a456-426614174000';
+
+		function mockReadyVariant() {
+			vi.mocked(storage.getPuzzle).mockResolvedValue({
+				id: validUuid,
+				familyId,
+				difficulty: 'easy',
+				name: 'Ready Variant',
+				pieceCount: 16,
+				gridCols: 4,
+				gridRows: 4,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
+			} as any);
+		}
+
+		it('returns 404 for GET detail when variant is ready but family failed', async () => {
+			mockReadyVariant();
+			vi.mocked(storage.getFamily).mockResolvedValueOnce(makeFamilyMetadata(familyId, 'failed'));
+
+			const res = await puzzles.fetch(new Request(`http://localhost/${validUuid}`), mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(404);
+			expect(body.error).toBe('not_found');
+		});
+
+		it('returns 404 for GET assets when variant is ready but family failed', async () => {
+			mockReadyVariant();
+			vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(familyId, 'failed'));
+			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
+				`families/${familyId}/original`
+			);
+			vi.mocked(storage.getImage).mockResolvedValueOnce({
+				data: new ArrayBuffer(8),
+				contentType: 'image/jpeg'
+			});
+
+			const detail = await puzzles.fetch(new Request(`http://localhost/${validUuid}`), mockEnv);
+			const thumbnail = await puzzles.fetch(
+				new Request(`http://localhost/${validUuid}/thumbnail`),
+				mockEnv
+			);
+			const reference = await puzzles.fetch(
+				new Request(`http://localhost/${validUuid}/reference`),
+				mockEnv
+			);
+			const piece = await puzzles.fetch(
+				new Request(`http://localhost/${validUuid}/pieces/0/image`),
+				mockEnv
+			);
+
+			for (const res of [detail, thumbnail, reference, piece]) {
+				expect(res.status).toBe(404);
+				expect(((await res.json()) as any).error).toBe('not_found');
+			}
+		});
+
+		it('returns 500 when family metadata is corrupt', async () => {
+			mockReadyVariant();
+			vi.mocked(storage.getFamily).mockRejectedValueOnce(new Error('Corrupt family metadata'));
+
+			const res = await puzzles.fetch(new Request(`http://localhost/${validUuid}`), mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(500);
+			expect(body.error).toBe('internal_error');
 		});
 	});
 });

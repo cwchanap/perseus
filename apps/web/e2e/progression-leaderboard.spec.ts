@@ -84,7 +84,7 @@ async function mockProgressionApis(
 				normalClears: 0,
 				hardClears: 0,
 				achievementsUnlocked: 2,
-				achievementsTotal: 10,
+				achievementsTotal: 9,
 				masteryEarned: 1
 			}
 		})

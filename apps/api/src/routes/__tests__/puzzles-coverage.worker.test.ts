@@ -6,12 +6,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
+import { makeFamilyMetadata } from './helpers/family-fixtures';
 
 vi.mock('../../services/storage.worker', async () => {
 	const actual = await vi.importActual('../../services/storage.worker');
 	return {
 		...actual,
 		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
 		listFamilies: vi.fn(),
 		getImage: vi.fn(),
 		resolveVariantReferenceKey: vi.fn()
@@ -22,6 +24,12 @@ const mockEnv = {
 	PUZZLE_METADATA: {} as KVNamespace,
 	PUZZLES_BUCKET: {} as R2Bucket
 };
+
+beforeEach(() => {
+	vi.mocked(storage.getFamily).mockImplementation(async (_kv, familyId) =>
+		makeFamilyMetadata(familyId, 'ready')
+	);
+});
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440001';
 const TEST_FAMILY_ID = '223e4567-e89b-42d3-a456-426614174000';
