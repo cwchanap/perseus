@@ -1172,6 +1172,78 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 		});
 
+		it('fails reservation (not release) when variant metadata cleanup fails after workflow trigger failure', async () => {
+			// Workflow create() rejects and the instance is dead, so cleanup runs:
+			// family metadata deletes fine, but a variant delete fails. The
+			// orphaned variant metadata keeps the reservation failed (not
+			// released) so a retry reclaims instead of minting a replacement.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				familyId: 'reserved-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			// One-shot failure: the route fails the reservation and returns on
+			// the first variant failure, so exactly one value is consumed.
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+				success: false,
+				error: new Error('KV variant delete failed')
+			});
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+					get: vi.fn().mockRejectedValue(
+						Object.assign(new Error('instance.not_found'), {
+							code: 'instance.not_found'
+						})
+					)
+				},
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzle-families', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toMatch(/variant metadata cleanup failed/i);
+			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'reserved-uuid'
+			);
+			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+		});
+
 		it('fails reservation (not release) when R2 image cleanup fails after missing workflow binding', async () => {
 			// When the workflow binding is missing, metadata cleanup succeeds,
 			// BUT R2 image cleanup fails, the orphaned original remains in R2.
@@ -1232,6 +1304,69 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				'reserved-uuid'
 			);
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		});
+
+		it('fails reservation (not release) when variant metadata cleanup fails after missing workflow binding', async () => {
+			// Family metadata cleanup succeeds but a variant delete fails: the
+			// orphaned variant metadata must keep the reservation failed (not
+			// released) so a retry reclaims instead of minting a replacement
+			// family alongside the orphan.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				familyId: 'reserved-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			// One-shot failure: the route fails the reservation and returns on
+			// the first variant failure, so exactly one value is consumed.
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+				success: false,
+				error: new Error('KV variant delete failed')
+			});
+			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzle-families', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toMatch(/variant metadata cleanup failed/i);
+			// Reservation FAILED (not released); image cleanup never runs because
+			// the variant branch returns first.
+			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'reserved-uuid'
+			);
+			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 		});
 
 		it('should return 409 when key is reserved but metadata is missing', async () => {
@@ -2212,6 +2347,72 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 	});
 
+	it('fails reservation (not release) when variant metadata cleanup fails after metadata creation failure', async () => {
+		// Metadata creation fails, family cleanup succeeds, but a variant
+		// delete fails: the aggregated failure must FAIL (not release) the
+		// reservation — releasing would mint a replacement alongside orphaned
+		// variant metadata.
+		(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+			existing: false,
+			familyId: 'reserved-uuid',
+			status: 'pending'
+		});
+		(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('KV write failed')
+		);
+		(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true
+		});
+		// Three one-shot failures (one per difficulty) — no sticky residue.
+		for (let i = 0; i < 3; i++) {
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+				success: false,
+				error: new Error('KV variant delete failed')
+			});
+		}
+		(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true
+		});
+		(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket,
+			PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+		};
+
+		const formData = new FormData();
+		formData.append('name', 'Test Puzzle');
+		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+		formData.append('image', blob, 'test.png');
+
+		const req = new Request('http://localhost/puzzle-families', {
+			method: 'POST',
+			headers: {
+				cookie: 'session=valid.token',
+				'Idempotency-Key': 'abc123def456'
+			},
+			body: formData
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toBe('Failed to create puzzle metadata');
+		// Variant deletion failure alone must fail (not release) the reservation.
+		expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA_DO,
+			'abc123def456',
+			'reserved-uuid'
+		);
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+	});
+
 	it('releases reservation when R2 image cleanup succeeds after metadata creation failure', async () => {
 		// When metadata creation fails but R2 image cleanup SUCCEEDS, there
 		// is no orphan — release the reservation so a retry can create fresh.
@@ -2332,6 +2533,36 @@ describe('Admin Routes - GET /puzzle-families', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.families).toEqual([enriched]);
+	});
+
+	it('filters families with missing metadata and preserves order across batches', async () => {
+		// 30 families spans the 25-per-batch bound; every third summary has
+		// no metadata left in KV and must be filtered without disturbing the
+		// order of the survivors.
+		const summaries = Array.from({ length: 30 }, (_, i) => ({
+			id: `fam-${String(i).padStart(2, '0')}`,
+			name: `Family ${i}`,
+			status: 'ready',
+			createdAt: i,
+			aspectRatio: '1:1'
+		}));
+		(storage.listFamilies as ReturnType<typeof vi.fn>).mockResolvedValue({
+			families: summaries
+		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockImplementation(
+			async (_kv: unknown, id: string) => (id.endsWith('0') && id !== 'fam-00' ? null : { id })
+		);
+		(storage.enrichFamilySummary as ReturnType<typeof vi.fn>).mockImplementation(
+			async (_kv: unknown, family: { id: string }) => ({ id: family.id })
+		);
+
+		const res = await admin.fetch(new Request('http://localhost/puzzle-families'), mockEnv as any);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.families).toEqual(
+			summaries.filter((s) => !s.id.endsWith('0') || s.id === 'fam-00').map((s) => ({ id: s.id }))
+		);
 	});
 
 	it('should return 500 when listFamilies throws', async () => {

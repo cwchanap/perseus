@@ -62,29 +62,22 @@ export function completionResultToResponse(
 			status: 409
 		};
 	}
-	const awards =
-		result.awards &&
-		(result.awards.clearPoints !== undefined ||
-			(result.awards.achievements?.length ?? 0) > 0 ||
-			(result.awards.mastery?.length ?? 0) > 0 ||
-			result.awards.personalBest !== undefined ||
-			result.awards.puzzleRank !== undefined)
-			? {
-					...(result.awards.clearPoints !== undefined
-						? { clearPoints: result.awards.clearPoints }
-						: {}),
-					...(result.awards.achievements?.length
-						? { achievements: result.awards.achievements }
-						: {}),
-					...(result.awards.mastery?.length ? { mastery: result.awards.mastery } : {}),
-					...(result.awards.personalBest ? { personalBest: result.awards.personalBest } : {}),
-					...(result.awards.puzzleRank !== undefined
-						? { puzzleRank: result.awards.puzzleRank }
-						: {})
-				}
-			: undefined;
+	// Build the awards object once with the field-presence rules, then include
+	// it only when at least one field survived — so every award field (including
+	// personalBest) shares one inclusion behavior instead of a duplicated gate
+	// expression that could drift from the constructed object.
+	const source = result.awards;
+	const awards = source
+		? {
+				...(source.clearPoints !== undefined ? { clearPoints: source.clearPoints } : {}),
+				...(source.achievements?.length ? { achievements: source.achievements } : {}),
+				...(source.mastery?.length ? { mastery: source.mastery } : {}),
+				...(source.personalBest ? { personalBest: source.personalBest } : {}),
+				...(source.puzzleRank !== undefined ? { puzzleRank: source.puzzleRank } : {})
+			}
+		: undefined;
 	return {
-		body: awards ? { ok: true, awards } : { ok: true },
+		body: awards && Object.keys(awards).length > 0 ? { ok: true, awards } : { ok: true },
 		status: 200
 	};
 }

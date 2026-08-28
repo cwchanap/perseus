@@ -7,7 +7,7 @@ import {
 	getThumbnailKey,
 	getPieceKey,
 	getImage,
-	resolveVariantReferenceKey
+	getFamilyOriginalKey
 } from '../services/storage.worker';
 import { resolvePlayableVariant } from '../services/variant-playability.worker';
 
@@ -52,13 +52,12 @@ puzzles.get('/:id', async (c) => {
 		// Check R2 for original image existence rather than hardcoding true —
 		// puzzles created before the reference-upload patch won't have the asset.
 		// Degrade gracefully if R2 is unavailable — hasReference is display-only.
+		// resolvePlayableVariant already fetched this variant's metadata, so the
+		// reference key derives from puzzle.familyId without a redundant KV read.
 		let hasReference = false;
 		try {
-			const referenceKey = await resolveVariantReferenceKey(c.env.PUZZLE_METADATA, id);
-			if (referenceKey) {
-				const originalObj = await c.env.PUZZLES_BUCKET.head(referenceKey);
-				hasReference = originalObj !== null;
-			}
+			const originalObj = await c.env.PUZZLES_BUCKET.head(getFamilyOriginalKey(puzzle.familyId));
+			hasReference = originalObj !== null;
 		} catch (r2Error) {
 			console.error(`Failed to check R2 reference for puzzle ${id}:`, r2Error);
 		}
@@ -132,11 +131,11 @@ puzzles.get('/:id/reference', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		const referenceKey = await resolveVariantReferenceKey(c.env.PUZZLE_METADATA, id);
-		if (!referenceKey) {
-			return c.json({ error: 'not_found', message: 'Reference image not found' }, 404);
-		}
+		const { puzzle } = resolved;
 
+		// The reference key derives from the already-resolved variant metadata —
+		// no redundant variant KV read.
+		const referenceKey = getFamilyOriginalKey(puzzle.familyId);
 		const image = await getImage(c.env.PUZZLES_BUCKET, referenceKey);
 
 		if (!image) {

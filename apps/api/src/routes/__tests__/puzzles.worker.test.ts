@@ -42,7 +42,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getFamily: vi.fn(),
 		listPuzzlesPage: vi.fn(),
 		getImage: vi.fn(),
-		resolveVariantReferenceKey: vi.fn()
+		getFamilyOriginalKey: (familyId: string) => `families/${familyId}/original`
 	};
 });
 vi.mock('../../services/player-auth.worker', () => ({
@@ -267,7 +267,6 @@ describe('Puzzle Routes - UUID Validation', () => {
 		beforeEach(() => {
 			vi.mocked(storage.getPuzzle).mockReset();
 			vi.mocked(storage.getImage).mockReset();
-			vi.mocked(storage.resolveVariantReferenceKey).mockReset();
 		});
 
 		it('should return 400 for invalid UUID format', async () => {
@@ -325,7 +324,6 @@ describe('Puzzle Routes - UUID Validation', () => {
 				pieces: [],
 				version: 0
 			} as any);
-			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(null);
 
 			const req = new Request(`http://localhost/${validUuid}/reference`);
 			const res = await puzzles.fetch(req, mockEnv);
@@ -353,9 +351,6 @@ describe('Puzzle Routes - UUID Validation', () => {
 				pieces: [],
 				version: 0
 			} as any);
-			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
-				'families/223e4567-e89b-42d3-a456-426614174000/original'
-			);
 			vi.mocked(storage.getImage).mockResolvedValueOnce(null);
 
 			const req = new Request(`http://localhost/${validUuid}/reference`);
@@ -387,9 +382,6 @@ describe('Puzzle Routes - UUID Validation', () => {
 				pieces: [],
 				version: 0
 			} as any);
-			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
-				`families/${familyId}/original`
-			);
 			vi.mocked(storage.getImage).mockResolvedValueOnce({
 				data: new ArrayBuffer(8),
 				contentType: 'image/jpeg'
@@ -546,9 +538,6 @@ describe('Puzzle Routes - UUID Validation', () => {
 		it('returns 404 for GET assets when variant is ready but family failed', async () => {
 			mockReadyVariant();
 			vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(familyId, 'failed'));
-			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
-				`families/${familyId}/original`
-			);
 			vi.mocked(storage.getImage).mockResolvedValueOnce({
 				data: new ArrayBuffer(8),
 				contentType: 'image/jpeg'

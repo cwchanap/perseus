@@ -267,9 +267,13 @@
 	// dialog whose Resume is a no-op.
 	const canPause = $derived(sessionState?.lifecycle === 'active');
 
-	// Any open session dialog (or the celebration modal) makes the page inert
-	// so focus and interaction stay contained in the dialog surface.
-	const hasSessionModal = $derived(sessionDialog !== null || showCelebration);
+	// Any open session dialog, the celebration modal, or the family leaderboard
+	// dialog makes the page inert so focus and interaction stay contained in
+	// the dialog surface — and gameplay shortcuts cannot mutate the board
+	// behind the dialog.
+	const hasSessionModal = $derived(
+		sessionDialog !== null || showCelebration || showFamilyLeaderboard
+	);
 
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
@@ -481,9 +485,17 @@
 	async function handleServerSubmissionEffect(seal: SealedCompletion) {
 		if (!puzzle || puzzleSource?.source !== 'api') return;
 
+		// Capture the originating puzzle/run before awaiting: a slow response
+		// must not write a prior run's awards into a later session (Play Again
+		// or puzzle-to-puzzle navigation). Mirrors the stillActiveRun guard in
+		// handleLocalStatsEffect; the acknowledge below is still dispatched
+		// unconditionally so the engine reconciles the effect either way.
+		const originPuzzleId = puzzle.id;
 		try {
 			const awards = await recordCompletion(puzzle.id, completionRequestFromSeal(seal));
-			completionAwards = awards;
+			if (puzzle?.id === originPuzzleId && sessionState?.sealedCompletion?.runId === seal.runId) {
+				completionAwards = awards;
+			}
 			sessionStore?.dispatch({
 				type: 'acknowledge_completion_effect',
 				runId: seal.runId,
@@ -1140,6 +1152,10 @@
 		showCelebration = false;
 		isNewBest = false;
 		localStatsFailed = false;
+		// The prior run's awards must not survive into the next run's
+		// celebration (or linger behind a still-pending server submission from
+		// the prior run).
+		completionAwards = undefined;
 		sessionStore.dispatch({ type: 'restart' });
 		sessionStore.dispatch({ type: 'configure_setup', mode, rotationEnabled });
 		// Checkpoint immediately so the new run's tray order and retained

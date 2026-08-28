@@ -13,11 +13,7 @@
 
 import { basename } from 'node:path';
 import { createHash } from 'node:crypto';
-import {
-	aspectRatiosMatch,
-	DEFAULT_PUZZLE_ASPECT_RATIO,
-	MAX_IMAGE_DIMENSION
-} from '@perseus/types';
+import { aspectRatiosMatch, MAX_IMAGE_DIMENSION, type PuzzleFamilySummary } from '@perseus/types';
 import { parseImageDimensions, detectImageType } from '@perseus/shared';
 import {
 	FETCH_TIMEOUT_MS,
@@ -120,13 +116,7 @@ export async function fetchExistingKeys(
 				'Aborting to avoid duplicate uploads — re-run after verifying the API is reachable.'
 		);
 	}
-	const payload = (await res.json()) as {
-		families?: Array<{
-			name?: string;
-			aspectRatio?: string;
-			status?: string;
-		}>;
-	};
+	const payload = (await res.json()) as { families?: PuzzleFamilySummary[] };
 	const keys = new Set<string>();
 	for (const family of payload.families ?? []) {
 		// Exclude failed puzzles so a subsequent seed run retries them instead
@@ -143,8 +133,13 @@ export async function fetchExistingKeys(
 		// after the reservation was committed, so it is safe to treat as
 		// a final idempotent result.
 		if (requireReady && family.status !== 'ready') continue;
+		// Runtime guard: this parses an external HTTP response, so a malformed
+		// body must be skipped rather than crash the run (the declared type is a
+		// trust assumption, not a proof).
 		if (typeof family.name === 'string' && family.name.trim()) {
-			keys.add(idempotencyKey(family.name, family.aspectRatio ?? DEFAULT_PUZZLE_ASPECT_RATIO));
+			// PuzzleFamilySummary guarantees aspectRatio, matching the value the
+			// upload side used for its idempotency key.
+			keys.add(idempotencyKey(family.name, family.aspectRatio));
 		}
 	}
 	return keys;

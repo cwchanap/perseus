@@ -745,15 +745,23 @@ admin.delete('/player-allowlist/:email', async (c) => {
 admin.get('/puzzle-families', async (c) => {
 	try {
 		const { families: summaries } = await listFamilies(c.env.PUZZLE_METADATA);
-		const families = (
-			await Promise.all(
-				summaries.map(async (summary) => {
-					const family = await getFamily(c.env.PUZZLE_METADATA, summary.id);
-					if (!family) return null;
-					return enrichFamilySummary(c.env.PUZZLE_METADATA, family);
-				})
-			)
-		).filter((family) => family !== null);
+		// Bound the per-entry KV fan-out (getFamily + variant enrichment) so a
+		// single invocation cannot issue reads for the entire catalog at once.
+		// Order is preserved by processing in fixed-size batches.
+		const ADMIN_FAMILY_BATCH_SIZE = 25;
+		const families = [];
+		for (let i = 0; i < summaries.length; i += ADMIN_FAMILY_BATCH_SIZE) {
+			const batch = (
+				await Promise.all(
+					summaries.slice(i, i + ADMIN_FAMILY_BATCH_SIZE).map(async (summary) => {
+						const family = await getFamily(c.env.PUZZLE_METADATA, summary.id);
+						if (!family) return null;
+						return enrichFamilySummary(c.env.PUZZLE_METADATA, family);
+					})
+				)
+			).filter((family) => family !== null);
+			families.push(...batch);
+		}
 		return c.json({ families });
 	} catch (error) {
 		console.error('Failed to list puzzle families for admin', error);
@@ -1443,8 +1451,16 @@ admin.post('/puzzle-families', async (c) => {
 						metadataCleanup.error
 					);
 				}
+				// deletePuzzleMetadata logs its own failure; aggregate the result so a
+				// failed variant delete fails (not releases) the reservation below —
+				// a released key with orphaned variant metadata would mint a
+				// replacement family alongside the orphan.
 				for (const difficulty of PUZZLE_DIFFICULTIES) {
-					await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+					const variantCleanup = await deletePuzzleMetadata(
+						c.env.PUZZLE_METADATA,
+						variantIds[difficulty]
+					);
+					if (!variantCleanup.success) metadataCleanup = variantCleanup;
 				}
 			}
 			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
@@ -1514,8 +1530,29 @@ admin.post('/puzzle-families', async (c) => {
 					500
 				);
 			}
+			// A failed variant delete leaves orphaned variant metadata in KV —
+			// fail (not release) the reservation so a retry reclaims through the
+			// DO's serialized path instead of minting a replacement alongside it.
 			for (const difficulty of PUZZLE_DIFFICULTIES) {
-				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+				const variantCleanup = await deletePuzzleMetadata(
+					c.env.PUZZLE_METADATA,
+					variantIds[difficulty]
+				);
+				if (!variantCleanup.success) {
+					console.error(
+						`Failed to cleanup variant metadata (${difficulty}) after missing workflow binding:`,
+						variantCleanup.error
+					);
+					await failReservation();
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Puzzle may be stuck in processing; variant metadata cleanup failed after workflow misconfiguration'
+						},
+						500
+					);
+				}
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
@@ -1659,8 +1696,29 @@ admin.post('/puzzle-families', async (c) => {
 					500
 				);
 			}
+			// A failed variant delete leaves orphaned variant metadata in KV —
+			// fail (not release) the reservation so a retry reclaims through the
+			// DO's serialized path instead of minting a replacement alongside it.
 			for (const difficulty of PUZZLE_DIFFICULTIES) {
-				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+				const variantCleanup = await deletePuzzleMetadata(
+					c.env.PUZZLE_METADATA,
+					variantIds[difficulty]
+				);
+				if (!variantCleanup.success) {
+					console.error(
+						`Failed to cleanup variant metadata (${difficulty}) after workflow trigger failure:`,
+						variantCleanup.error
+					);
+					await failReservation();
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Puzzle may be stuck in processing; variant metadata cleanup failed after workflow trigger failure'
+						},
+						500
+					);
+				}
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {

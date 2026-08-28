@@ -758,12 +758,21 @@ export async function enrichFamilySummary(
 	family: PuzzleFamilyMetadata
 ): Promise<PuzzleFamilySummary> {
 	const variants = {} as Record<PuzzleDifficulty, PuzzleVariantSummary>;
+	// Ready families synthesize all variants without KV reads; otherwise the
+	// three variant lookups are independent — fetch them concurrently.
+	const pending: readonly PuzzleDifficulty[] = family.status === 'ready' ? [] : PUZZLE_DIFFICULTIES;
+	const loaded = await Promise.all(
+		pending.map((difficulty) => getPuzzle(kv, family.variants[difficulty]))
+	);
+	const loadedByDifficulty = new Map(
+		pending.map((difficulty, i) => [difficulty, loaded[i]] as const)
+	);
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		if (family.status === 'ready') {
 			variants[difficulty] = synthesizeVariantSummary(family, difficulty, 'ready');
 			continue;
 		}
-		const variant = await getPuzzle(kv, family.variants[difficulty]);
+		const variant = loadedByDifficulty.get(difficulty);
 		variants[difficulty] = variant
 			? variantSummaryFromMetadata(variant)
 			: synthesizeVariantSummary(family, difficulty, family.status);
@@ -829,12 +838,17 @@ export async function listFamiliesPage(
 
 	const page = filtered.slice(0, params.limit);
 
-	const families: PuzzleFamilySummary[] = [];
-	for (const entry of page) {
-		const family = await getFamily(kv, entry.id);
-		if (!family) continue;
-		families.push(await enrichFamilySummary(kv, family));
-	}
+	// Per-entry getFamily + enrich work is independent; fetch concurrently and
+	// keep the page's original order (nulls filtered below).
+	const families: PuzzleFamilySummary[] = (
+		await Promise.all(
+			page.map(async (entry) => {
+				const family = await getFamily(kv, entry.id);
+				if (!family) return null;
+				return enrichFamilySummary(kv, family);
+			})
+		)
+	).filter((family): family is PuzzleFamilySummary => family !== null);
 
 	const nextCursor =
 		filtered.length > params.limit ? encodeCursor(page[page.length - 1]) : undefined;
@@ -928,15 +942,6 @@ export async function uploadOriginalImage(
 	contentType: string
 ): Promise<void> {
 	await uploadFamilyOriginalImage(bucket, familyId, data, contentType);
-}
-
-export async function resolveVariantReferenceKey(
-	kv: KVNamespace,
-	variantId: string
-): Promise<string | null> {
-	const variant = await getPuzzle(kv, variantId);
-	if (!variant) return null;
-	return getFamilyOriginalKey(variant.familyId);
 }
 
 /**
@@ -1139,9 +1144,18 @@ export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord
 	}
 	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
 	const records: CleanupRecord[] = [];
-	for (const data of fetched) {
+	for (let i = 0; i < fetched.length; i++) {
+		const data = fetched[i];
 		if (isValidCleanupRecord(data)) {
 			records.push(data);
+		} else {
+			// A malformed record is silently unreapable — surface its KV key so an
+			// operator can inspect/remove it instead of wondering why cleanup
+			// never runs for that family.
+			console.error(
+				`listCleanupRecords: skipping invalid cleanup record at ${keys[i].name}:`,
+				data
+			);
 		}
 	}
 	return records;

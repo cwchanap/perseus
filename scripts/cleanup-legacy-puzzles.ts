@@ -422,6 +422,19 @@ function readArg(args: string[], name: string): string | undefined {
 	return value;
 }
 
+/**
+ * Access credentials are sent as headers on every request — refuse to send
+ * them over anything but HTTPS to a remote host (local dev servers excepted)
+ * so a mistyped --server/PERSEUS_SERVER cannot leak a service token.
+ */
+export function assertHttpsCredentialServer(server: string): void {
+	if (!server.startsWith('https:') && !isLocalServer(server)) {
+		throw new FatalError(
+			`Refusing to send Cloudflare Access credentials to non-HTTPS server: ${server}`
+		);
+	}
+}
+
 async function parseCliOptions(): Promise<CleanupOptions> {
 	const args = Bun.argv.slice(2);
 	if (args.includes('--help') || args.includes('-h')) {
@@ -445,6 +458,7 @@ Deletes legacy puzzle:* KV keys and puzzles/<oldId>/ R2 objects after replacemen
 		dotenv.PERSEUS_SERVER ??
 		'https://perseus.cwchanap.dev'
 	).replace(/\/+$/, '');
+	assertHttpsCredentialServer(server);
 	const migrationDir = readArg(args, '--migration-dir') ?? join(root, MIGRATION_DIR);
 	const skipAccess = args.includes('--skip-access') || isLocalServer(server);
 	const dryRun = args.includes('--dry-run');

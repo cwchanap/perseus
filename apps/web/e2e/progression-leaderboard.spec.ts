@@ -197,4 +197,27 @@ test.describe('Progression and leaderboards @smoke', () => {
 		await expect(page.getByTestId('completion-mastery')).toHaveCount(0);
 		await expect(page.getByTestId('completion-puzzle-rank')).toHaveCount(0);
 	});
+
+	test('deferred completion release surfaces the held awards payload', async ({ gameplayPage }) => {
+		const page = gameplayPage.page;
+
+		await gameplayPage.gotoFixture({
+			persona: 'authenticated',
+			completion: { kind: 'deferred-success', awards: PROGRESSION_AWARDS },
+			seedPreferences: IMMEDIATE_START
+		});
+
+		await gameplayPage.solveFixture();
+
+		// The completion POST is held by the deferred-success scenario; releasing
+		// fulfills it with the scenario's awards payload (not a bare ok:true), so
+		// the celebration modal renders the awards once the response lands.
+		expect(gameplayPage.completionHandle).not.toBeNull();
+		await gameplayPage.completionHandle!.release();
+		await expect(gameplayPage.celebrationModal()).toBeVisible();
+		await expect(page.getByTestId('completion-clear-points')).toHaveText('+100 SCORE');
+		await expect(page.getByTestId('completion-achievements')).toContainText('First Clear');
+		await expect(page.getByTestId('completion-mastery')).toContainText('Hintless');
+		await expect(page.getByTestId('completion-puzzle-rank')).toHaveText('FAMILY RANK #5');
+	});
 });

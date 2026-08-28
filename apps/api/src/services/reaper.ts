@@ -313,20 +313,11 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 				});
 
 				if (!deletion.ok) {
-					const action =
-						deletion.step === 'do-tombstone'
-							? 'do-tombstone-failed'
-							: deletion.step === 'r2'
-								? deletion.failedKeys
-									? 'r2-delete-partial'
-									: 'r2-delete-failed'
-								: deletion.step === 'kv-family'
-									? 'kv-delete-failed'
-									: deletion.step === 'kv-variant'
-										? 'kv-delete-failed'
-										: deletion.step === 'release'
-											? 'do-release-failed'
-											: 'd1-finish-failed';
+					const action = familyDeletionFailureAction(
+						'',
+						deletion.step,
+						deletion.failedKeys !== undefined && deletion.failedKeys.length > 0
+					);
 					console.error(
 						`Reaper: family cleanup failed for ${familyId} at ${deletion.step}:`,
 						deletion
@@ -368,13 +359,16 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 	return result;
 }
 
-function familyDeletionFailureAction(step: string, hasFailedKeys?: boolean): string {
-	if (step === 'do-tombstone') return 'cleanup-do-tombstone-failed';
+/** Map a family-deletion step failure to a reaper detail action, prefixed by
+ * the reap path ('', 'orphan-', 'cleanup-') so detail rows stay attributable
+ * to the scan that produced them. */
+function familyDeletionFailureAction(prefix: string, step: string, hasFailedKeys: boolean): string {
+	if (step === 'do-tombstone') return `${prefix}do-tombstone-failed`;
 	if (step === 'r2')
-		return hasFailedKeys ? 'cleanup-r2-delete-partial' : 'cleanup-r2-delete-failed';
-	if (step === 'kv-family' || step === 'kv-variant') return 'cleanup-kv-delete-failed';
-	if (step === 'release') return 'cleanup-do-release-failed';
-	return 'cleanup-d1-finish-failed';
+		return hasFailedKeys ? `${prefix}r2-delete-partial` : `${prefix}r2-delete-failed`;
+	if (step === 'kv-family' || step === 'kv-variant') return `${prefix}kv-delete-failed`;
+	if (step === 'release') return `${prefix}do-release-failed`;
+	return `${prefix}d1-finish-failed`;
 }
 
 /**
@@ -461,6 +455,7 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 					result.details.push({
 						puzzleId: familyId,
 						action: familyDeletionFailureAction(
+							'cleanup-',
 							deletion.step,
 							deletion.failedKeys !== undefined && deletion.failedKeys.length > 0
 						),
@@ -685,18 +680,11 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				});
 
 				if (!deletion.ok) {
-					const action =
-						deletion.step === 'do-tombstone'
-							? 'orphan-do-tombstone-failed'
-							: deletion.step === 'r2'
-								? deletion.failedKeys
-									? 'orphan-r2-delete-partial'
-									: 'orphan-r2-delete-failed'
-								: deletion.step === 'kv-family' || deletion.step === 'kv-variant'
-									? 'orphan-kv-delete-failed'
-									: deletion.step === 'release'
-										? 'orphan-do-release-failed'
-										: 'orphan-d1-finish-failed';
+					const action = familyDeletionFailureAction(
+						'orphan-',
+						deletion.step,
+						deletion.failedKeys !== undefined && deletion.failedKeys.length > 0
+					);
 					console.error(`Reaper orphan: family cleanup failed for ${familyId}:`, deletion);
 					result.errors++;
 					result.details.push({

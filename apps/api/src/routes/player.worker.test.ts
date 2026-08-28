@@ -1431,6 +1431,33 @@ describe('player lists (Worker)', () => {
 		});
 	});
 
+	it('GET puzzle-families returns 400 for a malformed cursor', async () => {
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.listPlayerPuzzleFamilies).mockRejectedValueOnce(
+			new shared.InvalidPlayerPuzzleFamilyCursorError('garbage')
+		);
+		const res = await buildApp().request(
+			'/api/player/puzzle-families?cursor=garbage',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toBe('Invalid puzzle family cursor');
+	});
+
+	it('GET puzzle-families rethrows unexpected listing errors', async () => {
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.listPlayerPuzzleFamilies).mockRejectedValueOnce(new Error('D1 unavailable'));
+		const res = await buildApp().request(
+			'/api/player/puzzle-families',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(500);
+	});
+
 	it('GET puzzle-families requires authentication', async () => {
 		const res = await buildApp().request('/api/player/puzzle-families', {}, DUMMY_ENV);
 		expect(res.status).toBe(401);

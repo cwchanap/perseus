@@ -26,6 +26,7 @@ import {
 	listOverallLeaderboard,
 	getPlayerProgressionSummary,
 	InvalidPlayerStatsCursorError,
+	InvalidPlayerPuzzleFamilyCursorError,
 	deletePuzzleStats,
 	insertPuzzleFamilyOwnership,
 	ensurePuzzleFamilyOwnership,
@@ -2061,7 +2062,7 @@ describe('listPlayerPuzzleFamilies composite cursor against real D1', () => {
 		expect(result.rows[0].id).toBe('fam0');
 	});
 
-	it('garbage cursor returns no rows', async () => {
+	it('garbage cursor throws InvalidPlayerPuzzleFamilyCursorError', async () => {
 		await insertPuzzleFamilyOwnership(db, {
 			id: 'fam1',
 			ownerId: 'p1',
@@ -2070,8 +2071,12 @@ describe('listPlayerPuzzleFamilies composite cursor against real D1', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		const result = await listPlayerPuzzleFamilies(db, 'p1', { limit: 10, cursor: 'garbage' });
-		expect(result.rows).toHaveLength(0);
+		await expect(
+			listPlayerPuzzleFamilies(db, 'p1', { limit: 10, cursor: 'garbage' })
+		).rejects.toBeInstanceOf(InvalidPlayerPuzzleFamilyCursorError);
+		await expect(
+			listPlayerPuzzleFamilies(db, 'p1', { limit: 10, cursor: 'not-a-number|id' })
+		).rejects.toBeInstanceOf(InvalidPlayerPuzzleFamilyCursorError);
 	});
 
 	it('floors fractional limits to an integer', async () => {

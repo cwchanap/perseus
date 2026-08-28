@@ -25,7 +25,6 @@ import {
 	getImage,
 	deleteFamilyCleanupAssets,
 	invalidateGalleryIndex,
-	resolveVariantReferenceKey,
 	writeCleanupRecord,
 	listCleanupRecords,
 	deleteCleanupRecord,
@@ -1051,6 +1050,29 @@ describe('listPuzzlesPage', () => {
 		);
 		consoleSpy.mockRestore();
 	});
+
+	it('filters page entries whose family metadata disappeared after the index was cached', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(90);
+		const familyB = pageFamilyId(91);
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 2000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 1000 });
+
+		// First call builds and caches the gallery index containing both.
+		await listFamiliesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+		// Between runs, family B's KV entry vanishes (deletion/eventual
+		// consistency) while the cached index still lists it: the page loop's
+		// getFamily returns null and B must be filtered without losing A.
+		kv._store.delete(`family:${familyB}`);
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20
+		});
+
+		expect(result.total).toBe(2);
+		expect(result.families.map((family) => family.id)).toEqual([familyA]);
+	});
 });
 
 describe('Family summaries and variant references', () => {
@@ -1084,19 +1106,6 @@ describe('Family summaries and variant references', () => {
 			pieceCount: 16,
 			status: 'processing'
 		});
-	});
-
-	it('resolves a stored variant to its family original and unknown variants to null', async () => {
-		const kv = createMockKV();
-		const variant = makeVariantMeta(TEST_VARIANT_ID, 1000);
-		kv._store.set(`puzzle:${variant.id}`, JSON.stringify(variant));
-
-		expect(await resolveVariantReferenceKey(kv as unknown as KVNamespace, TEST_VARIANT_ID)).toBe(
-			`families/${TEST_FAMILY_ID}/original`
-		);
-		expect(
-			await resolveVariantReferenceKey(kv as unknown as KVNamespace, 'unknown-variant')
-		).toBeNull();
 	});
 });
 

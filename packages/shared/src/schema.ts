@@ -1,6 +1,10 @@
 import { sqliteTable, text, integer, primaryKey, index, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import { MAX_COMPLETION_TIME_SECONDS, PUZZLE_DIFFICULTIES } from '@perseus/types';
+import {
+	MAX_COMPLETION_TIME_SECONDS,
+	PUZZLE_ASPECT_RATIOS,
+	PUZZLE_DIFFICULTIES
+} from '@perseus/types';
 
 export const playerProfiles = sqliteTable('player_profiles', {
 	playerId: text('player_id').primaryKey(),
@@ -74,6 +78,18 @@ export const puzzleBestTimes = sqliteTable(
 		pk: primaryKey({ columns: [t.playerId, t.puzzleId, t.resultClass] }),
 		playerIdx: index('idx_pbt_player').on(t.playerId),
 		familyIdx: index('idx_pbt_family').on(t.familyId),
+		// Covering index for listPuzzleLeaderboard: equality on
+		// family/difficulty/result_class then the exact ORDER BY
+		// (best_time_seconds, achieved_at, player_id), so the leaderboard top-N
+		// and rank-count queries are index-only scans.
+		familyDifficultyClassTimeIdx: index('idx_pbt_family_difficulty_class_time').on(
+			t.familyId,
+			t.difficulty,
+			t.resultClass,
+			t.bestTimeSeconds,
+			t.achievedAt,
+			t.playerId
+		),
 		resultClassCheck: check(
 			'pbt_result_class_check',
 			sql`${t.resultClass} IN ('standard_timed', 'rotation_timed')`
@@ -170,7 +186,7 @@ export const puzzleFamilies = sqliteTable(
 		),
 		aspectRatioCheck: check(
 			'puzzle_families_aspect_ratio_check',
-			sql`${t.aspectRatio} IN ('1:1', '4:3', '3:4')`
+			sql`${t.aspectRatio} IN (${sql.raw(PUZZLE_ASPECT_RATIOS.map((r) => `'${r}'`).join(', '))})`
 		)
 	})
 );
