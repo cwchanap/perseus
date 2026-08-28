@@ -17,39 +17,29 @@ const dbContextMock = vi.hoisted(() => ({
 	completionWrites: {
 		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
 		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
-		finishFamilyFirstClears: vi.fn().mockResolvedValue(undefined),
 		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
 	}
 }));
 
-vi.mock('../../services/storage.worker', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
-	return {
-		...actual,
-		commitIdempotencyKey: vi.fn(),
-		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
-		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
-		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
-		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
-		deletePuzzleAssets: vi.fn(),
-		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
-		deleteMetadataDO: vi.fn(),
-		failIdempotencyKey: vi.fn(),
-		getAuthoritativeStatus: vi.fn(),
-		getPuzzle: vi.fn(),
-		getFamily: vi.fn(),
-		listFamilies: vi.fn(),
-		enrichFamilySummary: vi.fn(),
-		originalImageExists: vi.fn().mockResolvedValue(false),
-		puzzleExists: vi.fn().mockResolvedValue(false),
-		releaseIdempotencyKey: vi.fn(),
-		reserveIdempotencyKey: vi.fn(),
-		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
-		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
-		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
-		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
-	};
-});
+vi.mock('../../services/storage.worker', () => ({
+	commitIdempotencyKey: vi.fn(),
+	createPuzzleMetadata: vi.fn(),
+	deletePuzzleMetadata: vi.fn(),
+	deletePuzzleAssets: vi.fn(),
+	deleteMetadataDO: vi.fn(),
+	failIdempotencyKey: vi.fn(),
+	getAuthoritativeStatus: vi.fn(),
+	getPuzzle: vi.fn(),
+	listPuzzles: vi.fn(),
+	originalImageExists: vi.fn().mockResolvedValue(false),
+	puzzleExists: vi.fn().mockResolvedValue(false),
+	releaseIdempotencyKey: vi.fn(),
+	reserveIdempotencyKey: vi.fn(),
+	uploadOriginalImage: vi.fn(),
+	deleteOriginalImage: vi.fn(),
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
+}));
 
 vi.mock('../../middleware/rate-limit.worker', () => ({
 	__resetRateLimitStore: vi.fn()
@@ -74,12 +64,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
-import {
-	cleanupRecordMatcher,
-	makeFamilyMetadata,
-	PIECE_COUNTS_1_1,
-	variantIdsForFamily
-} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
@@ -102,6 +86,7 @@ const baseEnv = {
 function buildFormData(): FormData {
 	const formData = new FormData();
 	formData.append('name', 'Test Puzzle');
+	formData.append('pieceCount', '225');
 	const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 	formData.append('image', blob, 'test.png');
 	return formData;
@@ -114,7 +99,7 @@ function createRequest(idempotencyKey?: string): Request {
 	if (idempotencyKey) {
 		headers['Idempotency-Key'] = idempotencyKey;
 	}
-	return new Request('http://localhost/puzzle-families', {
+	return new Request('http://localhost/puzzles', {
 		method: 'POST',
 		headers,
 		body: buildFormData()
@@ -123,21 +108,34 @@ function createRequest(idempotencyKey?: string): Request {
 
 function mockSuccessfulCreate() {
 	vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
-	vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 	vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 	vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 	vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
-	vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 	vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
-	vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({ success: true, failedKeys: [] });
+	vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 	vi.mocked(storage.deleteMetadataDO).mockResolvedValue(undefined);
 	vi.mocked(storage.releaseIdempotencyKey).mockResolvedValue(undefined);
 	vi.mocked(storage.failIdempotencyKey).mockResolvedValue(undefined);
 	vi.mocked(storage.originalImageExists).mockResolvedValue(false);
 	vi.mocked(storage.writeCleanupRecord).mockResolvedValue(undefined);
-	vi.mocked(storage.getFamily).mockImplementation(async (_kv, id: string) =>
-		makeFamilyMetadata(id, 'processing')
-	);
+}
+
+function makeProcessingPuzzle(id: string): any {
+	return {
+		id,
+		name: 'Processing Puzzle',
+		pieceCount: 225,
+		gridCols: 15,
+		gridRows: 15,
+		imageWidth: 3840,
+		imageHeight: 3840,
+		createdAt: 1700000000000,
+		status: 'processing',
+		aspectRatio: '1:1',
+		version: 1,
+		pieces: [],
+		progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
+	};
 }
 
 // Pin Math.random to its midpoint for this suite. Production applies ±20%
@@ -237,7 +235,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 	) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'conflict-puzzle'
+			puzzleId: 'conflict-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
@@ -286,7 +284,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
 		expect(terminateFn).toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 	});
 
 	it('tombstones DO and defers to reaper when poll status fails after terminate succeeds', async () => {
@@ -303,7 +301,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
 		expect(terminateFn).toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 	});
 
 	it('tombstones DO and defers to reaper when workflow does not stop within deadline', async () => {
@@ -321,7 +319,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
 		expect(terminateFn).toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 	});
 });
 
@@ -342,12 +340,10 @@ describe('Admin Worker — committed processing reservation DO status check', ()
 	function setupCommittedProcessing(workflowStatus: string) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			familyId: 'committed-puzzle',
+			puzzleId: 'committed-puzzle',
 			status: 'committed'
 		} as any);
-		vi.mocked(storage.getFamily).mockResolvedValue(
-			makeFamilyMetadata('committed-puzzle', 'processing')
-		);
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makeProcessingPuzzle('committed-puzzle'));
 		const workflow = {
 			get: vi.fn(async () => ({
 				status: vi.fn().mockResolvedValue({ status: workflowStatus }),
@@ -421,7 +417,7 @@ describe('Admin Worker — R2 probe after upload error', () => {
 		// which makes the fail/release reservation cleanup paths reachable.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'r2-probe-puzzle'
+			puzzleId: 'r2-probe-puzzle'
 		} as any);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
@@ -494,7 +490,7 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 	) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'alive-puzzle'
+			puzzleId: 'alive-puzzle'
 		} as any);
 		// create() throws (ambiguous), but workflow is alive
 		const workflow = {
@@ -530,18 +526,17 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		expect(body.message).toContain('puzzle cleaned up');
 		expect(terminateFn).toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'alive-puzzle');
-		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(
 			env.PUZZLES_BUCKET,
 			'alive-puzzle',
-			variantIdsForFamily('alive-puzzle'),
-			PIECE_COUNTS_1_1
+			225
 		);
-		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'alive-puzzle');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'alive-puzzle');
 		// Cleanup record written up-front (before terminate), then deleted
 		// after every cleanup step succeeds.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('alive-puzzle')
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
 		);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'alive-puzzle');
 		// Record is written BEFORE any terminate/tombstone/R2/KV work.
@@ -565,7 +560,7 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		expect(body.message).toContain('workflow termination pending');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('alive-puzzle')
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
 		);
 		// Record written before terminate was called.
 		expect(vi.mocked(storage.writeCleanupRecord).mock.invocationCallOrder[0]).toBeLessThan(
@@ -575,7 +570,7 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 	});
 
@@ -595,12 +590,12 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('DO tombstone failed');
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		// A cleanup record must be written up-front so the reaper can retry
 		// the DO tombstone and clean up R2/KV on its next run.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('alive-puzzle')
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
 		);
 		// Record must NOT be deleted — the reaper needs it.
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
@@ -615,7 +610,7 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 			.mockResolvedValue({ status: 'terminated' }); // poll
 
 		const env = setupAliveCommitConflict(terminateFn, statusFn);
-		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
+		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
 			success: false,
 			failedKeys: ['puzzles/alive-puzzle/pieces/0.png']
 		});
@@ -625,11 +620,11 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('R2 cleanup partial');
-		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		// Cleanup record was written up-front and must remain for reaper retry.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('alive-puzzle')
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
 		);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
@@ -682,8 +677,8 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		// cannot recover.
 		expect(terminateFn).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
-		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 });
 
@@ -708,7 +703,7 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 	) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'dead-puzzle'
+			puzzleId: 'dead-puzzle'
 		} as any);
 		// create() succeeds
 		const workflow = {
@@ -741,7 +736,7 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		expect(body.message).toContain('workflow termination pending');
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 	});
 
@@ -760,12 +755,12 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('DO tombstone failed');
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		// A cleanup record must be written so the reaper can retry the DO
 		// tombstone and clean up R2/KV on its next run.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('dead-puzzle')
+			expect.objectContaining({ puzzleId: 'dead-puzzle' })
 		);
 	});
 
@@ -787,13 +782,13 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('KV metadata cleanup failed');
-		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
 		// The cleanup record must NOT be deleted on KV failure — the reaper
 		// needs it to retry KV (and R2/DO) cleanup on its next run.
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		// D1 ownership cleanup must not run either — the reaper handles it
 		// after KV succeeds.
-		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
 	});
 
 	it('deletes cleanup record and reports cleaned up on full success', async () => {
@@ -812,17 +807,12 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('puzzle cleaned up');
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'dead-puzzle');
-		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
-			env.PUZZLES_BUCKET,
-			'dead-puzzle',
-			variantIdsForFamily('dead-puzzle'),
-			PIECE_COUNTS_1_1
-		);
-		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'dead-puzzle', 225);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
 		// Cleanup record written up-front, then deleted after full success.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('dead-puzzle')
+			expect.objectContaining({ puzzleId: 'dead-puzzle' })
 		);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
 	});
@@ -844,8 +834,8 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		// cannot recover.
 		expect(terminateFn).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
-		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
 	it('preserves cleanup record when R2 cleanup fails partially', async () => {
@@ -856,7 +846,7 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 			.mockResolvedValue({ status: 'terminated' });
 
 		const env = setupDeadCommitConflict(terminateFn, statusFn);
-		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
+		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
 			success: false,
 			failedKeys: ['puzzles/dead-puzzle/pieces/0.png']
 		});
@@ -866,7 +856,7 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('R2 cleanup partial');
-		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		// Record written up-front must remain (not deleted) for reaper retry.
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
@@ -887,44 +877,43 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		vi.restoreAllMocks();
 	});
 
-	it('returns 500 and retains cleanup record when idempotency key release fails', async () => {
-		const familyId = '550e8400-e29b-41d4-a716-446655440000';
-		vi.mocked(storage.getFamily).mockResolvedValue(
-			makeFamilyMetadata(familyId, 'ready', { idempotencyKey: 'idem-key-1' })
-		);
-		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
+	it('logs but returns 204 when idempotency key release fails', async () => {
+		const puzzleId = '550e8400-e29b-41d4-a716-446655440000';
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: puzzleId,
+			name: 'Test',
+			pieceCount: 4,
+			status: 'ready',
+			idempotencyKey: 'idem-key-1'
+		} as any);
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
-		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
-			success: true,
-			failedKeys: []
-		});
+		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 		vi.mocked(storage.releaseIdempotencyKey).mockRejectedValue(new Error('DO unavailable'));
 
-		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
+		const req = new Request(`http://localhost/puzzle-delete/${puzzleId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, { ...baseEnv } as any);
-		expect(res.status).toBe(500);
+		expect(res.status).toBe(204);
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			baseEnv.PUZZLE_METADATA_DO,
 			'idem-key-1',
-			familyId
+			puzzleId
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			`${familyId}-easy`,
+			puzzleId,
 			expect.any(Number)
 		);
 		expect(vi.mocked(storage.deleteMetadataDO).mock.invocationCallOrder[0]).toBeGreaterThan(
 			dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
 		);
+		expect(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
+		);
 		expect(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
-		).toBeLessThan(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]);
-		expect(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]).toBeLessThan(
-			vi.mocked(storage.deleteCleanupRecord).mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER
-		);
-		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		).toBeLessThan(vi.mocked(storage.deleteCleanupRecord).mock.invocationCallOrder[0]);
 	});
 });
 
@@ -946,7 +935,7 @@ describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () =
 	function setupDeadCommitConflictWithGetThrow(getErr: Error) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'get-throw-puzzle'
+			puzzleId: 'get-throw-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
@@ -976,13 +965,12 @@ describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () =
 		// Cleanup proceeds (terminate returns true for not_found) — all
 		// assets are cleaned up and the record is deleted.
 		expect(body.message).toContain('puzzle cleaned up');
-		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(
 			env.PUZZLES_BUCKET,
 			'get-throw-puzzle',
-			variantIdsForFamily('get-throw-puzzle'),
-			PIECE_COUNTS_1_1
+			225
 		);
-		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
 			'get-throw-puzzle'
 		);
@@ -1001,11 +989,11 @@ describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () =
 		const body = (await res.json()) as any;
 		// Liveness is unconfirmed, so cleanup retains the record without fence/source mutation.
 		expect(body.message).toContain('workflow termination pending');
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			cleanupRecordMatcher('get-throw-puzzle')
+			expect.objectContaining({ puzzleId: 'get-throw-puzzle' })
 		);
 	});
 });
@@ -1028,7 +1016,7 @@ describe('Admin Worker — required cleanup record delete failure retains retry 
 	it('retains retry state when deleteCleanupRecord throws', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'record-del-puzzle'
+			puzzleId: 'record-del-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
@@ -1053,17 +1041,15 @@ describe('Admin Worker — required cleanup record delete failure retains retry 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('required cleanup failed');
-		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalled();
-		expect(storage.deleteFamilyMetadata).toHaveBeenCalled();
-		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
-			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-				`record-del-puzzle-${difficulty}`,
-				expect.any(Number)
-			);
-			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
-				`record-del-puzzle-${difficulty}`
-			);
-		}
+		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			'record-del-puzzle',
+			expect.any(Number)
+		);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+			'record-del-puzzle'
+		);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(
 			baseEnv.PUZZLE_METADATA,
 			'record-del-puzzle'
@@ -1089,7 +1075,7 @@ describe('Admin Worker — R2 probe releaseReservation after cleanup success', (
 	it('releases reservation when originalImageExists is true and deleteOriginalImage succeeds', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'probe-release-puzzle'
+			puzzleId: 'probe-release-puzzle'
 		} as any);
 		vi.mocked(storage.originalImageExists).mockResolvedValue(true);
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
@@ -1128,7 +1114,7 @@ describe('Admin Worker — ambiguous alive create transient commit failure', () 
 	it('logs and returns 500 when commit fails with non-conflict error after ambiguous alive create', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'alive-transient-puzzle'
+			puzzleId: 'alive-transient-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockRejectedValue(new Error('RPC timeout')),
@@ -1155,7 +1141,7 @@ describe('Admin Worker — ambiguous alive create transient commit failure', () 
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 		expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
 		// No cleanup attempted — workflow may still be alive.
-		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 	});
 });
 
@@ -1180,13 +1166,13 @@ describe('Admin Worker — idempotency KV retry budget exceeded', () => {
 		// with a failed release). getPuzzle always returns null.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			familyId: 'deleted-puzzle',
+			puzzleId: 'deleted-puzzle',
 			status: 'committed'
 		} as any);
 		// getPuzzle returns null AND jumps the system clock forward by
 		// 5000ms on each call, so the budget check (3000ms) triggers on
 		// the first iteration of the retry loop.
-		vi.mocked(storage.getFamily).mockImplementation(async () => {
+		vi.mocked(storage.getPuzzle).mockImplementation(async () => {
 			vi.setSystemTime(Date.now() + 5000);
 			return null;
 		});
@@ -1195,15 +1181,14 @@ describe('Admin Worker — idempotency KV retry budget exceeded', () => {
 		// The re-reserve (probeReleaseAndRereclaimOrFail) wins.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValueOnce({
 			existing: true,
-			familyId: 'deleted-puzzle',
+			puzzleId: 'deleted-puzzle',
 			status: 'committed'
 		} as any);
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValueOnce({
 			existing: false,
-			familyId: 'budget-puzzle'
+			puzzleId: 'budget-puzzle'
 		} as any);
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
-		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		const workflow = {

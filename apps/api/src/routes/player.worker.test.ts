@@ -7,14 +7,6 @@ vi.mock('../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
-vi.mock('@perseus/types', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@perseus/types')>();
-	return {
-		...actual,
-		coercePuzzleStatus: vi.fn(actual.coercePuzzleStatus)
-	};
-});
-
 // Mock the shared repositories with an in-memory store so the route's
 // override-preservation logic (PATCH keeps existing avatarUrl) is exercised.
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -31,7 +23,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	// In-memory stores backing the mocked list repositories so the list
 	// routes can be exercised end-to-end without a real D1 binding.
 	const puzzlesStore = new Map<string, unknown[]>();
-	const familiesStore = new Map<string, unknown[]>();
 	const statsStore = new Map<string, unknown[]>();
 	return {
 		...actual,
@@ -42,7 +33,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		// Exposed for test-only reset between cases.
 		__store: store,
 		__puzzlesStore: puzzlesStore,
-		__familiesStore: familiesStore,
 		__statsStore: statsStore,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
 		// Field-specific upserts mirror the real ON CONFLICT behavior: each
@@ -82,26 +72,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			puzzlesSolved: 0,
 			totalCompletions: 0
 		})),
-		getPlayerProgressionSummary: vi.fn(() => ({
-			score: 0,
-			rank: null,
-			easyClears: 0,
-			normalClears: 0,
-			hardClears: 0,
-			achievementsUnlocked: 0,
-			achievementsTotal: 9,
-			masteryEarned: 0
-		})),
-		ensurePublicDisplayName: vi.fn().mockResolvedValue(undefined),
 		listPlayerPuzzles: vi.fn(
 			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
-				nextCursor: undefined
-			})
-		),
-		listPlayerPuzzleFamilies: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
-				rows: familiesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
 		),
@@ -226,44 +199,6 @@ describe('player profile routes (Worker)', () => {
 		expect(body.name).toBe('Google Name');
 	});
 
-	it('GET progression returns the authenticated player summary', async () => {
-		const shared = await import('@perseus/shared');
-		vi.mocked(shared.getPlayerProgressionSummary).mockResolvedValueOnce({
-			score: 325,
-			rank: 2,
-			easyClears: 1,
-			normalClears: 1,
-			hardClears: 0,
-			achievementsUnlocked: 2,
-			achievementsTotal: 9,
-			masteryEarned: 3
-		});
-
-		const res = await buildApp().request(
-			'/api/player/progression',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as any;
-		expect(body).toEqual({
-			score: 325,
-			rank: 2,
-			easyClears: 1,
-			normalClears: 1,
-			hardClears: 0,
-			achievementsUnlocked: 2,
-			achievementsTotal: 9,
-			masteryEarned: 3
-		});
-		expect(shared.getPlayerProgressionSummary).toHaveBeenCalledWith({}, 'p1');
-	});
-
-	it('GET progression returns 401 without auth', async () => {
-		const res = await buildApp().request('/api/player/progression', {}, DUMMY_ENV);
-		expect(res.status).toBe(401);
-	});
-
 	it('PATCH rejects non-string displayName with 400', async () => {
 		const res = await buildApp().request(
 			'/api/player/profile',
@@ -351,22 +286,6 @@ describe('player profile routes (Worker)', () => {
 		);
 		expect(res.status).toBe(400);
 		expect(((await res.json()) as any).error).toBe('bad_request');
-	});
-
-	it('PATCH rejects an email-shaped displayName with 400', async () => {
-		const res = await buildApp().request(
-			'/api/player/profile',
-			{
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
-				body: JSON.stringify({ displayName: 'player@example.com' })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('bad_request');
-		expect(body.message).toBe('displayName is not allowed');
 	});
 
 	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
@@ -582,203 +501,6 @@ describe('player avatar route (Worker)', () => {
 		expect(stagingKeys).toHaveLength(0);
 	});
 
-	it('deletes the losing versioned object when a later upload wins after a prior token', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const shared = await import('@perseus/shared');
-		const profileStore = (shared as any).__store as Map<string, any>;
-		const priorToken = 'prior-token';
-		profileStore.set('p1', {
-			displayName: null,
-			avatarUrl: '/api/player/p1/avatar',
-			avatarUpdateToken: priorToken
-		});
-		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
-			async (_db, playerId, avatarUrl, updatedAt) => {
-				profileStore.set(playerId, {
-					displayName: null,
-					avatarUrl,
-					updatedAt,
-					avatarUpdateToken: 'winning-token'
-				});
-			}
-		);
-
-		const form = new FormData();
-		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(200);
-		expect(bucket.put).toHaveBeenCalledTimes(1);
-		const versionedKey = vi.mocked(bucket.put).mock.calls[0][0];
-		expect(bucket.delete).toHaveBeenCalledWith(versionedKey);
-		expect(bucket.delete).not.toHaveBeenCalledWith(`avatars/p1/${priorToken}`);
-	});
-
-	it('deletes the losing versioned object when a later upload wins from no prior token', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const shared = await import('@perseus/shared');
-		const profileStore = (shared as any).__store as Map<string, any>;
-		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
-			async (_db, playerId, avatarUrl, updatedAt) => {
-				profileStore.set(playerId, {
-					displayName: null,
-					avatarUrl,
-					updatedAt,
-					avatarUpdateToken: 'winning-token'
-				});
-			}
-		);
-
-		const form = new FormData();
-		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(200);
-		expect(bucket.put).toHaveBeenCalledTimes(1);
-		const versionedKey = vi.mocked(bucket.put).mock.calls[0][0];
-		expect(bucket.delete).toHaveBeenCalledWith(versionedKey);
-	});
-
-	it('logs and continues when the avatar cleanup re-read throws', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const shared = await import('@perseus/shared');
-		const priorToken = 'prior-token';
-		vi.mocked(shared.getProfileOverride)
-			.mockResolvedValueOnce({
-				displayName: null,
-				avatarUrl: '/api/player/p1/avatar',
-				avatarUpdateToken: priorToken
-			} as any)
-			.mockRejectedValueOnce(new Error('D1 re-read down'));
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const form = new FormData();
-		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(200);
-		expect(bucket.delete).not.toHaveBeenCalled();
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar upload: failed to re-read override for cleanup:',
-			expect.any(Error)
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it('logs when the losing versioned object delete fails after a prior token', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const shared = await import('@perseus/shared');
-		const profileStore = (shared as any).__store as Map<string, any>;
-		profileStore.set('p1', {
-			displayName: null,
-			avatarUrl: '/api/player/p1/avatar',
-			avatarUpdateToken: 'prior-token'
-		});
-		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
-			async (_db, playerId, avatarUrl, updatedAt) => {
-				profileStore.set(playerId, {
-					displayName: null,
-					avatarUrl,
-					updatedAt,
-					avatarUpdateToken: 'winning-token'
-				});
-			}
-		);
-		vi.mocked(bucket.delete).mockRejectedValueOnce(new Error('R2 delete down'));
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const form = new FormData();
-		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(200);
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar upload: failed to delete losing R2 object:',
-			expect.any(Error)
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it('logs when the losing versioned object delete fails from no prior token', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const shared = await import('@perseus/shared');
-		const profileStore = (shared as any).__store as Map<string, any>;
-		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
-			async (_db, playerId, avatarUrl, updatedAt) => {
-				profileStore.set(playerId, {
-					displayName: null,
-					avatarUrl,
-					updatedAt,
-					avatarUpdateToken: 'winning-token'
-				});
-			}
-		);
-		vi.mocked(bucket.delete).mockRejectedValueOnce(new Error('R2 delete down'));
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const form = new FormData();
-		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(200);
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar upload: failed to delete losing R2 object:',
-			expect.any(Error)
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it('logs when the no-prior-token cleanup re-read throws', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const shared = await import('@perseus/shared');
-		vi.mocked(shared.getProfileOverride)
-			.mockResolvedValueOnce(null)
-			.mockRejectedValueOnce(new Error('D1 re-read down'));
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const form = new FormData();
-		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(200);
-		expect(bucket.delete).not.toHaveBeenCalled();
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar upload: failed to re-read override for cleanup:',
-			expect.any(Error)
-		);
-		consoleSpy.mockRestore();
-	});
-
 	it('GET avatar serves the stored image from R2', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
@@ -872,27 +594,6 @@ describe('player avatar route (Worker)', () => {
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as any;
 		expect(body.message).toBe('Image is corrupted or truncated');
-		expect(bucket.put).not.toHaveBeenCalled();
-	});
-
-	it('POST avatar rejects dimensions exceeding the maximum with 400', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const oversizedPng = new Uint8Array(PNG_BYTES);
-		// MAX_AVATAR_DIMENSION is 512 in the route; use 513x1 to reach the
-		// dimension guard before the structural end-marker check.
-		new DataView(oversizedPng.buffer).setUint32(16, 513);
-		const form = new FormData();
-		form.append('avatar', new Blob([oversizedPng], { type: 'image/png' }), 'a.png');
-
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-
-		expect(res.status).toBe(400);
-		expect(((await res.json()) as any).message).toContain('dimensions must be');
 		expect(bucket.put).not.toHaveBeenCalled();
 	});
 
@@ -1388,51 +1089,41 @@ describe('player lists (Worker)', () => {
 	beforeEach(async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__puzzlesStore.clear();
-		(shared as any).__familiesStore.clear();
 		(shared as any).__statsStore.clear();
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 	});
 
-	it('GET puzzle-families returns owned families', async () => {
+	it('GET puzzles returns owned puzzles', async () => {
 		const shared = await import('@perseus/shared');
-		(shared as any).__familiesStore.set('p1', [
-			{
-				id: 'a0000000-0000-4000-8000-000000000001',
-				name: 'Cat',
-				aspectRatio: '1:1',
-				status: 'ready',
-				createdAt: 1
-			}
+		(shared as any).__puzzlesStore.set('p1', [
+			{ id: 'pz1', name: 'Cat', pieceCount: 4, status: 'ready', createdAt: 1 }
 		]);
 		const res = await buildApp().request(
-			'/api/player/puzzle-families',
+			'/api/player/puzzles',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		expect(body.families).toHaveLength(1);
-		expect(body.families[0].name).toBe('Cat');
-		expect(body.families[0].aspectRatio).toBe('1:1');
-		expect(body.families[0].pieceCount).toBeUndefined();
-		expect(body.families[0].variants).toBeUndefined();
+		expect(body.puzzles).toHaveLength(1);
+		expect(body.puzzles[0].name).toBe('Cat');
 	});
 
-	it('GET puzzle-families forwards limit and cursor query params', async () => {
-		const { listPlayerPuzzleFamilies } = await import('@perseus/shared');
+	it('GET puzzles forwards limit and cursor query params', async () => {
+		const { listPlayerPuzzles } = await import('@perseus/shared');
 		await buildApp().request(
-			'/api/player/puzzle-families?limit=5&cursor=100',
+			'/api/player/puzzles?limit=5&cursor=100',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
-		expect(listPlayerPuzzleFamilies).toHaveBeenCalledWith(expect.anything(), 'p1', {
+		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
 			cursor: '100'
 		});
 	});
 
-	it('GET puzzle-families requires authentication', async () => {
-		const res = await buildApp().request('/api/player/puzzle-families', {}, DUMMY_ENV);
+	it('GET puzzles requires authentication', async () => {
+		const res = await buildApp().request('/api/player/puzzles', {}, DUMMY_ENV);
 		expect(res.status).toBe(401);
 	});
 
@@ -1440,11 +1131,9 @@ describe('player lists (Worker)', () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__statsStore.set('p1', [
 			{
-				familyId: 'fam-1',
-				familyName: 'Cat',
-				difficulty: 'easy',
-				standardBestTimeSeconds: 90,
-				rotationBestTimeSeconds: null,
+				puzzleId: 'pz1',
+				puzzleName: 'Cat',
+				bestTimeSeconds: 90,
 				totalCompletions: 1,
 				firstCompletedAt: 1,
 				lastCompletedAt: 1
@@ -1454,18 +1143,16 @@ describe('player lists (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.stats).toHaveLength(1);
-		expect(body.stats[0].standardBestTimeSeconds).toBe(90);
+		expect(body.stats[0].bestTimeSeconds).toBe(90);
 	});
 
 	it('GET stats returns a variant-only row and profile totals from the combined model', async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__statsStore.set('p1', [
 			{
-				familyId: 'fam-variant',
-				familyName: 'Variant Result',
-				difficulty: 'normal',
-				standardBestTimeSeconds: null,
-				rotationBestTimeSeconds: null,
+				puzzleId: 'variant-only',
+				puzzleName: 'Variant Result',
+				bestTimeSeconds: null,
 				totalCompletions: 2,
 				firstCompletedAt: 100,
 				lastCompletedAt: 200
@@ -1486,11 +1173,9 @@ describe('player lists (Worker)', () => {
 		expect(await statsResponse.json()).toEqual({
 			stats: [
 				{
-					familyId: 'fam-variant',
-					familyName: 'Variant Result',
-					difficulty: 'normal',
-					standardBestTimeSeconds: null,
-					rotationBestTimeSeconds: null,
+					puzzleId: 'variant-only',
+					puzzleName: 'Variant Result',
+					bestTimeSeconds: null,
 					totalCompletions: 2,
 					firstCompletedAt: 100,
 					lastCompletedAt: 200
@@ -1508,13 +1193,13 @@ describe('player lists (Worker)', () => {
 	it('GET stats forwards limit and v2 cursor query params', async () => {
 		const { listPlayerStats } = await import('@perseus/shared');
 		await buildApp().request(
-			'/api/player/stats?limit=10&cursor=v3%7C1%7C%7Cfam-variant%7Cnormal',
+			'/api/player/stats?limit=10&cursor=v2%7C1%7C%7Cvariant-only',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
 		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 10,
-			cursor: 'v3|1||fam-variant|normal'
+			cursor: 'v2|1||variant-only'
 		});
 	});
 
@@ -1580,7 +1265,6 @@ describe('player response validation (Worker)', () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__store?.clear();
 		(shared as any).__puzzlesStore?.clear();
-		(shared as any).__familiesStore?.clear();
 		(shared as any).__statsStore?.clear();
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 	});
@@ -1601,37 +1285,13 @@ describe('player response validation (Worker)', () => {
 		expect(((await res.json()) as any).error).toBe('internal_error');
 	});
 
-	it('GET progression returns 500 when the summary fails validation', async () => {
+	it('GET puzzles returns 500 when a projected row fails validation', async () => {
 		const shared = await import('@perseus/shared');
-		vi.mocked(shared.getPlayerProgressionSummary).mockResolvedValueOnce({ score: 0 } as any);
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const res = await buildApp().request(
-			'/api/player/progression',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-
-		expect(res.status).toBe(500);
-		expect(await res.json()).toEqual({
-			error: 'internal_error',
-			message: 'Failed to build progression summary'
-		});
-		consoleSpy.mockRestore();
-	});
-
-	it('GET puzzle-families returns 500 when a projected row fails validation', async () => {
-		const shared = await import('@perseus/shared');
-		(shared as any).__familiesStore.set('p1', [
-			{
-				id: 'a0000000-0000-4000-8000-000000000001',
-				aspectRatio: '1:1',
-				status: 'ready',
-				createdAt: 1
-			}
+		(shared as any).__puzzlesStore.set('p1', [
+			{ id: 'pz1', pieceCount: 4, status: 'ready', createdAt: 1 }
 		]);
 		const res = await buildApp().request(
-			'/api/player/puzzle-families',
+			'/api/player/puzzles',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
@@ -1639,52 +1299,12 @@ describe('player response validation (Worker)', () => {
 		expect(((await res.json()) as any).error).toBe('internal_error');
 	});
 
-	it.each([
-		['a non-string category', { category: 123 }],
-		['an invalid category string', { category: 'Unknown' }],
-		['an invalid status', { status: 'Unknown' }]
-	])('GET puzzle-families rejects a good row alongside %s', async (_description, invalidFields) => {
-		const shared = await import('@perseus/shared');
-		if ('status' in invalidFields) {
-			const types = await import('@perseus/types');
-			vi.mocked(types.coercePuzzleStatus).mockReturnValueOnce('invalid' as any);
-		}
-		const goodFamily = {
-			id: 'a0000000-0000-4000-8000-000000000002',
-			name: 'Good family',
-			aspectRatio: '1:1',
-			status: 'ready',
-			createdAt: 1
-		};
-		(shared as any).__familiesStore.set('p1', [
-			{
-				...goodFamily,
-				id: 'a0000000-0000-4000-8000-000000000001',
-				name: 'Bad family',
-				...invalidFields
-			},
-			goodFamily
-		]);
-
-		const res = await buildApp().request(
-			'/api/player/puzzle-families',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-
-		expect(res.status).toBe(500);
-		expect(await res.json()).toEqual({
-			error: 'internal_error',
-			message: 'Failed to list puzzle families'
-		});
-	});
-
 	it('GET stats returns 500 when a projected row fails validation', async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__statsStore.set('p1', [
 			{
-				familyId: 'pz1',
-				standardBestTimeSeconds: 90,
+				puzzleId: 'pz1',
+				bestTimeSeconds: 90,
 				totalCompletions: 1,
 				firstCompletedAt: 1,
 				lastCompletedAt: 1

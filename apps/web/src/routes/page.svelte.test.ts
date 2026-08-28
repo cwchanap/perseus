@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import GalleryPage from './+page.svelte';
-import type { PuzzleFamilySummary } from '@perseus/types';
+import type { PuzzleSummary } from '$lib/types/puzzle';
 import { fetchPuzzles, ApiError } from '$lib/services/api';
 import { listQuick } from '$lib/services/quickPuzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
@@ -37,9 +37,9 @@ vi.mock('$lib/services/api', () => {
 		}
 	}
 	return {
-		fetchPuzzles: vi.fn().mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 }),
+		fetchPuzzles: vi.fn().mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 }),
 		fetchPuzzle: vi.fn(),
-		getFamilyThumbnailUrl: vi.fn((id: string) => `/api/puzzle-families/${id}/thumbnail`),
+		getThumbnailUrl: vi.fn((id: string) => `/api/puzzles/${id}/thumbnail`),
 		ApiError: MockApiError
 	};
 });
@@ -54,7 +54,7 @@ vi.mock('$lib/services/quickPuzzle', () => ({
 
 vi.mock('$lib/services/gameplay/galleryProgress', () => ({
 	discoverGalleryProgress: vi.fn().mockReturnValue({
-		byVariantId: new Map(),
+		byPuzzleId: new Map(),
 		newest: null
 	}),
 	discoverAllSavedProgress: vi.fn().mockResolvedValue({ rows: [], complete: true })
@@ -64,20 +64,11 @@ vi.mock('$app/paths', () => ({
 	resolve: (p: string) => p
 }));
 
-const makeFamily = (
-	id: string,
-	overrides: Partial<PuzzleFamilySummary> = {}
-): PuzzleFamilySummary => ({
+const makePuzzle = (id: string, overrides: Partial<PuzzleSummary> = {}): PuzzleSummary => ({
 	id,
 	name: `Puzzle ${id}`,
-	aspectRatio: '1:1',
+	pieceCount: 225,
 	status: 'ready',
-	createdAt: 1000,
-	variants: {
-		easy: { id: `${id}-e`, difficulty: 'easy', pieceCount: 16, status: 'ready' },
-		normal: { id: `${id}-n`, difficulty: 'normal', pieceCount: 169, status: 'ready' },
-		hard: { id: `${id}-h`, difficulty: 'hard', pieceCount: 100, status: 'ready' }
-	},
 	...overrides
 });
 
@@ -85,7 +76,7 @@ const storedQuickPuzzleFixture: StoredQuickPuzzle = {
 	id: 'q-local',
 	name: 'Local Mission',
 	aspectRatio: '1:1',
-	pieceCount: 16,
+	pieceCount: 4,
 	gridRows: 2,
 	gridCols: 2,
 	imageWidth: 100,
@@ -145,9 +136,9 @@ describe('Gallery Page', () => {
 		vi.clearAllMocks();
 		intersectionCallback = null;
 		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
-		mockedFetchPuzzles.mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
+		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		mockedListQuick.mockReturnValue([]);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		sessionStorageSpies.listCandidates.mockReturnValue([]);
 	});
@@ -158,7 +149,7 @@ describe('Gallery Page', () => {
 
 	it('shows puzzle cards when puzzles are returned', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
-			families: [makeFamily('p1'), makeFamily('p2')],
+			puzzles: [makePuzzle('p1'), makePuzzle('p2')],
 			total: 2,
 			offset: 0,
 			limit: 20
@@ -174,20 +165,24 @@ describe('Gallery Page', () => {
 	});
 
 	it('reads Quick puzzles once and reuses them when server results change', async () => {
-		const serverFamilies = [makeFamily('p1', { aspectRatio: '1:1', status: 'ready' })];
-		const filteredPuzzles = [makeFamily('p2', { aspectRatio: '1:1', status: 'ready' })];
+		const serverPuzzles = [
+			makePuzzle('p1', { pieceCount: 4, aspectRatio: '1:1', status: 'ready' })
+		];
+		const filteredPuzzles = [
+			makePuzzle('p2', { pieceCount: 4, aspectRatio: '1:1', status: 'ready' })
+		];
 		const quickPuzzles = [storedQuickPuzzleFixture];
 
 		mockedFetchPuzzles
-			.mockResolvedValueOnce({ families: serverFamilies, total: 1, offset: 0, limit: 20 })
-			.mockResolvedValueOnce({ families: filteredPuzzles, total: 1, offset: 0, limit: 20 });
+			.mockResolvedValueOnce({ puzzles: serverPuzzles, total: 1, offset: 0, limit: 20 })
+			.mockResolvedValueOnce({ puzzles: filteredPuzzles, total: 1, offset: 0, limit: 20 });
 		mockedListQuick.mockReturnValue(quickPuzzles);
 
 		render(GalleryPage);
 
 		await vi.waitFor(() => {
 			expect(mockedDiscoverGalleryProgress).toHaveBeenCalledWith({
-				serverFamilies,
+				serverPuzzles,
 				quickPuzzles
 			});
 		});
@@ -203,7 +198,7 @@ describe('Gallery Page', () => {
 
 		await vi.waitFor(() => {
 			expect(mockedDiscoverGalleryProgress).toHaveBeenCalledWith({
-				serverFamilies: filteredPuzzles,
+				serverPuzzles: filteredPuzzles,
 				quickPuzzles
 			});
 		});
@@ -211,30 +206,31 @@ describe('Gallery Page', () => {
 	});
 
 	it('shows panel and card progress when the newest server progress overlaps a card', async () => {
-		const serverFamilies = [
-			makeFamily('p1', {
+		const serverPuzzles = [
+			makePuzzle('p1', {
 				name: 'Server Mission',
+				pieceCount: 4,
 				aspectRatio: '1:1',
 				status: 'ready'
 			})
 		];
 		const progress = {
-			puzzleId: 'p1-e',
+			puzzleId: 'p1',
 			name: 'Resume Me',
 			source: 'api' as const,
 			placedCount: 2,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 
 		mockedFetchPuzzles.mockResolvedValue({
-			families: serverFamilies,
+			puzzles: serverPuzzles,
 			total: 1,
 			offset: 0,
 			limit: 20
 		});
 		mockedDiscoverGalleryProgress.mockReturnValue({
-			byVariantId: new Map([['p1-e', progress]]),
+			byPuzzleId: new Map([['p1', progress]]),
 			newest: progress
 		});
 
@@ -242,7 +238,7 @@ describe('Gallery Page', () => {
 
 		await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
 		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Resume Me');
-		await expect.element(page.getByText('2/16 PLACED')).toBeVisible();
+		await expect.element(page.getByText('CONTINUE · 2/4 PLACED')).toBeVisible();
 	});
 
 	it('renders the continue panel without crashing when progress counts are nullish', async () => {
@@ -250,7 +246,7 @@ describe('Gallery Page', () => {
 		// Svelte renders nullish text interpolations as empty, so the panel
 		// still surfaces the mission name and Continue link.
 		const progress = {
-			puzzleId: 'p1-e',
+			puzzleId: 'p1',
 			name: 'Corrupt Mission',
 			source: 'api' as const,
 			placedCount: undefined as unknown as number,
@@ -258,7 +254,7 @@ describe('Gallery Page', () => {
 			lastUpdated: 2_000
 		};
 		mockedDiscoverGalleryProgress.mockReturnValue({
-			byVariantId: new Map([['p1-e', progress]]),
+			byPuzzleId: new Map([['p1', progress]]),
 			newest: progress
 		});
 
@@ -277,13 +273,13 @@ describe('Gallery Page', () => {
 			name: 'Local Mission',
 			source: 'local' as const,
 			placedCount: 1,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 
-		mockedFetchPuzzles.mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
+		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		mockedListQuick.mockReturnValue(quickPuzzles);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: progress });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: progress });
 
 		render(GalleryPage);
 
@@ -309,16 +305,16 @@ describe('Gallery Page', () => {
 
 	it('keeps the latest Continue row when search projection no longer contains it', async () => {
 		const latest = {
-			puzzleId: 'p1-e',
+			puzzleId: 'p1',
 			name: 'Latest Save',
 			source: 'api' as const,
 			placedCount: 2,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 		mockedDiscoverGalleryProgress
-			.mockReturnValueOnce({ byVariantId: new Map([['p1', latest]]), newest: latest })
-			.mockReturnValue({ byVariantId: new Map(), newest: null });
+			.mockReturnValueOnce({ byPuzzleId: new Map([['p1', latest]]), newest: latest })
+			.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 
 		render(GalleryPage);
 		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
@@ -329,7 +325,7 @@ describe('Gallery Page', () => {
 
 	it('shows picker entry for an off-page candidate with no known latest row', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		render(GalleryPage);
 		await expect
 			.element(page.getByTestId('continue-on-device'))
@@ -345,7 +341,7 @@ describe('Gallery Page', () => {
 		// refresh call returns [] — simulating the real storage state after the
 		// purge.
 		sessionStorageSpies.listCandidates.mockReturnValueOnce(['deleted-puzzle']).mockReturnValue([]);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
@@ -375,7 +371,7 @@ describe('Gallery Page', () => {
 		// and [] on the second call (remount), simulating the purge having
 		// removed the session from storage during authoritative discovery.
 		sessionStorageSpies.listCandidates.mockReturnValueOnce(['stale-id']).mockReturnValue([]);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 
 		const { unmount } = render(GalleryPage);
@@ -403,7 +399,7 @@ describe('Gallery Page', () => {
 		// surface the retryable outage state, not "NO SAVED PROGRESS" — the
 		// local save still exists and discovery was interrupted, not empty.
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page-a', 'off-page-b']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: false });
 		render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
@@ -425,7 +421,7 @@ describe('Gallery Page', () => {
 			name: 'Valid Save',
 			source: 'api',
 			placedCount: 1,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 		// First call: onMount returns both ids. The post-discovery refresh
@@ -435,7 +431,7 @@ describe('Gallery Page', () => {
 		sessionStorageSpies.listCandidates
 			.mockReturnValueOnce(['valid', 'gone'])
 			.mockReturnValueOnce(['valid']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [validRow], complete: true });
 
 		const { unmount } = render(GalleryPage);
@@ -461,7 +457,7 @@ describe('Gallery Page', () => {
 
 	it('stops loading when saved-progress discovery rejects', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockRejectedValue(new Error('network down'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -487,7 +483,7 @@ describe('Gallery Page', () => {
 
 	it('discards a stale rejection resolved after the picker is closed', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		let rejectDiscovery!: (error: Error) => void;
@@ -525,7 +521,7 @@ describe('Gallery Page', () => {
 
 	it('discards a stale discovery response resolved after the picker is closed', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 
 		function deferredProgress(): {
 			promise: Promise<GalleryProgressDiscoveryResult>;
@@ -544,7 +540,7 @@ describe('Gallery Page', () => {
 				name: 'Stale Mission',
 				source: 'api',
 				placedCount: 1,
-				pieceCount: 16,
+				pieceCount: 4,
 				lastUpdated: 2_000
 			}
 		];
@@ -596,7 +592,7 @@ describe('Gallery Page', () => {
 
 	it('marks main inert while the saved progress picker is open', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.poll(() => document.querySelector('main')?.hasAttribute('inert')).toBe(true);
@@ -606,15 +602,15 @@ describe('Gallery Page', () => {
 
 	it('makes main inert while home discard confirmation is open', async () => {
 		const progress = {
-			puzzleId: 'p1-e',
+			puzzleId: 'p1',
 			name: 'Resume Me',
 			source: 'api' as const,
 			placedCount: 2,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 		mockedDiscoverGalleryProgress.mockReturnValue({
-			byVariantId: new Map([['p1-e', progress]]),
+			byPuzzleId: new Map([['p1', progress]]),
 			newest: progress
 		});
 
@@ -631,43 +627,43 @@ describe('Gallery Page', () => {
 
 	it('clears and rediscovers progress after confirmed home discard', async () => {
 		const progress = {
-			puzzleId: 'p1-e',
+			puzzleId: 'p1',
 			name: 'Resume Me',
 			source: 'api' as const,
 			placedCount: 2,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 		mockedDiscoverGalleryProgress
-			.mockReturnValueOnce({ byVariantId: new Map([['p1-e', progress]]), newest: progress })
-			.mockReturnValue({ byVariantId: new Map([['p1-e', progress]]), newest: progress });
+			.mockReturnValueOnce({ byPuzzleId: new Map([['p1', progress]]), newest: progress })
+			.mockReturnValue({ byPuzzleId: new Map([['p1', progress]]), newest: progress });
 
 		render(GalleryPage);
 		await expect
 			.element(page.getByRole('button', { name: 'Discard saved progress' }))
 			.toBeVisible();
-		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		await page.getByRole('button', { name: 'Discard saved progress' }).click();
 		await page
 			.getByRole('dialog', { name: 'Discard saved progress' })
 			.getByRole('button', { name: 'Discard' })
 			.click();
 
-		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('p1-e');
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('p1');
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
 	});
 
 	it('cancels home discard without clearing and keeps Continue visible', async () => {
 		const progress = {
-			puzzleId: 'p1-e',
+			puzzleId: 'p1',
 			name: 'Resume Me',
 			source: 'api' as const,
 			placedCount: 2,
-			pieceCount: 16,
+			pieceCount: 4,
 			lastUpdated: 2_000
 		};
 		mockedDiscoverGalleryProgress.mockReturnValue({
-			byVariantId: new Map([['p1-e', progress]]),
+			byPuzzleId: new Map([['p1', progress]]),
 			newest: progress
 		});
 
@@ -700,7 +696,7 @@ describe('Gallery Page', () => {
 	});
 
 	it('shows no-results state when total is 0 and query is active', async () => {
-		mockedFetchPuzzles.mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
+		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		render(GalleryPage);
 
 		const input = page.getByTestId('search-input');
@@ -730,7 +726,7 @@ describe('Gallery Page', () => {
 
 			if (!q && offset === 0) {
 				return {
-					families: [makeFamily('p1', { name: 'Initial Result' })],
+					puzzles: [makePuzzle('p1', { name: 'Initial Result' })],
 					total: 1,
 					offset: 0,
 					limit: 20
@@ -743,7 +739,7 @@ describe('Gallery Page', () => {
 				});
 			}
 
-			return { families: [], total: 0, offset, limit: 20 };
+			return { puzzles: [], total: 0, offset, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -763,7 +759,7 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByTestId('search-input')).toBeVisible();
 
 		resolveRefetch?.({
-			families: [makeFamily('p2', { name: 'Filtered Result' })],
+			puzzles: [makePuzzle('p2', { name: 'Filtered Result' })],
 			total: 1,
 			offset: 0,
 			limit: 20
@@ -772,7 +768,7 @@ describe('Gallery Page', () => {
 
 	it('attaches the observer after the sentinel renders', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
-			families: [makeFamily('p1')],
+			puzzles: [makePuzzle('p1')],
 			total: 1,
 			offset: 0,
 			limit: 20
@@ -805,7 +801,7 @@ describe('Gallery Page', () => {
 
 			if (!q && !category && offset === 0) {
 				return {
-					families: [makeFamily('nature-1', { name: 'Forest Scene', category: 'Nature' })],
+					puzzles: [makePuzzle('nature-1', { name: 'Forest Scene', category: 'Nature' })],
 					total: 1,
 					offset: 0,
 					limit: 20
@@ -814,7 +810,7 @@ describe('Gallery Page', () => {
 
 			if (q === 'forest' && !category && offset === 0) {
 				return {
-					families: [makeFamily('nature-1', { name: 'Forest Scene', category: 'Nature' })],
+					puzzles: [makePuzzle('nature-1', { name: 'Forest Scene', category: 'Nature' })],
 					total: 1,
 					offset: 0,
 					limit: 20
@@ -823,14 +819,14 @@ describe('Gallery Page', () => {
 
 			if (q === 'forest' && category === 'Nature' && offset === 0) {
 				return {
-					families: [],
+					puzzles: [],
 					total: 0,
 					offset: 0,
 					limit: 20
 				};
 			}
 
-			return { families: [], total: 0, offset, limit: 20 };
+			return { puzzles: [], total: 0, offset, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -881,7 +877,7 @@ describe('Gallery Page', () => {
 			const { q, cursor } = params ?? {};
 			if (!q && !cursor) {
 				return {
-					families: [makeFamily('old-1', { name: 'Old Initial Result' })],
+					puzzles: [makePuzzle('old-1', { name: 'Old Initial Result' })],
 					total: 2,
 					offset: 0,
 					limit: 20,
@@ -895,14 +891,14 @@ describe('Gallery Page', () => {
 
 			if (q === 'fresh' && !cursor) {
 				return {
-					families: [makeFamily('fresh-1', { name: 'Fresh Query Result' })],
+					puzzles: [makePuzzle('fresh-1', { name: 'Fresh Query Result' })],
 					total: 1,
 					offset: 0,
 					limit: 20
 				};
 			}
 
-			return { families: [], total: 0, offset: 0, limit: 20 };
+			return { puzzles: [], total: 0, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -932,7 +928,7 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('Fresh Query Result')).toBeVisible();
 
 		resolveStalePage?.({
-			families: [makeFamily('old-2', { name: 'Stale Page Result' })],
+			puzzles: [makePuzzle('old-2', { name: 'Stale Page Result' })],
 			total: 2,
 			offset: 1,
 			limit: 20
@@ -951,7 +947,7 @@ describe('Gallery Page', () => {
 			const { q, cursor } = params ?? {};
 			if (!q && !cursor) {
 				return {
-					families: [makeFamily('old-1', { name: 'Old Initial Result' })],
+					puzzles: [makePuzzle('old-1', { name: 'Old Initial Result' })],
 					total: 2,
 					offset: 0,
 					limit: 20,
@@ -972,14 +968,14 @@ describe('Gallery Page', () => {
 
 			if (q === 'fresh' && !cursor) {
 				return {
-					families: [makeFamily('fresh-1', { name: 'Fresh Query Result' })],
+					puzzles: [makePuzzle('fresh-1', { name: 'Fresh Query Result' })],
 					total: 1,
 					offset: 0,
 					limit: 20
 				};
 			}
 
-			return { families: [], total: 0, offset: 0, limit: 20 };
+			return { puzzles: [], total: 0, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -1019,7 +1015,7 @@ describe('Gallery Page', () => {
 
 			if (!q && offset === 0) {
 				return {
-					families: [makeFamily('p1', { name: 'Initial' })],
+					puzzles: [makePuzzle('p1', { name: 'Initial' })],
 					total: 100,
 					offset: 0,
 					limit: 20
@@ -1030,7 +1026,7 @@ describe('Gallery Page', () => {
 				return searchPromise;
 			}
 
-			return { families: [], total: 0, offset, limit: 20 };
+			return { puzzles: [], total: 0, offset, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -1054,7 +1050,7 @@ describe('Gallery Page', () => {
 		});
 
 		searchResolve?.({
-			families: [makeFamily('p2', { name: 'Searched' })],
+			puzzles: [makePuzzle('p2', { name: 'Searched' })],
 			total: 1,
 			offset: 0,
 			limit: 20
@@ -1070,7 +1066,7 @@ describe('Gallery Page', () => {
 			const { cursor } = params ?? {};
 			if (!cursor) {
 				return {
-					families: [makeFamily('p1')],
+					puzzles: [makePuzzle('p1')],
 					total: 2,
 					offset: 0,
 					limit: 20,
@@ -1098,7 +1094,7 @@ describe('Gallery Page', () => {
 			const { cursor } = params ?? {};
 			if (!cursor) {
 				return {
-					families: [makeFamily('p1')],
+					puzzles: [makePuzzle('p1')],
 					total: 2,
 					offset: 0,
 					limit: 20,
@@ -1107,7 +1103,7 @@ describe('Gallery Page', () => {
 			}
 			loadMoreCallCount++;
 			if (loadMoreCallCount === 1) throw new ApiError(500, 'internal_error', 'Server error');
-			return { families: [makeFamily('p2')], total: 2, offset: 0, limit: 20 };
+			return { puzzles: [makePuzzle('p2')], total: 2, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -1133,7 +1129,7 @@ describe('Gallery Page', () => {
 			const { cursor } = params ?? {};
 			if (!cursor) {
 				return {
-					families: [makeFamily('p1')],
+					puzzles: [makePuzzle('p1')],
 					total: 2,
 					offset: 0,
 					limit: 20,
@@ -1173,7 +1169,7 @@ describe('Gallery Page', () => {
 			const { cursor } = params ?? {};
 			if (!cursor) {
 				return {
-					families: [makeFamily('p1')],
+					puzzles: [makePuzzle('p1')],
 					total: 5,
 					offset: 0,
 					limit: 20,
@@ -1211,13 +1207,13 @@ describe('Gallery Page', () => {
 		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsWhileLoading);
 
 		// Clean up the pending promise
-		resolveLoadMore?.({ families: [makeFamily('p2')], total: 5, offset: 0, limit: 20 });
+		resolveLoadMore?.({ puzzles: [makePuzzle('p2')], total: 5, offset: 0, limit: 20 });
 		await loadMorePromise;
 	});
 
 	it('does not trigger loadNextPage from observer when all items are loaded', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
-			families: [makeFamily('p1')],
+			puzzles: [makePuzzle('p1')],
 			total: 1,
 			offset: 0,
 			limit: 20
@@ -1245,7 +1241,7 @@ describe('Gallery Page', () => {
 			const { cursor } = params ?? {};
 			if (!cursor) {
 				return {
-					families: [makeFamily('p1')],
+					puzzles: [makePuzzle('p1')],
 					total: 3,
 					offset: 0,
 					limit: 20,
@@ -1255,13 +1251,13 @@ describe('Gallery Page', () => {
 			if (cursor === 'cursor-page2') {
 				// Simulates a new puzzle inserted: total=4 but this was the last page (no nextCursor)
 				return {
-					families: [makeFamily('p2')],
+					puzzles: [makePuzzle('p2')],
 					total: 4,
 					offset: 1,
 					limit: 20
 				};
 			}
-			return { families: [], total: 0, offset: 0, limit: 20 };
+			return { puzzles: [], total: 0, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -1300,7 +1296,7 @@ describe('Gallery Page', () => {
 
 	it('treats whitespace-only search as no filter after a real search term', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
-			families: [makeFamily('p1')],
+			puzzles: [makePuzzle('p1')],
 			total: 1,
 			offset: 0,
 			limit: 20

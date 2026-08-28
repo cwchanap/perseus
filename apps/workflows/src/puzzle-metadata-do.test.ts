@@ -30,8 +30,6 @@ vi.mock('cloudflare:workers', async () => {
 
 const baseMetadata: PuzzleMetadata = {
 	id: 'test-puzzle',
-	familyId: '223e4567-e89b-42d3-a456-426614174001',
-	difficulty: 'easy',
 	name: 'Test Puzzle',
 	pieceCount: 4,
 	gridCols: 2,
@@ -49,8 +47,7 @@ interface StorageInit {
 	puzzleId?: string;
 	metadata?: PuzzleMetadata;
 	reservation?: {
-		familyId?: string;
-		puzzleId?: string;
+		puzzleId: string;
 		status: 'pending' | 'committed' | 'failed';
 		reservedAt?: number;
 		schemaVersion?: number;
@@ -91,18 +88,11 @@ function createStorage(initial: StorageInit = {}) {
 	};
 }
 
-function createKV(metadata: PuzzleMetadata | Record<string, unknown> | null = baseMetadata) {
-	const isFamily = metadata !== null && 'variants' in metadata;
-	const expectedKey =
-		metadata && typeof metadata === 'object' && 'id' in metadata
-			? isFamily
-				? `family:${metadata.id as string}`
-				: `puzzle:${metadata.id as string}`
-			: undefined;
+function createKV(metadata: PuzzleMetadata | null = baseMetadata) {
+	const expectedKey = metadata ? `puzzle:${metadata.id}` : undefined;
 	const store: Record<string, string> = {};
-	if (metadata && typeof metadata === 'object' && 'id' in metadata) {
-		const key = isFamily ? `family:${metadata.id as string}` : `puzzle:${metadata.id as string}`;
-		store[key] = JSON.stringify(metadata);
+	if (metadata) {
+		store[`puzzle:${metadata.id}`] = JSON.stringify(metadata);
 	}
 	return {
 		get: vi.fn(async (key: string, type?: string) => {
@@ -127,34 +117,6 @@ interface WorkflowMock {
 	throwOnGet?: boolean;
 	throwOnGetNotFound?: boolean;
 	throwOnStatus?: boolean;
-}
-
-const STALE_FAMILY_ID = 'a1000000-e29b-41d4-a716-446655440001';
-const LIVE_STALE_FAMILY_ID = 'a2000000-e29b-41d4-a716-446655440002';
-const KV_ERROR_FAMILY_ID = 'a3000000-e29b-41d4-a716-446655440003';
-const STUCK_ERRORED_FAMILY_ID = 'a4000000-e29b-41d4-a716-446655440004';
-const READY_ERRORED_FAMILY_ID = 'a5000000-e29b-41d4-a716-446655440005';
-const STUCK_TERMINATED_FAMILY_ID = 'a6000000-e29b-41d4-a716-446655440006';
-const NOT_FOUND_FAMILY_ID = 'a7000000-e29b-41d4-a716-446655440007';
-const NO_WORKFLOW_FAMILY_ID = 'a8000000-e29b-41d4-a716-446655440008';
-const WF_THROW_FAMILY_ID = 'a9000000-e29b-41d4-a716-446655440009';
-
-function makeTestFamilyMetadata(
-	id: string,
-	status: 'processing' | 'ready' | 'failed' = 'processing'
-) {
-	return {
-		id,
-		name: 'Test Family',
-		aspectRatio: '1:1' as const,
-		createdAt: 1700000000000,
-		status,
-		variants: {
-			easy: '550e8400-e29b-41d4-a716-446655440012',
-			normal: '550e8400-e29b-41d4-a716-446655440013',
-			hard: '550e8400-e29b-41d4-a716-446655440014'
-		}
-	};
 }
 
 function createWorkflow(mock: WorkflowMock = { status: 'running' }) {
@@ -184,7 +146,7 @@ function createWorkflow(mock: WorkflowMock = { status: 'running' }) {
 
 function makeDO(
 	storageInit: StorageInit = {},
-	kvMetadata: PuzzleMetadata | Record<string, unknown> | null = baseMetadata,
+	kvMetadata: PuzzleMetadata | null = baseMetadata,
 	workflowMock: WorkflowMock = { status: 'running' }
 ) {
 	const storage = createStorage(storageInit);
@@ -590,7 +552,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			durableObj,
 			{
 				idempotencyKey: 'abc123',
-				familyId: 'puzzle-uuid-1'
+				puzzleId: 'puzzle-uuid-1'
 			},
 			'/reserve'
 		);
@@ -606,7 +568,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: 'puzzle-uuid-1',
+				puzzleId: 'puzzle-uuid-1',
 				status: 'pending',
 				reservedAt: expect.any(Number),
 				schemaVersion: expect.any(Number)
@@ -649,7 +611,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			durableObj,
 			{
 				idempotencyKey: 'abc123',
-				familyId: 'retry-uuid'
+				puzzleId: 'retry-uuid'
 			},
 			'/reserve'
 		);
@@ -660,7 +622,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: 'retry-uuid',
+				puzzleId: 'retry-uuid',
 				status: 'pending',
 				reservedAt: expect.any(Number)
 			})
@@ -679,7 +641,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: STALE_FAMILY_ID,
+					puzzleId: 'stale-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
@@ -703,17 +665,23 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 	});
 
 	it('promotes stale pending to committed when live puzzle still exists', async () => {
+		// Commit-failure path: metadata was written but reservation stayed
+		// pending until TTL. Reclaiming would mint a duplicate — promote instead.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(LIVE_STALE_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'live-stale-uuid',
+			status: 'processing'
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: LIVE_STALE_FAMILY_ID,
+					puzzleId: 'live-stale-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily
+			liveMeta
 		);
 		const response = await postRequest(
 			durableObj,
@@ -730,12 +698,12 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			status: string;
 		};
 		expect(body.existing).toBe(true);
-		expect(body.puzzleId).toBe(LIVE_STALE_FAMILY_ID);
+		expect(body.puzzleId).toBe('live-stale-uuid');
 		expect(body.status).toBe('committed');
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: LIVE_STALE_FAMILY_ID,
+				puzzleId: 'live-stale-uuid',
 				status: 'committed'
 			})
 		);
@@ -746,16 +714,20 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// NOT fall through to reclaim — that would mint a duplicate of a live
 		// puzzle whose metadata was momentarily unreadable. Fail closed: 409.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(KV_ERROR_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'kv-error-uuid',
+			status: 'processing'
+		};
 		const { durableObj, kv, storage } = makeDO(
 			{
 				reservation: {
-					familyId: KV_ERROR_FAMILY_ID,
+					puzzleId: 'kv-error-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily
+			liveMeta
 		);
 		// Force kv.get to throw a transient KV error.
 		(kv.get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('KV internal error'));
@@ -777,16 +749,20 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// is stuck. Promoting would return it as 200 forever. Per policy,
 		// mark the reservation failed so a retry reclaims and creates fresh.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(STUCK_ERRORED_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'stuck-errored-uuid',
+			status: 'processing'
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: STUCK_ERRORED_FAMILY_ID,
+					puzzleId: 'stuck-errored-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily,
+			liveMeta,
 			{ status: 'errored' }
 		);
 		const response = await postRequest(
@@ -799,7 +775,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: STUCK_ERRORED_FAMILY_ID,
+				puzzleId: 'stuck-errored-uuid',
 				status: 'failed'
 			})
 		);
@@ -818,16 +794,55 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// and mint a duplicate. Promote to committed so retries return the
 		// existing ready puzzle.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(READY_ERRORED_FAMILY_ID, 'ready');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'ready-errored-uuid',
+			status: 'ready',
+			pieces: [
+				{
+					id: 0,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 0,
+					correctY: 0,
+					edges: { top: 'flat', right: 'tab', bottom: 'tab', left: 'flat' },
+					imagePath: 'pieces/0.png'
+				},
+				{
+					id: 1,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 1,
+					correctY: 0,
+					edges: { top: 'flat', right: 'flat', bottom: 'blank', left: 'blank' },
+					imagePath: 'pieces/1.png'
+				},
+				{
+					id: 2,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 0,
+					correctY: 1,
+					edges: { top: 'blank', right: 'blank', bottom: 'flat', left: 'flat' },
+					imagePath: 'pieces/2.png'
+				},
+				{
+					id: 3,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 1,
+					correctY: 1,
+					edges: { top: 'tab', right: 'flat', bottom: 'flat', left: 'tab' },
+					imagePath: 'pieces/3.png'
+				}
+			],
+			progress: undefined
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: READY_ERRORED_FAMILY_ID,
+					puzzleId: 'ready-errored-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily,
+			liveMeta,
 			{ status: 'errored' }
 		);
 		const response = await postRequest(
@@ -842,12 +857,12 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			status: string;
 		};
 		expect(body.existing).toBe(true);
-		expect(body.puzzleId).toBe(READY_ERRORED_FAMILY_ID);
+		expect(body.puzzleId).toBe('ready-errored-uuid');
 		expect(body.status).toBe('committed');
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: READY_ERRORED_FAMILY_ID,
+				puzzleId: 'ready-errored-uuid',
 				status: 'committed'
 			})
 		);
@@ -868,16 +883,20 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// stuck processing puzzle as 200 forever. Per policy, mark the
 		// reservation failed so a retry reclaims and creates fresh.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(STUCK_TERMINATED_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'stuck-terminated-uuid',
+			status: 'processing'
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: STUCK_TERMINATED_FAMILY_ID,
+					puzzleId: 'stuck-terminated-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily,
+			liveMeta,
 			{ status: 'terminated' }
 		);
 		const response = await postRequest(
@@ -890,7 +909,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: STUCK_TERMINATED_FAMILY_ID,
+				puzzleId: 'stuck-terminated-uuid',
 				status: 'failed'
 			})
 		);
@@ -909,16 +928,20 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// client retries. The not_found case (workflow never created) is
 		// tested separately below and IS treated as dead.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(NO_WORKFLOW_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'no-workflow-uuid',
+			status: 'processing'
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: NO_WORKFLOW_FAMILY_ID,
+					puzzleId: 'no-workflow-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily,
+			liveMeta,
 			{ status: 'unknown' }
 		);
 		const response = await postRequest(
@@ -941,16 +964,20 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// If PUZZLE_WORKFLOW.get() or .status() throws, fail closed: 409.
 		// Don't promote (might be stuck) and don't reclaim (might be live).
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(WF_THROW_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'wf-throw-uuid',
+			status: 'processing'
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: WF_THROW_FAMILY_ID,
+					puzzleId: 'wf-throw-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily,
+			liveMeta,
 			{ throwOnGet: true }
 		);
 		const response = await postRequest(
@@ -1006,16 +1033,20 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		// transient error that leaves the reservation pending until the 2h
 		// reaper runs.
 		const staleAt = Date.now() - 10 * 60 * 1000;
-		const liveFamily = makeTestFamilyMetadata(NOT_FOUND_FAMILY_ID, 'processing');
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'no-workflow-not-found-uuid',
+			status: 'processing'
+		};
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
-					familyId: NOT_FOUND_FAMILY_ID,
+					puzzleId: 'no-workflow-not-found-uuid',
 					status: 'pending',
 					reservedAt: staleAt
 				}
 			},
-			liveFamily,
+			liveMeta,
 			{ throwOnGetNotFound: true }
 		);
 		const response = await postRequest(
@@ -1028,7 +1059,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(storage.put).toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				familyId: NOT_FOUND_FAMILY_ID,
+				puzzleId: 'no-workflow-not-found-uuid',
 				status: 'failed'
 			})
 		);
@@ -1041,12 +1072,12 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 
 	it('owner-checked commit transitions pending to committed', async () => {
 		const { durableObj, storage } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/commit');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/commit');
 		expect(response.status).toBe(200);
 		expect(storage.put).toHaveBeenCalledWith('reservation', {
-			familyId: 'puzzle-uuid-1',
+			puzzleId: 'puzzle-uuid-1',
 			status: 'committed',
 			schemaVersion: expect.any(Number)
 		});
@@ -1054,7 +1085,7 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 
 	it('rejects commit from non-owner', async () => {
 		const { durableObj } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
 		const response = await postRequest(durableObj, { puzzleId: 'other-uuid' }, '/commit');
 		expect(response.status).toBe(409);
@@ -1062,21 +1093,21 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 
 	it('owner-checked release deletes reservation', async () => {
 		const { durableObj, storage } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/release');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/release');
 		expect(response.status).toBe(200);
 		expect(storage.delete).toHaveBeenCalledWith('reservation');
 	});
 
 	it('owner-checked fail marks reservation failed', async () => {
 		const { durableObj, storage } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/fail');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/fail');
 		expect(response.status).toBe(200);
 		expect(storage.put).toHaveBeenCalledWith('reservation', {
-			familyId: 'puzzle-uuid-1',
+			puzzleId: 'puzzle-uuid-1',
 			status: 'failed',
 			schemaVersion: expect.any(Number)
 		});
@@ -1267,7 +1298,7 @@ describe('PuzzleMetadataDO.fetch - /reservation (read-only lookup)', () => {
 describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases', () => {
 	it('returns 400 for invalid commit payload (missing puzzleId)', async () => {
 		const { durableObj } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
 		const response = await postRequest(durableObj, {}, '/commit');
 		expect(response.status).toBe(400);
@@ -1275,7 +1306,7 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 
 	it('returns 400 for commit payload with empty puzzleId', async () => {
 		const { durableObj } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
 		const response = await postRequest(durableObj, { puzzleId: '  ' }, '/commit');
 		expect(response.status).toBe(400);
@@ -1283,7 +1314,7 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 
 	it('returns 400 for invalid JSON body on commit', async () => {
 		const { durableObj } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'pending' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
 		const response = await durableObj.fetch(
 			new Request('https://puzzle-metadata/commit', {
@@ -1296,7 +1327,7 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 
 	it('returns 404 when committing against a DO with no reservation', async () => {
 		const { durableObj } = makeDO();
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/commit');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/commit');
 		expect(response.status).toBe(404);
 		const body = (await response.json()) as { message: string };
 		expect(body.message).toMatch(/no reservation/i);
@@ -1308,12 +1339,12 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		// and create a replacement. The admin retry path calls /fail on the
 		// committed reservation before re-reserving with a new puzzleId.
 		const { durableObj, storage } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'committed' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
 		});
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/fail');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/fail');
 		expect(response.status).toBe(200);
 		expect(storage.put).toHaveBeenCalledWith('reservation', {
-			familyId: 'puzzle-uuid-1',
+			puzzleId: 'puzzle-uuid-1',
 			status: 'failed',
 			schemaVersion: expect.any(Number)
 		});
@@ -1324,9 +1355,9 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		// the puzzle so the key can be reused. Without this, a deleted seeded
 		// puzzle permanently maps its key to the deleted ID.
 		const { durableObj, storage } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'committed' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
 		});
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/release');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/release');
 		expect(response.status).toBe(200);
 		expect(storage.delete).toHaveBeenCalledWith('reservation');
 	});
@@ -1335,7 +1366,7 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		// Owner check still applies: a non-owner cannot fail a committed
 		// reservation even though committed → failed is now allowed.
 		const { durableObj } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'committed' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
 		});
 		const response = await postRequest(durableObj, { puzzleId: 'other-uuid' }, '/fail');
 		expect(response.status).toBe(409);
@@ -1345,9 +1376,9 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 
 	it('idempotent commit returns success without rewriting when already committed', async () => {
 		const { durableObj, storage } = makeDO({
-			reservation: { familyId: 'puzzle-uuid-1', status: 'committed' }
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
 		});
-		const response = await postRequest(durableObj, { familyId: 'puzzle-uuid-1' }, '/commit');
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/commit');
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { success: boolean; status: string };
 		expect(body.success).toBe(true);
@@ -1510,89 +1541,5 @@ describe('PuzzleMetadataDO.fetch - /delete (tombstone)', () => {
 		expect(updateRes.status).toBe(404);
 		const body = (await updateRes.json()) as { message?: string };
 		expect(body.message).toContain('deleted');
-	});
-});
-
-describe('PuzzleMetadataDO family and variant discrimination', () => {
-	const familyId = '550e8400-e29b-41d4-a716-446655440010';
-	const variantId = '550e8400-e29b-41d4-a716-446655440011';
-
-	const familyMetadata = {
-		id: familyId,
-		name: 'Family Puzzle',
-		aspectRatio: '4:3' as const,
-		createdAt: 1700000000000,
-		status: 'processing' as const,
-		variants: {
-			easy: '550e8400-e29b-41d4-a716-446655440012',
-			normal: '550e8400-e29b-41d4-a716-446655440013',
-			hard: '550e8400-e29b-41d4-a716-446655440014'
-		}
-	};
-
-	const variantMetadata: PuzzleMetadata = {
-		id: variantId,
-		familyId,
-		difficulty: 'easy',
-		name: 'Family Puzzle',
-		aspectRatio: '4:3',
-		pieceCount: 12,
-		gridCols: 4,
-		gridRows: 3,
-		imageWidth: 0,
-		imageHeight: 0,
-		createdAt: 1700000000000,
-		status: 'processing',
-		version: 0,
-		pieces: [],
-		progress: { totalPieces: 12, generatedPieces: 0, updatedAt: 1700000000000 }
-	};
-
-	it('writes family metadata to family KV key with kind discriminator', async () => {
-		const { durableObj, kv } = makeDO(
-			{ puzzleId: familyId },
-			familyMetadata as unknown as PuzzleMetadata
-		);
-		kv.get = vi.fn(async (key: string, type?: string) => {
-			if (key === `family:${familyId}`) {
-				const value = JSON.stringify(familyMetadata);
-				return type === 'json' ? JSON.parse(value) : value;
-			}
-			return null;
-		}) as typeof kv.get;
-
-		const res = await durableObj.fetch(
-			new Request('https://puzzle-metadata/update', {
-				method: 'POST',
-				body: JSON.stringify({
-					puzzleId: familyId,
-					updates: { imageWidth: 800, imageHeight: 600 }
-				})
-			})
-		);
-		expect(res.status).toBe(200);
-		expect(kv.put).toHaveBeenCalledWith(
-			`family:${familyId}`,
-			expect.stringContaining('"kind":"family"')
-		);
-	});
-
-	it('writes variant metadata to puzzle KV key with kind discriminator', async () => {
-		const { durableObj, kv } = makeDO({ puzzleId: variantId }, variantMetadata);
-
-		const res = await durableObj.fetch(
-			new Request('https://puzzle-metadata/update', {
-				method: 'POST',
-				body: JSON.stringify({
-					puzzleId: variantId,
-					updates: { imageWidth: 800, imageHeight: 600 }
-				})
-			})
-		);
-		expect(res.status).toBe(200);
-		expect(kv.put).toHaveBeenCalledWith(
-			`puzzle:${variantId}`,
-			expect.stringContaining('"kind":"variant"')
-		);
 	});
 });

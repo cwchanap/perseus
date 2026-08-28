@@ -27,52 +27,23 @@ function createMockDurableObjectNamespace(
 	return { namespace, stub };
 }
 
-const NEW_FAMILY = '123e4567-e89b-42d3-a456-426614174001';
-const HELD_FAMILY = '223e4567-e89b-42d3-a456-426614174002';
-const COMMITTED_FAMILY = '323e4567-e89b-42d3-a456-426614174003';
-const LIVE_FAMILY = '423e4567-e89b-42d3-a456-426614174004';
-
 /** Fixtures matching PuzzleMetadataDO.handleReserve Response.json(...) shapes. */
 const DO_RESERVE_FIXTURES = [
 	{
 		name: 'first claim',
-		familyId: NEW_FAMILY,
-		body: {
-			existing: false,
-			familyId: NEW_FAMILY,
-			puzzleId: NEW_FAMILY,
-			status: 'pending' as const
-		}
+		body: { existing: false, puzzleId: 'new-uuid', status: 'pending' as const }
 	},
 	{
 		name: 'existing pending',
-		familyId: HELD_FAMILY,
-		body: {
-			existing: true,
-			familyId: HELD_FAMILY,
-			puzzleId: HELD_FAMILY,
-			status: 'pending' as const
-		}
+		body: { existing: true, puzzleId: 'held-uuid', status: 'pending' as const }
 	},
 	{
 		name: 'existing committed',
-		familyId: COMMITTED_FAMILY,
-		body: {
-			existing: true,
-			familyId: COMMITTED_FAMILY,
-			puzzleId: COMMITTED_FAMILY,
-			status: 'committed' as const
-		}
+		body: { existing: true, puzzleId: 'committed-uuid', status: 'committed' as const }
 	},
 	{
 		name: 'promoted stale-pending',
-		familyId: LIVE_FAMILY,
-		body: {
-			existing: true,
-			familyId: LIVE_FAMILY,
-			puzzleId: LIVE_FAMILY,
-			status: 'committed' as const
-		}
+		body: { existing: true, puzzleId: 'live-uuid', status: 'committed' as const }
 	}
 ] as const;
 
@@ -90,7 +61,7 @@ describe('reserveIdempotencyKey client ↔ DO contract', () => {
 			const result = await reserveIdempotencyKey(
 				namespace as unknown as DurableObjectNamespace,
 				'request-1',
-				fixture.familyId
+				fixture.body.puzzleId
 			);
 
 			expect(namespace.idFromName).toHaveBeenCalledWith('request-1');
@@ -99,18 +70,18 @@ describe('reserveIdempotencyKey client ↔ DO contract', () => {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					idempotencyKey: 'request-1',
-					familyId: fixture.familyId
+					puzzleId: fixture.body.puzzleId
 				})
 			});
 			expect(result).toEqual({
 				existing: fixture.body.existing,
-				familyId: fixture.familyId,
+				puzzleId: fixture.body.puzzleId,
 				status: fixture.body.status
 			});
 		});
 	}
 
-	it('rejects a response missing familyId (client throw path)', async () => {
+	it('rejects a response missing puzzleId (client throw path)', async () => {
 		const { namespace } = createMockDurableObjectNamespace(
 			() =>
 				new Response(JSON.stringify({ existing: true, status: 'pending' }), {
@@ -120,14 +91,14 @@ describe('reserveIdempotencyKey client ↔ DO contract', () => {
 		);
 
 		await expect(
-			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', NEW_FAMILY)
-		).rejects.toThrow(/missing familyId/);
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'p1')
+		).rejects.toThrow(/missing puzzleId/);
 	});
 
 	it('treats missing existing as false (first-claim without the field)', async () => {
 		const { namespace } = createMockDurableObjectNamespace(
 			() =>
-				new Response(JSON.stringify({ familyId: NEW_FAMILY, status: 'pending' }), {
+				new Response(JSON.stringify({ puzzleId: 'p1', status: 'pending' }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				})
@@ -136,17 +107,17 @@ describe('reserveIdempotencyKey client ↔ DO contract', () => {
 		const result = await reserveIdempotencyKey(
 			namespace as unknown as DurableObjectNamespace,
 			'request-1',
-			NEW_FAMILY
+			'p1'
 		);
 
 		expect(result.existing).toBe(false);
-		expect(result.familyId).toBe(NEW_FAMILY);
+		expect(result.puzzleId).toBe('p1');
 	});
 
 	it('omits status when DO does not send one (legacy)', async () => {
 		const { namespace } = createMockDurableObjectNamespace(
 			() =>
-				new Response(JSON.stringify({ existing: true, familyId: LIVE_FAMILY }), {
+				new Response(JSON.stringify({ existing: true, puzzleId: 'legacy' }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				})
@@ -155,7 +126,7 @@ describe('reserveIdempotencyKey client ↔ DO contract', () => {
 		const result = await reserveIdempotencyKey(
 			namespace as unknown as DurableObjectNamespace,
 			'request-1',
-			LIVE_FAMILY
+			'legacy'
 		);
 
 		expect(result.status).toBeUndefined();
@@ -172,7 +143,7 @@ describe('reserveIdempotencyKey client ↔ DO contract', () => {
 		);
 
 		await expect(
-			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', NEW_FAMILY)
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'p1')
 		).rejects.toThrow('reservation conflict');
 	});
 });

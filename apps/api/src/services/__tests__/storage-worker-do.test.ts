@@ -119,7 +119,7 @@ describe('getIdempotencyReservation', () => {
 		const result = await getIdempotencyReservation(doNs, 'key-K');
 		expect(doNs.idFromName).toHaveBeenCalledWith('key-K');
 		expect(result).toEqual({
-			familyId: 'puzzle-1',
+			puzzleId: 'puzzle-1',
 			status: 'committed',
 			reservedAt: 1700000000
 		});
@@ -210,7 +210,7 @@ describe('getIdempotencyReservation', () => {
 			get: vi.fn(() => stub)
 		} as any;
 		const result = await getIdempotencyReservation(doNs, 'key-K');
-		expect(result).toEqual({ familyId: 'puzzle-1', status: 'unknown' });
+		expect(result).toEqual({ puzzleId: 'puzzle-1', status: 'unknown' });
 	});
 
 	it('omits reservedAt when it is not a number', async () => {
@@ -228,7 +228,7 @@ describe('getIdempotencyReservation', () => {
 			get: vi.fn(() => stub)
 		} as any;
 		const result = await getIdempotencyReservation(doNs, 'key-K');
-		expect(result).toEqual({ familyId: 'puzzle-1', status: 'pending' });
+		expect(result).toEqual({ puzzleId: 'puzzle-1', status: 'pending' });
 		expect(result).not.toHaveProperty('reservedAt');
 	});
 

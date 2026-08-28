@@ -3,16 +3,12 @@
  * Covers null KV entries in listPuzzles and R2 batch deletion failures.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { listPuzzles, deleteFamilyCleanupAssets, getImage } from './storage.worker';
+import { listPuzzles, deletePuzzleAssets, getImage } from './storage.worker';
 import type { PuzzleMetadata } from '@perseus/types';
-
-const TEST_FAMILY_ID = '223e4567-e89b-42d3-a456-426614174000';
 
 function makePuzzleMetadata(id: string): PuzzleMetadata {
 	return {
 		id,
-		familyId: TEST_FAMILY_ID,
-		difficulty: 'easy',
 		name: 'Test Puzzle',
 		status: 'ready',
 		pieceCount: 1,
@@ -104,7 +100,7 @@ describe('listPuzzles - null KV entries', () => {
 	});
 });
 
-describe('deleteFamilyCleanupAssets - R2 batch failure', () => {
+describe('deletePuzzleAssets - R2 batch failure', () => {
 	it('collects failed keys when R2 delete throws', async () => {
 		const mockBucket = {
 			delete: vi.fn(() => {
@@ -116,18 +112,15 @@ describe('deleteFamilyCleanupAssets - R2 batch failure', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const result = await deleteFamilyCleanupAssets(
-			mockBucket,
-			'family-abc',
-			{ easy: 'v-easy', normal: 'v-normal', hard: 'v-hard' },
-			{ easy: 1, normal: 1, hard: 0 }
-		);
+		const result = await deletePuzzleAssets(mockBucket, 'puzzle-abc', 2);
 
+		// Should report failure and include all keys in failedKeys
 		expect(result.success).toBe(false);
 		expect(result.failedKeys.length).toBeGreaterThan(0);
+		// original + thumbnail + 2 piece keys = 4 keys in the single batch
 		expect(result.failedKeys).toHaveLength(4);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to delete R2 batch (family cleanup family-abc)'),
+			expect.stringContaining('Failed to delete batch for puzzle puzzle-abc'),
 			expect.any(Array),
 			expect.any(Error)
 		);
@@ -141,12 +134,7 @@ describe('deleteFamilyCleanupAssets - R2 batch failure', () => {
 			get: vi.fn()
 		} as unknown as R2Bucket;
 
-		const result = await deleteFamilyCleanupAssets(
-			mockBucket,
-			'family-ok',
-			{ easy: 'v-easy', normal: 'v-normal', hard: 'v-hard' },
-			{ easy: 0, normal: 0, hard: 0 }
-		);
+		const result = await deletePuzzleAssets(mockBucket, 'puzzle-ok', 0);
 
 		expect(result.success).toBe(true);
 		expect(result.failedKeys).toHaveLength(0);
@@ -162,12 +150,8 @@ describe('deleteFamilyCleanupAssets - R2 batch failure', () => {
 			get: vi.fn()
 		} as unknown as R2Bucket;
 
-		const result = await deleteFamilyCleanupAssets(
-			mockBucket,
-			'large-family',
-			{ easy: 'v-easy', normal: 'v-normal', hard: 'v-hard' },
-			{ easy: 334, normal: 334, hard: 333 }
-		);
+		// 1001 pieces + original + thumbnail = 1003 total keys -> 2 batches
+		const result = await deletePuzzleAssets(mockBucket, 'large-puzzle', 1001);
 
 		expect(result.success).toBe(true);
 		expect(batchCount).toBe(2);

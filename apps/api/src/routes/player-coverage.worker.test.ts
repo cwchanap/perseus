@@ -52,7 +52,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(async () => ({ rows: [], nextCursor: undefined })),
-		listPlayerPuzzleFamilies: vi.fn(async () => ({ rows: [], nextCursor: undefined })),
 		listPlayerStats: vi.fn(async () => ({ rows: [], nextCursor: undefined }))
 	};
 });

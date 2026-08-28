@@ -15,6 +15,7 @@ import {
 	parseImageDimensions,
 	aspectRatiosMatch,
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_PIECES,
 	accessAppFor,
 	adminUiFor,
 	isLocalServer,
@@ -45,7 +46,8 @@ function makeEntry(id: string, name: string): CatalogEntry {
 		id,
 		name,
 		category: 'Nature',
-		aspectRatio: '1:1'
+		aspectRatio: '1:1',
+		pieceCount: 100
 	};
 }
 
@@ -319,17 +321,13 @@ describe('aspectRatiosMatch', () => {
 
 describe('accessAppFor', () => {
 	it('derives CLI Access app URL from server', () => {
-		// Must target /api/admin/puzzle-families (Perseus Admin CLI), not /api/admin
+		// Must target /api/admin/puzzles (Perseus Admin CLI), not /api/admin
 		// (broad Perseus Admin app) — different Access audiences.
-		expect(accessAppFor('https://example.com')).toBe(
-			'https://example.com/api/admin/puzzle-families'
-		);
+		expect(accessAppFor('https://example.com')).toBe('https://example.com/api/admin/puzzles');
 	});
 
 	it('strips trailing slashes', () => {
-		expect(accessAppFor('https://example.com/')).toBe(
-			'https://example.com/api/admin/puzzle-families'
-		);
+		expect(accessAppFor('https://example.com/')).toBe('https://example.com/api/admin/puzzles');
 	});
 });
 
@@ -385,10 +383,10 @@ describe('fetchExistingKeys', () => {
 			async () =>
 				new Response(
 					JSON.stringify({
-						families: [
-							{ name: 'Alpha', aspectRatio: '1:1' },
-							{ name: 'Beta', aspectRatio: '3:4' },
-							{ name: '  Gamma  ', aspectRatio: '1:1' }
+						puzzles: [
+							{ name: 'Alpha', pieceCount: 100, aspectRatio: '1:1' },
+							{ name: 'Beta', pieceCount: 108, aspectRatio: '3:4' },
+							{ name: '  Gamma  ', pieceCount: 121, aspectRatio: '1:1' }
 						]
 					}),
 					{ status: 200 }
@@ -396,9 +394,9 @@ describe('fetchExistingKeys', () => {
 		) as unknown as typeof fetch;
 
 		const keys = await fetchExistingKeys('http://localhost', {});
-		expect(keys.has(idempotencyKey('Alpha', '1:1'))).toBe(true);
-		expect(keys.has(idempotencyKey('Beta', '3:4'))).toBe(true);
-		expect(keys.has(idempotencyKey('Gamma', '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Alpha', 100, '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Beta', 108, '3:4'))).toBe(true);
+		expect(keys.has(idempotencyKey('Gamma', 121, '1:1'))).toBe(true);
 		expect(keys.size).toBe(3);
 	});
 
@@ -425,7 +423,12 @@ describe('fetchExistingKeys', () => {
 			async () =>
 				new Response(
 					JSON.stringify({
-						families: [{ name: 'Alpha' }, { name: 123 }, { name: '   ' }, { other: 'x' }]
+						puzzles: [
+							{ name: 'Alpha', pieceCount: 100 },
+							{ name: 123 },
+							{ name: '   ' },
+							{ other: 'x' }
+						]
 					}),
 					{ status: 200 }
 				)
@@ -434,18 +437,18 @@ describe('fetchExistingKeys', () => {
 		const keys = await fetchExistingKeys('http://localhost', {});
 		expect(keys.size).toBe(1);
 		// Missing aspectRatio is normalized to the server default (1:1).
-		expect(keys.has(idempotencyKey('Alpha', DEFAULT_PUZZLE_ASPECT_RATIO))).toBe(true);
+		expect(keys.has(idempotencyKey('Alpha', 100, DEFAULT_PUZZLE_ASPECT_RATIO))).toBe(true);
 	});
 
-	it('excludes failed families so they are retried on the next seed run', async () => {
+	it('excludes failed puzzles so they are retried on the next seed run', async () => {
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
 					JSON.stringify({
-						families: [
-							{ name: 'Ready', aspectRatio: '1:1', status: 'ready' },
-							{ name: 'Processing', aspectRatio: '1:1', status: 'processing' },
-							{ name: 'Failed', aspectRatio: '1:1', status: 'failed' }
+						puzzles: [
+							{ name: 'Ready', pieceCount: 100, aspectRatio: '1:1', status: 'ready' },
+							{ name: 'Processing', pieceCount: 100, aspectRatio: '1:1', status: 'processing' },
+							{ name: 'Failed', pieceCount: 100, aspectRatio: '1:1', status: 'failed' }
 						]
 					}),
 					{ status: 200 }
@@ -455,9 +458,9 @@ describe('fetchExistingKeys', () => {
 		const keys = await fetchExistingKeys('http://localhost', {});
 		// ready and processing are retained for dedup; failed is excluded so it
 		// gets retried on the next seed run instead of being permanently skipped.
-		expect(keys.has(idempotencyKey('Ready', '1:1'))).toBe(true);
-		expect(keys.has(idempotencyKey('Processing', '1:1'))).toBe(true);
-		expect(keys.has(idempotencyKey('Failed', '1:1'))).toBe(false);
+		expect(keys.has(idempotencyKey('Ready', 100, '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Processing', 100, '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Failed', 100, '1:1'))).toBe(false);
 		expect(keys.size).toBe(2);
 	});
 });
@@ -486,7 +489,7 @@ describe('uploadWithRetry', () => {
 		let postCalls = 0;
 		const fn = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			if (init?.method === 'GET') {
-				return new Response(JSON.stringify({ families: [] }), {
+				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
@@ -585,7 +588,8 @@ describe('validateCatalog', () => {
 		id,
 		name: `Puzzle ${id}`,
 		category: 'Nature',
-		aspectRatio: '1:1'
+		aspectRatio: '1:1',
+		pieceCount: 100
 	});
 
 	it('accepts a well-formed catalog', () => {
@@ -612,8 +616,10 @@ describe('validateCatalog', () => {
 	});
 
 	it('rejects a wrong-typed field', () => {
-		const entry = { ...validEntry('01'), name: 123 };
-		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/field "name" must be a string/);
+		const entry = { ...validEntry('01'), pieceCount: '100' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(
+			/field "pieceCount" must be a number/
+		);
 	});
 
 	it('rejects a blank string field', () => {
@@ -621,9 +627,36 @@ describe('validateCatalog', () => {
 		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must not be blank/);
 	});
 
-	it('rejects catalog entries that include pieceCount', () => {
-		const entry = { ...validEntry('01'), pieceCount: 100 };
-		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must not include pieceCount/);
+	it('rejects a non-integer pieceCount', () => {
+		const entry = { ...validEntry('01'), pieceCount: 100.5 };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must be an integer/);
+	});
+
+	it('rejects a non-positive pieceCount', () => {
+		const entry = { ...validEntry('01'), pieceCount: 0 };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must be positive/);
+	});
+
+	it('rejects a pieceCount below the server minimum (1-3)', () => {
+		for (const pieceCount of [1, 2, 3]) {
+			const entry = { ...validEntry('01'), pieceCount };
+			expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must be at least 4/);
+		}
+	});
+
+	it('accepts pieceCount exactly 4 (server minimum)', () => {
+		const entry = { ...validEntry('01'), pieceCount: 4 };
+		expect(validateCatalog([entry], 'catalog.json')).toEqual([entry]);
+	});
+
+	it('rejects a pieceCount above the server maximum even when the grid is valid', () => {
+		// 256 is a valid 1:1 grid (16×16) but exceeds MAX_PIECES (250).
+		// isValidPieceCountForAspectRatio passes, so without the ceiling check
+		// the CLI would upload it and the API would reject it at 400.
+		const entry = { ...validEntry('01'), pieceCount: 256 };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(
+			new RegExp(`exceeds the server maximum of ${MAX_PIECES}`)
+		);
 	});
 
 	it('rejects duplicate ids', () => {
@@ -654,15 +687,22 @@ describe('validateCatalog', () => {
 		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/invalid aspectRatio "16:9"/);
 	});
 
+	it('rejects a pieceCount invalid for the aspectRatio', () => {
+		const entry = { ...validEntry('01'), pieceCount: 7 };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(
+			/pieceCount 7 which is not valid for aspectRatio 1:1/
+		);
+	});
+
 	it('rejects an invalid category', () => {
 		const entry = { ...validEntry('01'), category: 'Space' };
 		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/category "Space"/);
 	});
 
 	it('rejects a NUL (U+0000) in the name — collides with the dedup-key separator', () => {
-		// idempotencyKey in upload.ts joins name + aspectRatio with \u0000.
-		// A name containing NUL would alias another entry's fields and silently
-		// skip dedup, causing duplicate uploads.
+		// idempotencyKey in upload.ts joins name + pieceCount + aspectRatio
+		// with \u0000. A name containing NUL would alias another entry's
+		// fields and silently skip dedup, causing duplicate uploads.
 		const entry = { ...validEntry('01'), name: 'evil\u0000100' };
 		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/control character/);
 	});
@@ -709,13 +749,13 @@ describe('cmdUpload', () => {
 		// cannot verify and must record a failure (FatalError).
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
-				return new Response(JSON.stringify({ families: [] }), {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
 				throw new Error('ECONNRESET');
 			}
 			return new Response('not found', { status: 404 });
@@ -745,13 +785,13 @@ describe('cmdUpload', () => {
 		let postCalled = false;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
-				return new Response(JSON.stringify({ families: [] }), {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
 				postCalled = true;
 				return new Response('ok', { status: 201 });
 			}
@@ -790,13 +830,13 @@ describe('cmdUpload', () => {
 		let postCalled = false;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
-				return new Response(JSON.stringify({ families: [] }), {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
 				postCalled = true;
 				return new Response('ok', { status: 201 });
 			}
@@ -832,14 +872,19 @@ describe('cmdUpload', () => {
 		let postBody: FormData | undefined;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				// Initial fetch returns Alpha as existing; Beta is not yet there.
-				return new Response(JSON.stringify({ families: [{ name: 'Alpha', aspectRatio: '1:1' }] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				});
+				// Include pieceCount/aspectRatio so the composite idempotency key
+				// matches the catalog entry (makeEntry defaults: 100 / 1:1).
+				return new Response(
+					JSON.stringify({ puzzles: [{ name: 'Alpha', pieceCount: 100, aspectRatio: '1:1' }] }),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				);
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
 				postCalled = true;
 				postBody = init?.body as FormData;
 				return new Response(JSON.stringify({ id: 'new-id', status: 'created' }), {
@@ -916,13 +961,13 @@ describe('cmdUpload', () => {
 			const headers = init?.headers as Record<string, string>;
 			if (headers) capturedHeaders.push({ ...headers });
 
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
-				return new Response(JSON.stringify({ families: [] }), {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
 				return new Response(JSON.stringify({ id: 'new-id', status: 'created' }), {
 					status: 201,
 					headers: { 'Content-Type': 'application/json' }

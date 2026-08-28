@@ -105,12 +105,10 @@ test.describe('mission session controls', () => {
 			unknown
 		>;
 		expect(body).toMatchObject({
-			version: 2,
+			version: 1,
 			runId: getFixture(FIXTURE_ID).runIds[0],
 			resultClass: 'relaxed',
-			elapsedActiveSeconds: null,
-			hintsUsed: 0,
-			incorrectAttempts: 0
+			elapsedActiveSeconds: null
 		});
 	});
 

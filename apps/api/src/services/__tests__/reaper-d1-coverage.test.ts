@@ -6,34 +6,20 @@ const dbContextMock = vi.hoisted(() => ({
 	completionWrites: {
 		write: vi.fn(),
 		beginPuzzleDeletion: vi.fn(async () => undefined),
-		finishPuzzleDeletion: vi.fn(async () => undefined),
-		finishFamilyFirstClears: vi.fn(async () => undefined)
+		finishPuzzleDeletion: vi.fn(async () => undefined)
 	}
 }));
 
 vi.mock('../storage.worker', () => ({
-	deleteFamilyCleanupAssets: vi.fn(),
+	deletePuzzleAssets: vi.fn(),
 	deleteMetadataDO: vi.fn(),
-	deleteFamilyMetadata: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	deleteCleanupRecord: vi.fn(),
 	writeCleanupRecord: vi.fn(),
 	getAuthoritativeStatus: vi.fn(),
-	getFamily: vi.fn(),
-	listFamilies: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	buildCleanupRecordFromFamily: vi.fn(
-		(family: { id: string; variants?: Record<string, string> }) => ({
-			familyId: family.id,
-			variantIds: family.variants ?? {
-				easy: `${family.id}-easy`,
-				normal: `${family.id}-normal`,
-				hard: `${family.id}-hard`
-			},
-			pieceCounts: { easy: 16, normal: 49, hard: 100 },
-			createdAt: Date.now()
-		})
-	)
+	getPuzzle: vi.fn(),
+	listPuzzles: vi.fn(),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 vi.mock('../../db.worker', () => ({
@@ -45,24 +31,23 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
-		deletePuzzleFamilyOwnership: vi.fn()
+		deletePuzzleOwnership: vi.fn()
 	};
 });
 
 import { reapStuckPuzzles, REAP_AFTER_MS } from '../reaper';
 import {
-	deleteFamilyCleanupAssets,
+	deletePuzzleAssets,
 	deleteMetadataDO,
-	deleteFamilyMetadata,
 	deletePuzzleMetadata,
 	deleteCleanupRecord,
 	writeCleanupRecord,
 	getAuthoritativeStatus,
-	getFamily,
-	listFamilies,
+	getPuzzle,
+	listPuzzles,
 	releaseIdempotencyKey
 } from '../storage.worker';
-import { deletePuzzleFamilyOwnership } from '@perseus/shared';
+import { deletePuzzleOwnership } from '@perseus/shared';
 
 void releaseIdempotencyKey;
 
@@ -84,34 +69,27 @@ function makeEnv() {
 describe('reaper D1 cleanup coverage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(listFamilies as any).mockResolvedValue({
-			families: [
+		(listPuzzles as any).mockResolvedValue({
+			puzzles: [
 				{
 					id: 'stuck-puzzle',
 					name: 'Stuck Puzzle',
+					pieceCount: 0,
 					status: 'processing',
-					createdAt: NOW - REAP_AFTER_MS - 1,
-					aspectRatio: '1:1'
+					createdAt: NOW - REAP_AFTER_MS - 1
 				}
 			],
 			invalidCount: 0
 		} as any);
-		(getFamily as any).mockResolvedValue({
+		(getPuzzle as any).mockResolvedValue({
 			id: 'stuck-puzzle',
 			name: 'Stuck Puzzle',
 			status: 'processing',
-			createdAt: NOW - REAP_AFTER_MS - 1,
-			aspectRatio: '1:1',
-			variants: {
-				easy: 'stuck-puzzle-easy',
-				normal: 'stuck-puzzle-normal',
-				hard: 'stuck-puzzle-hard'
-			}
+			pieceCount: undefined
 		} as any);
 		(getAuthoritativeStatus as any).mockResolvedValue('processing');
-		(deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(deleteMetadataDO as any).mockResolvedValue(undefined);
-		(deleteFamilyMetadata as any).mockResolvedValue({ success: true } as any);
 		(deletePuzzleMetadata as any).mockResolvedValue({ success: true } as any);
 		(deleteCleanupRecord as any).mockResolvedValue(undefined);
 		(writeCleanupRecord as any).mockResolvedValue(undefined);
@@ -120,7 +98,7 @@ describe('reaper D1 cleanup coverage', () => {
 	});
 
 	it('retains the deletion fence when required D1 ownership deletion rejects', async () => {
-		(deletePuzzleFamilyOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
+		(deletePuzzleOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv();
 
@@ -130,14 +108,14 @@ describe('reaper D1 cleanup coverage', () => {
 		expect(result.errors).toBe(1);
 		expect(writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ familyId: 'stuck-puzzle' })
+			expect.objectContaining({ puzzleId: 'stuck-puzzle', pieceCount: 0 })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-puzzle-easy',
+			'stuck-puzzle',
 			expect.any(Number)
 		);
-		expect(deleteFamilyCleanupAssets).toHaveBeenCalled();
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-puzzle');
+		expect(deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-puzzle', 0);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-puzzle');
 		expect(deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'stuck-puzzle', action: 'd1-finish-failed' })

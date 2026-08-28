@@ -83,11 +83,9 @@ test.describe('Gameplay interactions', () => {
 			inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')
 		).toHaveCount(1);
 
-		// Tab lands on the header leaderboard affordance (family puzzles), then
-		// the toolbar's single active action, then the board's single active cell.
+		// Tab lands on the toolbar's single active action, then the board's
+		// single active cell — no traversal through every toolbar action/cell.
 		await page.getByRole('link', { name: 'Return to arcade' }).focus();
-		await page.keyboard.press('Tab');
-		await expect(page.getByTestId('open-family-leaderboard')).toBeFocused();
 		await page.keyboard.press('Tab');
 		await expect(page.getByRole('button', { name: 'Hint' })).toBeFocused();
 		await page.keyboard.press('Tab');

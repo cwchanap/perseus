@@ -21,8 +21,7 @@ import {
 	isPlayerStatRow,
 	isPuzzleId,
 	isPuzzleRunId,
-	isValidCompletionRunFields,
-	isRecordPuzzleCompletionV2,
+	isRecordPuzzleCompletionV1,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
@@ -30,17 +29,7 @@ import {
 	type PlayerStatRow,
 	type ResultClass,
 	type RecordPuzzleCompletionResponse,
-	coercePuzzleStatus,
-	validatePuzzleFamilyMetadata,
-	isPuzzleFamilySummary,
-	isPuzzleFamilyListResponse,
-	isPuzzleVariantSummary,
-	PUZZLE_DIFFICULTIES,
-	getDifficultyPieceCount,
-	type PuzzleFamilyMetadata,
-	type PuzzleFamilySummary,
-	type PuzzleFamilyListResponse,
-	type PuzzleVariantSummary
+	coercePuzzleStatus
 } from './index';
 
 // Helper to create a valid piece
@@ -59,9 +48,7 @@ function makePiece(overrides: Record<string, unknown> = {}): unknown {
 // Helper to create a valid base metadata
 function makeMeta(overrides: Record<string, unknown> = {}): unknown {
 	return {
-		id: '123e4567-e89b-42d3-a456-426614174000',
-		familyId: '223e4567-e89b-42d3-a456-426614174001',
-		difficulty: 'easy',
+		id: 'some-id',
 		name: 'Test Puzzle',
 		pieceCount: 1,
 		gridCols: 1,
@@ -125,40 +112,46 @@ describe('coercePuzzleStatus', () => {
 describe('versioned puzzle completion contract', () => {
 	const currentRunId = '223e4567-e89b-42d3-a456-426614174000';
 
-	describe('version-neutral completion run fields', () => {
+	describe('current four-field request', () => {
 		const timed = {
+			version: 1,
 			runId: currentRunId,
 			resultClass: 'standard_timed' as const,
 			elapsedActiveSeconds: 90
 		};
 		const relaxed = {
+			version: 1,
 			runId: currentRunId,
 			resultClass: 'relaxed' as const,
 			elapsedActiveSeconds: null
 		};
 
-		it('accepts timed and relaxed run fields', () => {
-			expect(isValidCompletionRunFields(timed, 86_400)).toBe(true);
-			expect(isValidCompletionRunFields(relaxed, 86_400)).toBe(true);
+		it('accepts timed and relaxed four-field requests', () => {
+			expect(isRecordPuzzleCompletionV1(timed, 86_400)).toBe(true);
+			expect(isRecordPuzzleCompletionV1(relaxed, 86_400)).toBe(true);
 		});
 
-		it('rejects timed run fields without elapsed seconds', () => {
-			expect(isValidCompletionRunFields({ ...timed, elapsedActiveSeconds: null }, 86_400)).toBe(
+		it('rejects timed requests without elapsed seconds', () => {
+			expect(isRecordPuzzleCompletionV1({ ...timed, elapsedActiveSeconds: null }, 86_400)).toBe(
 				false
 			);
 		});
 
-		it('rejects relaxed run fields with elapsed seconds', () => {
-			expect(isValidCompletionRunFields({ ...relaxed, elapsedActiveSeconds: 90 }, 86_400)).toBe(
+		it('rejects relaxed requests with elapsed seconds', () => {
+			expect(isRecordPuzzleCompletionV1({ ...relaxed, elapsedActiveSeconds: 90 }, 86_400)).toBe(
 				false
 			);
+		});
+
+		it('rejects unexpected extra fields', () => {
+			expect(isRecordPuzzleCompletionV1({ ...timed, obsoleteField: true }, 86_400)).toBe(false);
 		});
 
 		it('rejects hash-shaped non-UUID run IDs while accepting UUID-v4 run IDs', () => {
 			const hashRunId = `legacy-${'a'.repeat(64)}`;
 
 			expect(isPuzzleRunId(hashRunId)).toBe(false);
-			expect(isValidCompletionRunFields({ ...timed, runId: hashRunId }, 86_400)).toBe(false);
+			expect(isRecordPuzzleCompletionV1({ ...timed, runId: hashRunId }, 86_400)).toBe(false);
 			expect(isPuzzleRunId(currentRunId)).toBe(true);
 		});
 	});
@@ -196,8 +189,9 @@ describe('versioned puzzle completion contract', () => {
 		'accepts %s completions with a positive whole-second elapsed time',
 		(resultClass) => {
 			expect(
-				isValidCompletionRunFields(
+				isRecordPuzzleCompletionV1(
 					{
+						version: 1,
 						runId: validRunId,
 						resultClass,
 						elapsedActiveSeconds: 1
@@ -210,8 +204,9 @@ describe('versioned puzzle completion contract', () => {
 
 	it('accepts relaxed completions with no elapsed time', () => {
 		expect(
-			isValidCompletionRunFields(
+			isRecordPuzzleCompletionV1(
 				{
+					version: 1,
 					runId: validRunId,
 					resultClass: 'relaxed',
 					elapsedActiveSeconds: null
@@ -225,8 +220,9 @@ describe('versioned puzzle completion contract', () => {
 		'rejects an otherwise valid timed completion when maxElapsedActiveSeconds is %s',
 		(maxElapsed) => {
 			expect(
-				isValidCompletionRunFields(
+				isRecordPuzzleCompletionV1(
 					{
+						version: 1,
 						runId: validRunId,
 						resultClass: 'standard_timed',
 						elapsedActiveSeconds: 1
@@ -240,6 +236,7 @@ describe('versioned puzzle completion contract', () => {
 	it.each([
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: null
@@ -248,6 +245,7 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'relaxed',
 				elapsedActiveSeconds: 1
@@ -256,6 +254,7 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 0
@@ -264,6 +263,7 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: -1
@@ -272,6 +272,7 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 1.5
@@ -280,6 +281,7 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: Infinity
@@ -288,6 +290,7 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 86_401
@@ -296,69 +299,43 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
+				version: 1,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 1
 			},
 			false
 		],
-		[{ runId: validRunId, resultClass: 'standard_timed' }, false],
+		[{ version: 1, runId: validRunId, resultClass: 'standard_timed' }, false],
 		[
 			{
+				version: 1,
 				runId: validRunId,
 				resultClass: 'invalid',
 				elapsedActiveSeconds: 1
 			},
 			false
+		],
+		[
+			{
+				version: 2,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				elapsedActiveSeconds: 1,
+				ignored: true
+			},
+			false
 		]
-	])('rejects invalid completion run fields %j', (candidate, expected) => {
-		expect(isValidCompletionRunFields(candidate, 86_400)).toBe(expected);
-	});
-
-	describe('V2 six-field request', () => {
-		const timed = {
-			version: 2,
-			runId: currentRunId,
-			resultClass: 'standard_timed' as const,
-			elapsedActiveSeconds: 90,
-			hintsUsed: 2,
-			incorrectAttempts: 1
-		};
-		const relaxed = {
-			version: 2,
-			runId: currentRunId,
-			resultClass: 'relaxed' as const,
-			elapsedActiveSeconds: null,
-			hintsUsed: 0,
-			incorrectAttempts: 0
-		};
-
-		it('accepts timed and relaxed V2 requests with hints and incorrect attempts', () => {
-			expect(isRecordPuzzleCompletionV2(timed, 86_400)).toBe(true);
-			expect(isRecordPuzzleCompletionV2(relaxed, 86_400)).toBe(true);
-		});
-
-		it('rejects V2 requests with negative hints or incorrect attempts', () => {
-			expect(isRecordPuzzleCompletionV2({ ...timed, hintsUsed: -1 }, 86_400)).toBe(false);
-			expect(isRecordPuzzleCompletionV2({ ...timed, incorrectAttempts: -1 }, 86_400)).toBe(false);
-		});
-
-		it('rejects V2 requests with unexpected extra fields', () => {
-			expect(isRecordPuzzleCompletionV2({ ...timed, obsoleteField: true }, 86_400)).toBe(false);
-		});
-
-		it('rejects V1-shaped requests as V2', () => {
-			expect(
-				isRecordPuzzleCompletionV2(
-					{
-						version: 1,
-						runId: currentRunId,
-						resultClass: 'standard_timed',
-						elapsedActiveSeconds: 90
-					},
-					86_400
-				)
-			).toBe(false);
-		});
+	])('rejects invalid completion request %j', (candidate, expected) => {
+		expect(isRecordPuzzleCompletionV1(candidate, 86_400)).toBe(expected);
 	});
 });
 
@@ -592,11 +569,11 @@ describe('isPuzzlePiece', () => {
 
 describe('validateWorkflowParams', () => {
 	it('returns true for valid UUIDv4', () => {
-		expect(validateWorkflowParams({ familyId: '123e4567-e89b-42d3-a456-426614174000' })).toBe(true);
+		expect(validateWorkflowParams({ puzzleId: '123e4567-e89b-42d3-a456-426614174000' })).toBe(true);
 	});
 
 	it('returns true for uppercase UUIDv4', () => {
-		expect(validateWorkflowParams({ familyId: '123E4567-E89B-42D3-A456-426614174000' })).toBe(true);
+		expect(validateWorkflowParams({ puzzleId: '123E4567-E89B-42D3-A456-426614174000' })).toBe(true);
 	});
 
 	it('returns false for null', () => {
@@ -607,22 +584,22 @@ describe('validateWorkflowParams', () => {
 		expect(validateWorkflowParams('string')).toBe(false);
 	});
 
-	it('returns false when familyId is not a string', () => {
-		expect(validateWorkflowParams({ familyId: 123 })).toBe(false);
+	it('returns false when puzzleId is not a string', () => {
+		expect(validateWorkflowParams({ puzzleId: 123 })).toBe(false);
 	});
 
 	it('returns false for non-UUID string', () => {
-		expect(validateWorkflowParams({ familyId: 'not-a-uuid' })).toBe(false);
+		expect(validateWorkflowParams({ puzzleId: 'not-a-uuid' })).toBe(false);
 	});
 
 	it('returns false for UUIDv1 format (wrong version digit)', () => {
-		expect(validateWorkflowParams({ familyId: '123e4567-e89b-12d3-a456-426614174000' })).toBe(
+		expect(validateWorkflowParams({ puzzleId: '123e4567-e89b-12d3-a456-426614174000' })).toBe(
 			false
 		);
 	});
 
-	it('returns false for empty string familyId', () => {
-		expect(validateWorkflowParams({ familyId: '' })).toBe(false);
+	it('returns false for empty string puzzleId', () => {
+		expect(validateWorkflowParams({ puzzleId: '' })).toBe(false);
 	});
 });
 
@@ -1290,11 +1267,9 @@ describe('player profile validators', () => {
 	});
 
 	const stat: PlayerStatRow = {
-		familyId: 'fam1',
-		familyName: 'Cat',
-		difficulty: 'easy',
-		standardBestTimeSeconds: 90,
-		rotationBestTimeSeconds: null,
+		puzzleId: 'pz1',
+		puzzleName: 'Cat',
+		bestTimeSeconds: 90,
 		totalCompletions: 2,
 		firstCompletedAt: 10,
 		lastCompletedAt: 20
@@ -1305,23 +1280,23 @@ describe('player profile validators', () => {
 	});
 
 	it('validates a stat row without a standard best time', () => {
-		const nullableStat: PlayerStatRow = { ...stat, standardBestTimeSeconds: null };
+		const nullableStat: PlayerStatRow = { ...stat, bestTimeSeconds: null };
 
 		expect(isPlayerStatRow(nullableStat)).toBe(true);
 	});
 
 	it('rejects a stat row with a missing standard best time', () => {
-		const { standardBestTimeSeconds: _standardBestTimeSeconds, ...missingBest } = stat;
+		const { bestTimeSeconds: _bestTimeSeconds, ...missingBest } = stat;
 
 		expect(isPlayerStatRow(missingBest)).toBe(false);
 	});
 
 	it.each([
-		['undefined', { ...stat, standardBestTimeSeconds: undefined }],
-		['string', { ...stat, standardBestTimeSeconds: '90' }],
-		['NaN', { ...stat, standardBestTimeSeconds: NaN }],
-		['positive infinity', { ...stat, standardBestTimeSeconds: Infinity }],
-		['negative infinity', { ...stat, standardBestTimeSeconds: -Infinity }]
+		['undefined', { ...stat, bestTimeSeconds: undefined }],
+		['string', { ...stat, bestTimeSeconds: '90' }],
+		['NaN', { ...stat, bestTimeSeconds: NaN }],
+		['positive infinity', { ...stat, bestTimeSeconds: Infinity }],
+		['negative infinity', { ...stat, bestTimeSeconds: -Infinity }]
 	])('rejects a stat row with a %s standard best time', (_case, value) => {
 		expect(isPlayerStatRow(value)).toBe(false);
 	});
@@ -1381,8 +1356,8 @@ describe('player profile validators', () => {
 		expect(isPlayerStatRow(null)).toBe(false);
 	});
 
-	it('rejects stat row with blank familyId', () => {
-		expect(isPlayerStatRow({ ...stat, familyId: '' })).toBe(false);
+	it('rejects stat row with blank puzzleId', () => {
+		expect(isPlayerStatRow({ ...stat, puzzleId: '' })).toBe(false);
 	});
 
 	it('rejects stat row with non-finite totalCompletions', () => {
@@ -1423,179 +1398,5 @@ describe('player profile validators', () => {
 
 	it('accepts player puzzle summary with valid category', () => {
 		expect(isPlayerPuzzleSummary({ ...puzzle, category: 'Animals' })).toBe(true);
-	});
-});
-
-const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174000';
-const EASY_VARIANT_ID = '223e4567-e89b-42d3-a456-426614174001';
-const NORMAL_VARIANT_ID = '323e4567-e89b-42d3-a456-426614174002';
-const HARD_VARIANT_ID = '423e4567-e89b-42d3-a456-426614174003';
-
-function makeFamilyMetadata(overrides: Record<string, unknown> = {}): PuzzleFamilyMetadata {
-	return {
-		id: FAMILY_ID,
-		name: 'Mountain Vista',
-		category: 'Nature',
-		aspectRatio: '4:3',
-		createdAt: 1716500000000,
-		status: 'ready',
-		variants: {
-			easy: EASY_VARIANT_ID,
-			normal: NORMAL_VARIANT_ID,
-			hard: HARD_VARIANT_ID
-		},
-		...overrides
-	};
-}
-
-function makeVariantSummary(
-	difficulty: 'easy' | 'normal' | 'hard',
-	overrides: Record<string, unknown> = {}
-): PuzzleVariantSummary {
-	const ids = { easy: EASY_VARIANT_ID, normal: NORMAL_VARIANT_ID, hard: HARD_VARIANT_ID };
-	return {
-		id: ids[difficulty],
-		difficulty,
-		pieceCount: getDifficultyPieceCount('4:3', difficulty),
-		status: 'ready',
-		...overrides
-	};
-}
-
-function makeFamilySummary(overrides: Record<string, unknown> = {}): PuzzleFamilySummary {
-	return {
-		id: FAMILY_ID,
-		name: 'Mountain Vista',
-		category: 'Nature',
-		aspectRatio: '4:3',
-		status: 'ready',
-		createdAt: 1716500000000,
-		variants: {
-			easy: makeVariantSummary('easy'),
-			normal: makeVariantSummary('normal'),
-			hard: makeVariantSummary('hard')
-		},
-		...overrides
-	};
-}
-
-describe('puzzle family contracts', () => {
-	it('validates family metadata with exactly three UUID variant IDs', () => {
-		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata())).toBe(true);
-	});
-
-	it('rejects family metadata missing a difficulty variant', () => {
-		const { hard: _, ...variants } = makeFamilyMetadata().variants;
-		void _;
-		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ variants }))).toBe(false);
-	});
-
-	it('rejects family metadata with non-UUID variant IDs', () => {
-		expect(
-			validatePuzzleFamilyMetadata(
-				makeFamilyMetadata({
-					variants: {
-						easy: 'not-a-uuid',
-						normal: NORMAL_VARIANT_ID,
-						hard: HARD_VARIANT_ID
-					}
-				})
-			)
-		).toBe(false);
-	});
-
-	it('rejects family metadata with an invalid aspect ratio', () => {
-		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ aspectRatio: '16:9' }))).toBe(false);
-	});
-
-	it('rejects family metadata with an invalid status', () => {
-		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ status: 'unknown' }))).toBe(false);
-	});
-
-	it('accepts family metadata with an idempotencyKey string', () => {
-		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ idempotencyKey: 'abc123' }))).toBe(
-			true
-		);
-	});
-
-	it('rejects family metadata with a non-string idempotencyKey', () => {
-		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ idempotencyKey: 42 }))).toBe(false);
-	});
-
-	it('validates a family summary without a scalar pieceCount', () => {
-		const summary = makeFamilySummary();
-		expect('pieceCount' in summary).toBe(false);
-		expect(isPuzzleFamilySummary(summary)).toBe(true);
-	});
-
-	it('rejects a family summary that includes a scalar pieceCount', () => {
-		expect(isPuzzleFamilySummary({ ...makeFamilySummary(), pieceCount: 48 })).toBe(false);
-	});
-
-	it('rejects a family summary when variant pieceCount does not match difficulty grid', () => {
-		expect(
-			isPuzzleFamilySummary(
-				makeFamilySummary({
-					variants: {
-						easy: makeVariantSummary('easy'),
-						normal: makeVariantSummary('normal', { pieceCount: 99 }),
-						hard: makeVariantSummary('hard')
-					}
-				})
-			)
-		).toBe(false);
-	});
-
-	it('rejects a family summary when variant difficulty does not match its Record key', () => {
-		expect(
-			isPuzzleFamilySummary(
-				makeFamilySummary({
-					variants: {
-						easy: makeVariantSummary('hard'),
-						normal: makeVariantSummary('normal'),
-						hard: makeVariantSummary('easy')
-					}
-				})
-			)
-		).toBe(false);
-	});
-
-	it('validates variant summaries for each fixed difficulty', () => {
-		for (const difficulty of PUZZLE_DIFFICULTIES) {
-			expect(isPuzzleVariantSummary(makeVariantSummary(difficulty), '4:3')).toBe(true);
-		}
-	});
-
-	it('validates a family list response mirroring puzzle list pagination', () => {
-		const response: PuzzleFamilyListResponse = {
-			families: [makeFamilySummary()],
-			total: 1,
-			offset: 0,
-			limit: 20
-		};
-		expect(isPuzzleFamilyListResponse(response)).toBe(true);
-	});
-
-	it('validates a family list response with nextCursor', () => {
-		expect(
-			isPuzzleFamilyListResponse({
-				families: [],
-				total: 0,
-				offset: 0,
-				limit: 20,
-				nextCursor: 'cursor-1'
-			})
-		).toBe(true);
-	});
-
-	it('rejects a family list response with invalid families', () => {
-		expect(
-			isPuzzleFamilyListResponse({
-				families: [{ ...makeFamilySummary(), pieceCount: 12 }],
-				total: 1,
-				offset: 0,
-				limit: 20
-			})
-		).toBe(false);
 	});
 });
