@@ -226,6 +226,21 @@ export async function importPuzzleFamilies(options: ImportOptions): Promise<Impo
 		});
 	}
 
+	// Persist a durable artifact BEFORE polling: if pollImportedFamilies throws
+	// (or the operator kills the script while families are still processing),
+	// cleanup-legacy-puzzles still finds an import-results.json listing every
+	// family created this run instead of aborting on a missing file. The
+	// successful-poll write below overwrites it with final statuses.
+	const initialResults: ImportResults = {
+		importedAt: new Date().toISOString(),
+		server: options.server,
+		families: imported
+	};
+	writeFileSync(
+		join(options.migrationDir, IMPORT_RESULTS_FILE),
+		JSON.stringify(initialResults, null, 2)
+	);
+
 	const finalStatuses = await pollImportedFamilies(
 		options.server,
 		imported,

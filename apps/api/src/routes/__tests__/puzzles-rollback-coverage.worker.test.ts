@@ -39,7 +39,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		listPuzzlesPage: vi.fn(),
 		getImage: vi.fn(),
-		resolveVariantReferenceKey: vi.fn()
+		getFamilyOriginalKey: (familyId: string) => `families/${familyId}/original`
 	};
 });
 vi.mock('../../services/player-auth.worker', () => ({

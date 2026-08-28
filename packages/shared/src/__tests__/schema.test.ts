@@ -36,18 +36,21 @@ describe('schema tables', () => {
 			expect(existsSync(snapshotPath)).toBe(true);
 		}
 		const latest = journal.entries[journal.entries.length - 1];
-		expect(latest.tag).toBe('0006_puzzle_progression_reset');
+		expect(latest.tag).toBe('0007_puzzle_leaderboard_index');
 		const latestSnapshot = JSON.parse(
-			readFileSync('./drizzle/meta/0006_snapshot.json', 'utf8')
+			readFileSync('./drizzle/meta/0007_snapshot.json', 'utf8')
 		) as {
 			prevId: string;
 			tables: {
-				puzzle_best_times: { checkConstraints: Record<string, { value: string }> };
+				puzzle_best_times: {
+					checkConstraints: Record<string, { value: string }>;
+					indexes: Record<string, { columns: string[] }>;
+				};
 				puzzle_completion_runs: { checkConstraints: Record<string, { value: string }> };
 			};
 		};
 		const previousSnapshot = JSON.parse(
-			readFileSync('./drizzle/meta/0005_snapshot.json', 'utf8')
+			readFileSync('./drizzle/meta/0006_snapshot.json', 'utf8')
 		) as {
 			id: string;
 		};
@@ -55,6 +58,18 @@ describe('schema tables', () => {
 		expect(
 			latestSnapshot.tables.puzzle_best_times.checkConstraints.pbt_best_time_seconds_check.value
 		).toBe('"puzzle_best_times"."best_time_seconds" BETWEEN 1 AND 86400');
+		expect(
+			latestSnapshot.tables.puzzle_best_times.indexes.idx_pbt_family_difficulty_class_time
+		).toMatchObject({
+			columns: [
+				'family_id',
+				'difficulty',
+				'result_class',
+				'best_time_seconds',
+				'achieved_at',
+				'player_id'
+			]
+		});
 		expect(
 			latestSnapshot.tables.puzzle_completion_runs.checkConstraints.pcr_elapsed_active_seconds_check
 				.value
@@ -460,7 +475,10 @@ describe('schema tables', () => {
 
 	it('resets completion usage in migration 0006 while preserving profiles and families', () => {
 		const migrationSql = readFileSync('./drizzle/0006_puzzle_progression_reset.sql', 'utf8');
-		expect(migrationSql).toContain('DELETE FROM `puzzle_completion_runs`');
+		// The dropped tables' DELETEs are dead weight (only player_completion_usage
+		// survives the reset), so the migration must not carry them.
+		expect(migrationSql).not.toContain('DELETE FROM `puzzle_completion_runs`');
+		expect(migrationSql).not.toContain('DELETE FROM `puzzle_stats`');
 		expect(migrationSql).toContain('DELETE FROM `player_completion_usage`');
 		expect(migrationSql).toContain('DROP TABLE IF EXISTS `puzzles`');
 		expect(migrationSql).toContain('DROP TABLE IF EXISTS `puzzle_stats`');

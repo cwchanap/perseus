@@ -1,4 +1,4 @@
-import { eq, lt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
+import { eq, lt, desc, asc, count, sql, and, inArray, type SQL } from 'drizzle-orm';
 import type { PuzzleDifficulty, RecordPuzzleCompletionV2, ResultClass } from '@perseus/types';
 import type { AppDb, NewPuzzleFamilyRow, PlayerProfileRow } from './types';
 import { puzzleFamilies, playerProfiles, playerAchievements } from './schema';
@@ -55,9 +55,14 @@ export async function ensurePublicDisplayName(
 	const trimmed = candidateName.trim();
 	const now = Date.now();
 	if (!existing) {
+		// onConflictDoNothing: two concurrent first-name claims both read
+		// `existing === null`; without the guard the loser would abort on the
+		// playerProfiles primary key and surface a 500. Skipping silently
+		// preserves whichever name won the race.
 		await db
 			.insert(playerProfiles)
 			.values({ playerId, displayName: trimmed, updatedAt: now })
+			.onConflictDoNothing({ target: playerProfiles.playerId })
 			.run();
 		return;
 	}
@@ -225,18 +230,19 @@ export async function reconcileAchievements(
 ): Promise<AchievementId[]> {
 	const snapshot = await readAchievementSnapshot(db, playerId);
 	const candidates = evaluateAchievements(snapshot);
-	const awarded: AchievementId[] = [];
-	for (const achievementId of candidates) {
-		const inserted = await db
-			.insert(playerAchievements)
-			.values({ playerId, achievementId, unlockedAt })
-			.onConflictDoNothing({
-				target: [playerAchievements.playerId, playerAchievements.achievementId]
-			})
-			.returning({ achievementId: playerAchievements.achievementId });
-		if (inserted[0]) awarded.push(inserted[0].achievementId as AchievementId);
-	}
-	return awarded;
+	if (candidates.length === 0) return [];
+	const inserted = await db
+		.insert(playerAchievements)
+		.values(candidates.map((achievementId) => ({ playerId, achievementId, unlockedAt })))
+		.onConflictDoNothing({
+			target: [playerAchievements.playerId, playerAchievements.achievementId]
+		})
+		.returning({ achievementId: playerAchievements.achievementId });
+	// Returning yields only rows this call actually inserted; derive `awarded`
+	// from it (conflict-skipped achievements stay excluded) while preserving
+	// the candidates' order for stable award payloads.
+	const insertedIds = new Set(inserted.map((row) => row.achievementId));
+	return candidates.filter((achievementId) => insertedIds.has(achievementId));
 }
 
 export async function deletePuzzleStats(
@@ -305,16 +311,26 @@ function encodePlayerPuzzleFamilyCursor(row: { createdAt: number; id: string }):
 	return `${row.createdAt}|${row.id}`;
 }
 
+export class InvalidPlayerPuzzleFamilyCursorError extends Error {
+	constructor(cursor: string) {
+		super(`Invalid player puzzle family cursor: ${cursor}`);
+		this.name = 'InvalidPlayerPuzzleFamilyCursorError';
+	}
+}
+
 function parsePlayerPuzzleFamilyCursor(cursor: string) {
 	const sep = cursor.lastIndexOf('|');
 	if (sep <= 0) {
 		const ts = Number(cursor);
-		return Number.isFinite(ts) ? lt(puzzleFamilies.createdAt, ts) : sql`false`;
+		if (Number.isFinite(ts)) return lt(puzzleFamilies.createdAt, ts);
+		throw new InvalidPlayerPuzzleFamilyCursorError(cursor);
 	}
 	const createdAtStr = cursor.slice(0, sep);
 	const idStr = cursor.slice(sep + 1);
 	const createdAt = Number(createdAtStr);
-	if (!Number.isFinite(createdAt)) return sql`false`;
+	if (!Number.isFinite(createdAt)) {
+		throw new InvalidPlayerPuzzleFamilyCursorError(cursor);
+	}
 	return sql`(${puzzleFamilies.createdAt} < ${createdAt} OR (${puzzleFamilies.createdAt} = ${createdAt} AND ${puzzleFamilies.id} < ${idStr}))`;
 }
 
@@ -805,58 +821,69 @@ function overallRankAheadCondition(cAlias: string, vAlias: string): string {
 	)`;
 }
 
+/**
+ * Shared WITH clause computing each player's overall score (unique-clear
+ * points + achievement points), clear counts, and score_reached_at. Used
+ * by the top-N, viewer-row, and rank-count queries so the score
+ * definition cannot drift between them.
+ */
+function overallScoreCte(): SQL {
+	return sql`
+	WITH clear_stats AS (
+		SELECT
+			player_id,
+			SUM(CASE difficulty
+				WHEN 'easy' THEN ${UNIQUE_CLEAR_POINTS.easy}
+				WHEN 'normal' THEN ${UNIQUE_CLEAR_POINTS.normal}
+				WHEN 'hard' THEN ${UNIQUE_CLEAR_POINTS.hard}
+				ELSE 0
+			END) AS clear_score,
+			SUM(CASE WHEN difficulty = 'easy' THEN 1 ELSE 0 END) AS easy_clears,
+			SUM(CASE WHEN difficulty = 'normal' THEN 1 ELSE 0 END) AS normal_clears,
+			SUM(CASE WHEN difficulty = 'hard' THEN 1 ELSE 0 END) AS hard_clears,
+			MAX(first_completed_at) AS latest_clear_at
+		FROM player_difficulty_completions
+		GROUP BY player_id
+	),
+	achievement_stats AS (
+		SELECT
+			player_id,
+			SUM(CASE achievement_id
+				${sql.raw(overallAchievementCaseSql())}
+				ELSE 0
+			END) AS achievement_score,
+			MAX(unlocked_at) AS latest_achievement_at
+		FROM player_achievements
+		GROUP BY player_id
+	),
+	all_players AS (
+		SELECT player_id FROM clear_stats
+		UNION
+		SELECT player_id FROM achievement_stats
+	),
+	combined AS (
+		SELECT
+			all_players.player_id AS player_id,
+			COALESCE(clear_stats.clear_score, 0) + COALESCE(achievement_stats.achievement_score, 0) AS score,
+			COALESCE(clear_stats.easy_clears, 0) AS easy_clears,
+			COALESCE(clear_stats.normal_clears, 0) AS normal_clears,
+			COALESCE(clear_stats.hard_clears, 0) AS hard_clears,
+			MAX(
+				COALESCE(clear_stats.latest_clear_at, 0),
+				COALESCE(achievement_stats.latest_achievement_at, 0)
+			) AS score_reached_at
+		FROM all_players
+		LEFT JOIN clear_stats ON clear_stats.player_id = all_players.player_id
+		LEFT JOIN achievement_stats ON achievement_stats.player_id = all_players.player_id
+		GROUP BY all_players.player_id
+		HAVING score > 0
+	)
+	`;
+}
+
 async function queryTopOverallScoreRows(db: AppDb, limit: number): Promise<RawOverallScoreRow[]> {
-	const achievementCase = overallAchievementCaseSql();
 	return db.all<RawOverallScoreRow>(sql`
-		WITH clear_stats AS (
-			SELECT
-				player_id,
-				SUM(CASE difficulty
-					WHEN 'easy' THEN ${UNIQUE_CLEAR_POINTS.easy}
-					WHEN 'normal' THEN ${UNIQUE_CLEAR_POINTS.normal}
-					WHEN 'hard' THEN ${UNIQUE_CLEAR_POINTS.hard}
-					ELSE 0
-				END) AS clear_score,
-				SUM(CASE WHEN difficulty = 'easy' THEN 1 ELSE 0 END) AS easy_clears,
-				SUM(CASE WHEN difficulty = 'normal' THEN 1 ELSE 0 END) AS normal_clears,
-				SUM(CASE WHEN difficulty = 'hard' THEN 1 ELSE 0 END) AS hard_clears,
-				MAX(first_completed_at) AS latest_clear_at
-			FROM player_difficulty_completions
-			GROUP BY player_id
-		),
-		achievement_stats AS (
-			SELECT
-				player_id,
-				SUM(CASE achievement_id
-					${sql.raw(achievementCase)}
-					ELSE 0
-				END) AS achievement_score,
-				MAX(unlocked_at) AS latest_achievement_at
-			FROM player_achievements
-			GROUP BY player_id
-		),
-		all_players AS (
-			SELECT player_id FROM clear_stats
-			UNION
-			SELECT player_id FROM achievement_stats
-		),
-		combined AS (
-			SELECT
-				all_players.player_id AS player_id,
-				COALESCE(clear_stats.clear_score, 0) + COALESCE(achievement_stats.achievement_score, 0) AS score,
-				COALESCE(clear_stats.easy_clears, 0) AS easy_clears,
-				COALESCE(clear_stats.normal_clears, 0) AS normal_clears,
-				COALESCE(clear_stats.hard_clears, 0) AS hard_clears,
-				MAX(
-					COALESCE(clear_stats.latest_clear_at, 0),
-					COALESCE(achievement_stats.latest_achievement_at, 0)
-				) AS score_reached_at
-			FROM all_players
-			LEFT JOIN clear_stats ON clear_stats.player_id = all_players.player_id
-			LEFT JOIN achievement_stats ON achievement_stats.player_id = all_players.player_id
-			GROUP BY all_players.player_id
-			HAVING score > 0
-		)
+		${overallScoreCte()}
 		SELECT
 			player_id AS "playerId",
 			score AS "score",
@@ -874,57 +901,8 @@ async function queryOverallScoreRowForPlayer(
 	db: AppDb,
 	playerId: string
 ): Promise<RawOverallScoreRow | null> {
-	const achievementCase = overallAchievementCaseSql();
 	const rows = await db.all<RawOverallScoreRow>(sql`
-		WITH clear_stats AS (
-			SELECT
-				player_id,
-				SUM(CASE difficulty
-					WHEN 'easy' THEN ${UNIQUE_CLEAR_POINTS.easy}
-					WHEN 'normal' THEN ${UNIQUE_CLEAR_POINTS.normal}
-					WHEN 'hard' THEN ${UNIQUE_CLEAR_POINTS.hard}
-					ELSE 0
-				END) AS clear_score,
-				SUM(CASE WHEN difficulty = 'easy' THEN 1 ELSE 0 END) AS easy_clears,
-				SUM(CASE WHEN difficulty = 'normal' THEN 1 ELSE 0 END) AS normal_clears,
-				SUM(CASE WHEN difficulty = 'hard' THEN 1 ELSE 0 END) AS hard_clears,
-				MAX(first_completed_at) AS latest_clear_at
-			FROM player_difficulty_completions
-			GROUP BY player_id
-		),
-		achievement_stats AS (
-			SELECT
-				player_id,
-				SUM(CASE achievement_id
-					${sql.raw(achievementCase)}
-					ELSE 0
-				END) AS achievement_score,
-				MAX(unlocked_at) AS latest_achievement_at
-			FROM player_achievements
-			GROUP BY player_id
-		),
-		all_players AS (
-			SELECT player_id FROM clear_stats
-			UNION
-			SELECT player_id FROM achievement_stats
-		),
-		combined AS (
-			SELECT
-				all_players.player_id AS player_id,
-				COALESCE(clear_stats.clear_score, 0) + COALESCE(achievement_stats.achievement_score, 0) AS score,
-				COALESCE(clear_stats.easy_clears, 0) AS easy_clears,
-				COALESCE(clear_stats.normal_clears, 0) AS normal_clears,
-				COALESCE(clear_stats.hard_clears, 0) AS hard_clears,
-				MAX(
-					COALESCE(clear_stats.latest_clear_at, 0),
-					COALESCE(achievement_stats.latest_achievement_at, 0)
-				) AS score_reached_at
-			FROM all_players
-			LEFT JOIN clear_stats ON clear_stats.player_id = all_players.player_id
-			LEFT JOIN achievement_stats ON achievement_stats.player_id = all_players.player_id
-			GROUP BY all_players.player_id
-			HAVING score > 0
-		)
+		${overallScoreCte()}
 		SELECT
 			player_id AS "playerId",
 			score AS "score",
@@ -940,58 +918,9 @@ async function queryOverallScoreRowForPlayer(
 }
 
 async function countOverallRankForPlayer(db: AppDb, playerId: string): Promise<number> {
-	const achievementCase = overallAchievementCaseSql();
 	const rankAhead = overallRankAheadCondition('c', 'v');
 	const rankRows = await db.all<{ rank: number }>(sql`
-		WITH clear_stats AS (
-			SELECT
-				player_id,
-				SUM(CASE difficulty
-					WHEN 'easy' THEN ${UNIQUE_CLEAR_POINTS.easy}
-					WHEN 'normal' THEN ${UNIQUE_CLEAR_POINTS.normal}
-					WHEN 'hard' THEN ${UNIQUE_CLEAR_POINTS.hard}
-					ELSE 0
-				END) AS clear_score,
-				SUM(CASE WHEN difficulty = 'easy' THEN 1 ELSE 0 END) AS easy_clears,
-				SUM(CASE WHEN difficulty = 'normal' THEN 1 ELSE 0 END) AS normal_clears,
-				SUM(CASE WHEN difficulty = 'hard' THEN 1 ELSE 0 END) AS hard_clears,
-				MAX(first_completed_at) AS latest_clear_at
-			FROM player_difficulty_completions
-			GROUP BY player_id
-		),
-		achievement_stats AS (
-			SELECT
-				player_id,
-				SUM(CASE achievement_id
-					${sql.raw(achievementCase)}
-					ELSE 0
-				END) AS achievement_score,
-				MAX(unlocked_at) AS latest_achievement_at
-			FROM player_achievements
-			GROUP BY player_id
-		),
-		all_players AS (
-			SELECT player_id FROM clear_stats
-			UNION
-			SELECT player_id FROM achievement_stats
-		),
-		combined AS (
-			SELECT
-				all_players.player_id AS player_id,
-				COALESCE(clear_stats.clear_score, 0) + COALESCE(achievement_stats.achievement_score, 0) AS score,
-				COALESCE(clear_stats.easy_clears, 0) AS easy_clears,
-				COALESCE(clear_stats.normal_clears, 0) AS normal_clears,
-				COALESCE(clear_stats.hard_clears, 0) AS hard_clears,
-				MAX(
-					COALESCE(clear_stats.latest_clear_at, 0),
-					COALESCE(achievement_stats.latest_achievement_at, 0)
-				) AS score_reached_at
-			FROM all_players
-			LEFT JOIN clear_stats ON clear_stats.player_id = all_players.player_id
-			LEFT JOIN achievement_stats ON achievement_stats.player_id = all_players.player_id
-			GROUP BY all_players.player_id
-			HAVING score > 0
-		)
+		${overallScoreCte()}
 		SELECT COUNT(*) + 1 AS "rank"
 		FROM combined c, combined v
 		WHERE v.player_id = ${playerId}
@@ -1062,26 +991,13 @@ export async function getPlayerProgressionSummary(
 	achievementsTotal: number;
 	masteryEarned: number;
 }> {
-	const counts = await db.all<{
-		easyClears: number;
-		normalClears: number;
-		hardClears: number;
-		achievementsUnlocked: number;
-		masteryEarned: number;
-	}>(sql`
+	const scoredRow = await queryOverallScoreRowForPlayer(db, playerId);
+	// Score and clear counts come from the shared overall-score CTE so the
+	// progression summary cannot drift from the leaderboard's score definition.
+	// The CTE's HAVING score > 0 means scoredRow is null exactly when the
+	// player has no score — which also gates the rank query below.
+	const counts = await db.all<{ achievementsUnlocked: number; masteryEarned: number }>(sql`
 		SELECT
-			(
-				SELECT COUNT(*) FROM player_difficulty_completions
-				WHERE player_id = ${playerId} AND difficulty = 'easy'
-			) AS "easyClears",
-			(
-				SELECT COUNT(*) FROM player_difficulty_completions
-				WHERE player_id = ${playerId} AND difficulty = 'normal'
-			) AS "normalClears",
-			(
-				SELECT COUNT(*) FROM player_difficulty_completions
-				WHERE player_id = ${playerId} AND difficulty = 'hard'
-			) AS "hardClears",
 			(
 				SELECT COUNT(*) FROM player_achievements
 				WHERE player_id = ${playerId}
@@ -1092,36 +1008,15 @@ export async function getPlayerProgressionSummary(
 			) AS "masteryEarned"
 	`);
 	const row = counts[0];
-	const easyClears = Number(row?.easyClears ?? 0);
-	const normalClears = Number(row?.normalClears ?? 0);
-	const hardClears = Number(row?.hardClears ?? 0);
-	const achievementsUnlocked = Number(row?.achievementsUnlocked ?? 0);
-	const masteryEarned = Number(row?.masteryEarned ?? 0);
-	const achievementCase = overallAchievementCaseSql();
-	const achievementScore = await db.all<{ total: number }>(sql`
-		SELECT COALESCE(SUM(CASE achievement_id
-			${sql.raw(achievementCase)}
-			ELSE 0
-		END), 0) AS total
-		FROM player_achievements
-		WHERE player_id = ${playerId}
-	`);
-	const score =
-		easyClears * UNIQUE_CLEAR_POINTS.easy +
-		normalClears * UNIQUE_CLEAR_POINTS.normal +
-		hardClears * UNIQUE_CLEAR_POINTS.hard +
-		Number(achievementScore[0]?.total ?? 0);
-	const scoredRow = score > 0 ? await queryOverallScoreRowForPlayer(db, playerId) : null;
-	const rank = scoredRow ? await countOverallRankForPlayer(db, playerId) : null;
 	return {
-		score,
-		rank,
-		easyClears,
-		normalClears,
-		hardClears,
-		achievementsUnlocked,
+		score: Number(scoredRow?.score ?? 0),
+		rank: scoredRow ? await countOverallRankForPlayer(db, playerId) : null,
+		easyClears: Number(scoredRow?.easyClears ?? 0),
+		normalClears: Number(scoredRow?.normalClears ?? 0),
+		hardClears: Number(scoredRow?.hardClears ?? 0),
+		achievementsUnlocked: Number(row?.achievementsUnlocked ?? 0),
 		achievementsTotal: ACHIEVEMENT_COUNT,
-		masteryEarned
+		masteryEarned: Number(row?.masteryEarned ?? 0)
 	};
 }
 

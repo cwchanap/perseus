@@ -16,10 +16,6 @@ DROP TRIGGER IF EXISTS `increment_player_completion_usage`;
 --> statement-breakpoint
 DROP TRIGGER IF EXISTS `decrement_player_completion_usage`;
 --> statement-breakpoint
-DELETE FROM `puzzle_completion_runs`;
---> statement-breakpoint
-DELETE FROM `puzzle_stats`;
---> statement-breakpoint
 DELETE FROM `player_completion_usage`;
 --> statement-breakpoint
 DROP TABLE IF EXISTS `puzzles`;

@@ -61,7 +61,13 @@ leaderboard.get('/', optionalPlayerAuth, async (c) => {
 			hardClears: raw.me.hardClears
 		};
 	}
-	if (!entries.every(isOverallLeaderboardEntry)) {
+	// Validate every projected row — entries AND the viewer row when present —
+	// so a schema/contract drift surfaces as a 500 rather than silently serving
+	// malformed data to the client.
+	if (
+		!entries.every(isOverallLeaderboardEntry) ||
+		(response.me !== undefined && !isOverallLeaderboardEntry(response.me))
+	) {
 		return c.json({ error: 'internal_error', message: 'Failed to build leaderboard' }, 500);
 	}
 	return c.json(response);

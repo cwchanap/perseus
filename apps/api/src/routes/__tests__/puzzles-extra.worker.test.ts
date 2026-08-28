@@ -17,7 +17,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getFamily: vi.fn(),
 		listPuzzlesPage: vi.fn(),
 		getImage: vi.fn(),
-		resolveVariantReferenceKey: vi.fn()
+		getFamilyOriginalKey: (familyId: string) => `families/${familyId}/original`
 	};
 });
 
@@ -55,7 +55,6 @@ beforeEach(() => {
 	vi.mocked(storage.getFamily).mockReset();
 	vi.mocked(storage.listPuzzlesPage).mockReset();
 	vi.mocked(storage.getImage).mockReset();
-	vi.mocked(storage.resolveVariantReferenceKey).mockReset();
 	vi.mocked(storage.getFamily).mockImplementation(async (_kv, familyId) =>
 		makeFamilyMetadata(familyId, 'ready')
 	);
@@ -89,9 +88,6 @@ describe('GET /:id - additional branches', () => {
 
 	it('should return 200 with puzzle data for a ready puzzle', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValueOnce(readyPuzzle as any);
-		vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
-			`families/${TEST_FAMILY_ID}/original`
-		);
 		(mockEnv.PUZZLES_BUCKET.head as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
 			size: 1024,
 			httpMetadata: { contentType: 'image/jpeg' }
@@ -109,9 +105,6 @@ describe('GET /:id - additional branches', () => {
 
 	it('should return 200 with hasReference false when no original in R2', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValueOnce(readyPuzzle as any);
-		vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
-			`families/${TEST_FAMILY_ID}/original`
-		);
 		(mockEnv.PUZZLES_BUCKET.head as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);

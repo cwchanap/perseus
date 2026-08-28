@@ -66,6 +66,12 @@ export interface DeferredRouteInfo {
 	bodyText: string | null;
 }
 
+/** 200 response body the controller fulfills a successful completion with. */
+export interface CompletionSuccessResponse {
+	ok: true;
+	awards?: CompletionAwards;
+}
+
 export interface DeferredHandle {
 	readonly pendingCount: number;
 	readonly released: boolean;
@@ -80,6 +86,8 @@ interface PendingRoute {
 	url: string;
 	method: string;
 	bodyText: string | null;
+	/** Response the held route fulfills with on release(). */
+	response: CompletionSuccessResponse;
 	route: Route;
 }
 
@@ -152,7 +160,7 @@ export function createApiScenarioController(): ApiScenarioController {
 			for (const entry of held) {
 				await entry.route.fulfill({
 					status: 200,
-					json: { ok: true },
+					json: entry.response,
 					headers: scenarioHeaders()
 				});
 			}
@@ -219,12 +227,17 @@ export function createApiScenarioController(): ApiScenarioController {
 				return;
 			}
 			case 'deferred-success': {
-				// Hold the route: do NOT fulfill/abort. release()/cancel() resolves it.
+				// Hold the route: do NOT fulfill/abort. release()/cancel() resolves
+				// it — with this scenario's awards payload when one was configured,
+				// so a deferred completion surfaces the same awards an immediate
+				// success would.
 				const request = route.request();
 				pending.push({
 					url: request.url(),
 					method: request.method(),
 					bodyText: request.postData(),
+					response:
+						scenario.awards !== undefined ? { ok: true, awards: scenario.awards } : { ok: true },
 					route
 				});
 				return;

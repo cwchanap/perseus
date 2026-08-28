@@ -12,11 +12,16 @@ import {
 	type LegacyExportManifest,
 	type RunWrangler
 } from './export-legacy-puzzles';
-import { importPuzzleFamilies, pollImportedFamilies } from './import-puzzle-families';
+import {
+	importPuzzleFamilies,
+	pollImportedFamilies,
+	type ImportResults
+} from './import-puzzle-families';
 import {
 	cleanupLegacyPuzzles,
 	getLegacyR2Keys,
-	verifyReplacementsReady
+	verifyReplacementsReady,
+	assertHttpsCredentialServer
 } from './cleanup-legacy-puzzles';
 
 const SERVER = 'https://example.test';
@@ -451,6 +456,52 @@ describe('importPuzzleFamilies', () => {
 		});
 	});
 
+	it('persists import-results.json before polling, so a poll failure still leaves an artifact', async () => {
+		makeManifest(dir, 1);
+
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+				return new Response(JSON.stringify({ id: FAMILY_A, status: 'processing' }), {
+					status: 201
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+				// Polling blows up while the family is still processing.
+				throw new Error('poll network failure');
+			}
+			throw new Error(`unexpected fetch ${url} ${init?.method ?? 'GET'}`);
+		}) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async () => ({
+			exitCode: 0,
+			stdout: JSON.stringify([{ results: [], success: true, meta: { changes: 1 } }]),
+			stderr: ''
+		});
+
+		await expect(
+			importPuzzleFamilies({
+				server: SERVER,
+				migrationDir: dir,
+				skipAccess: true,
+				fetchFn: globalThis.fetch,
+				runWrangler,
+				sleepFn: async () => {}
+			})
+		).rejects.toThrow('poll network failure');
+
+		// The durable artifact written BEFORE polling survives the failure and
+		// lists the created family as still processing.
+		const results = JSON.parse(
+			readFileSync(join(dir, 'import-results.json'), 'utf8')
+		) as ImportResults;
+		expect(results.families).toHaveLength(1);
+		expect(results.families[0]).toMatchObject({
+			familyId: FAMILY_A,
+			status: 'processing'
+		});
+	});
+
 	it('fails owner update when D1 reports zero changes', async () => {
 		makeManifest(dir, 1);
 
@@ -556,6 +607,17 @@ describe('verifyReplacementsReady', () => {
 				globalThis.fetch
 			)
 		).rejects.toThrow(/not ready/i);
+	});
+});
+
+describe('assertHttpsCredentialServer', () => {
+	it('accepts https remotes and any local server, rejects http remotes', () => {
+		expect(() => assertHttpsCredentialServer('https://perseus.cwchanap.dev')).not.toThrow();
+		expect(() => assertHttpsCredentialServer('http://localhost:4690')).not.toThrow();
+		expect(() => assertHttpsCredentialServer('http://127.0.0.1:8787')).not.toThrow();
+		expect(() => assertHttpsCredentialServer('http://evil.example.com')).toThrow(/non-HTTPS/);
+		// Scheme-less values cannot be verified as local — rejected.
+		expect(() => assertHttpsCredentialServer('perseus.cwchanap.dev')).toThrow(/non-HTTPS/);
 	});
 });
 

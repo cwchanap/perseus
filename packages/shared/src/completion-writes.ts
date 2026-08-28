@@ -1,4 +1,5 @@
 import type { PuzzleDifficulty, ResultClass } from '@perseus/types';
+import type { MasteryBadge } from './progression';
 
 export interface VersionedCompletionWrite {
 	playerId: string;
@@ -28,7 +29,7 @@ export const MAX_RETAINED_COMPLETION_RUNS = 100_000;
 
 export interface CompletionMutationFacts {
 	firstClearInserted: boolean;
-	masteryInserted: Array<'hintless' | 'flawless' | 'rotation_clear'>;
+	masteryInserted: MasteryBadge[];
 	personalBestImproved: {
 		standard: boolean;
 		rotation: boolean;

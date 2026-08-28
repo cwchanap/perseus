@@ -12,6 +12,7 @@ import {
 	listPlayerPuzzleFamilies,
 	listPlayerStats,
 	InvalidPlayerStatsCursorError,
+	InvalidPlayerPuzzleFamilyCursorError,
 	sniffImageType,
 	parseImageDimensions,
 	validateImageEndMarker
@@ -403,10 +404,19 @@ player.get('/puzzle-families', requirePlayerAuth, async (c) => {
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
 	const cursor = c.req.query('cursor') || undefined;
-	const { rows, nextCursor } = await listPlayerPuzzleFamilies(db, session.user.id, {
-		limit: Number.isFinite(limit) ? limit : 20,
-		cursor
-	});
+	let result: Awaited<ReturnType<typeof listPlayerPuzzleFamilies>>;
+	try {
+		result = await listPlayerPuzzleFamilies(db, session.user.id, {
+			limit: Number.isFinite(limit) ? limit : 20,
+			cursor
+		});
+	} catch (error) {
+		if (error instanceof InvalidPlayerPuzzleFamilyCursorError) {
+			return c.json({ error: 'bad_request', message: 'Invalid puzzle family cursor' }, 400);
+		}
+		throw error;
+	}
+	const { rows, nextCursor } = result;
 	const families: PlayerOwnedFamilySummary[] = rows.map((r) => ({
 		id: r.id,
 		name: r.name,

@@ -16,7 +16,7 @@ vi.mock('../../services/storage.worker', async () => {
 		getFamily: vi.fn(),
 		listFamilies: vi.fn(),
 		getImage: vi.fn(),
-		resolveVariantReferenceKey: vi.fn()
+		getFamilyOriginalKey: (familyId: string) => `families/${familyId}/original`
 	};
 });
 
@@ -125,9 +125,6 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
 		};
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
-		vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValue(
-			`families/${TEST_FAMILY_ID}/original`
-		);
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, env);
@@ -145,9 +142,6 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
 		};
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
-		vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValue(
-			`families/${TEST_FAMILY_ID}/original`
-		);
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, env);

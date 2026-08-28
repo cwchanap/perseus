@@ -50,12 +50,10 @@ export async function executeFamilySourceDeletion(
 	record: CleanupRecord,
 	beforeRecordDelete?: () => Promise<void>
 ): Promise<{ ok: true } | FamilySourceDeletionStepFailure> {
-	const doIds = [
-		record.familyId,
-		record.variantIds.easy,
-		record.variantIds.normal,
-		record.variantIds.hard
-	];
+	// Derive variant IDs from the shared difficulty list (same source as the
+	// KV cleanup loop) so every configured variant is tombstoned — no
+	// difficulty names hardcoded here.
+	const doIds = [record.familyId, ...PUZZLE_DIFFICULTIES.map((d) => record.variantIds[d])];
 	for (const doId of doIds) {
 		try {
 			await deleteMetadataDO(env.PUZZLE_METADATA_DO, doId);

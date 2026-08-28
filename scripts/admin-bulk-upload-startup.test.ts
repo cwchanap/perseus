@@ -14,7 +14,6 @@ import {
 	retryConfig,
 	parseImageDimensions,
 	aspectRatiosMatch,
-	DEFAULT_PUZZLE_ASPECT_RATIO,
 	accessAppFor,
 	adminUiFor,
 	isLocalServer,
@@ -425,7 +424,14 @@ describe('fetchExistingKeys', () => {
 			async () =>
 				new Response(
 					JSON.stringify({
-						families: [{ name: 'Alpha' }, { name: 123 }, { name: '   ' }, { other: 'x' }]
+						// aspectRatio/status come from the PuzzleFamilySummary contract;
+						// the key uses the response's aspectRatio directly.
+						families: [
+							{ name: 'Alpha', aspectRatio: '1:1', status: 'ready' },
+							{ name: 123, aspectRatio: '1:1', status: 'ready' },
+							{ name: '   ', aspectRatio: '1:1', status: 'ready' },
+							{ other: 'x' }
+						]
 					}),
 					{ status: 200 }
 				)
@@ -433,8 +439,7 @@ describe('fetchExistingKeys', () => {
 
 		const keys = await fetchExistingKeys('http://localhost', {});
 		expect(keys.size).toBe(1);
-		// Missing aspectRatio is normalized to the server default (1:1).
-		expect(keys.has(idempotencyKey('Alpha', DEFAULT_PUZZLE_ASPECT_RATIO))).toBe(true);
+		expect(keys.has(idempotencyKey('Alpha', '1:1'))).toBe(true);
 	});
 
 	it('excludes failed families so they are retried on the next seed run', async () => {
