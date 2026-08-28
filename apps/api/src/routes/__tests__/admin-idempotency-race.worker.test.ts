@@ -1,22 +1,31 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getAuthoritativeStatus: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn(),
-	puzzleExists: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		failIdempotencyKey: vi.fn(),
+		getAuthoritativeStatus: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
+		originalImageExists: vi.fn(),
+		puzzleExists: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -39,9 +48,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
@@ -78,9 +87,8 @@ function createEnv(workflow = createWorkflow()) {
 function createRequest(idempotencyKey: string): Request {
 	const formData = new FormData();
 	formData.append('name', 'Race Puzzle');
-	formData.append('pieceCount', '225');
 	formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'puzzle.png');
-	return new Request('http://localhost/puzzles', {
+	return new Request('http://localhost/puzzle-families', {
 		method: 'POST',
 		headers: {
 			cookie: 'session=valid.token',
@@ -115,15 +123,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'winner-puzzle',
+				familyId: 'winner-puzzle',
 				status: 'pending'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce({
 				id: 'winner-puzzle',
@@ -149,15 +157,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'winner-puzzle',
+				familyId: 'winner-puzzle',
 				status: 'committed'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce({
 				id: 'winner-puzzle',
@@ -186,15 +194,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'dead-winner',
+				familyId: 'dead-winner',
 				status: 'committed'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce({
 				id: 'dead-winner',
@@ -217,6 +225,40 @@ describe('Admin Worker idempotency reclaim races', () => {
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
+	it('returns 409 when the authoritative DO status check itself fails for a dead reclaim winner', async () => {
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				familyId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				familyId: 'do-down-winner',
+				status: 'committed'
+			});
+		vi.mocked(storage.getFamily)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'do-down-winner',
+				status: 'processing',
+				idempotencyKey: 'do-down-key'
+			} as any);
+		vi.mocked(storage.getAuthoritativeStatus).mockRejectedValue(new Error('DO fetch failed'));
+		const workflow = createWorkflow('errored');
+
+		const response = await admin.fetch(createRequest('do-down-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = await response.json();
+		expect(body).toMatchObject({
+			error: 'conflict',
+			message:
+				'Idempotency key reclaimed by a request whose workflow is dead; status could not be verified, retry'
+		});
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
 	it('returns 200 for a committed reclaim winner whose workflow is dead but DO says ready', async () => {
 		// The workflow is dead but the DO (source of truth) says 'ready' —
 		// KV is just lagging. The puzzle is valid; return 200. Mirrors the
@@ -224,15 +266,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'ready-winner',
+				familyId: 'ready-winner',
 				status: 'committed'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce({
 				id: 'ready-winner',
@@ -258,15 +300,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'unknown-winner',
+				familyId: 'unknown-winner',
 				status: 'committed'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce({
 				id: 'unknown-winner',
@@ -295,15 +337,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'ready-winner',
+				familyId: 'ready-winner',
 				status: 'committed'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce({
 				id: 'ready-winner',
@@ -327,15 +369,15 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'winner-puzzle',
+				familyId: 'winner-puzzle',
 				status: 'pending'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce(null);
 
@@ -353,20 +395,20 @@ describe('Admin Worker idempotency reclaim races', () => {
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'failed-puzzle',
+				familyId: 'failed-puzzle',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: true,
-				puzzleId: 'deleted-winner',
+				familyId: 'deleted-winner',
 				status: 'committed'
 			})
 			.mockResolvedValueOnce({
 				existing: false,
-				puzzleId: 'replacement-puzzle',
+				familyId: 'replacement-puzzle',
 				status: 'pending'
 			});
-		vi.mocked(storage.getPuzzle)
+		vi.mocked(storage.getFamily)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
 			.mockResolvedValueOnce(null);
 
@@ -385,12 +427,20 @@ describe('Admin Worker idempotency reclaim races', () => {
 	it('treats a completed pending workflow as alive', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			puzzleId: 'completed-puzzle',
+			familyId: 'completed-puzzle',
 			status: 'pending'
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
+		vi.mocked(storage.getFamily).mockResolvedValue({
 			id: 'completed-puzzle',
-			status: 'processing'
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			status: 'processing',
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
 		} as any);
 		const workflow = createWorkflow('complete');
 

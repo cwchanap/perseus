@@ -421,7 +421,7 @@ describe('uploadWithRetry', () => {
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			return new Response(JSON.stringify({ puzzles: [] }), { status: 200 });
+			return new Response(JSON.stringify({ families: [] }), { status: 200 });
 		}) as unknown as typeof fetch;
 
 		const res = await uploadWithRetry(
@@ -444,7 +444,7 @@ describe('uploadWithRetry', () => {
 				capturedHeaders.push(init?.headers as Record<string, string>);
 				return new Response('Internal Server Error', { status: 500 });
 			}
-			return new Response(JSON.stringify({ puzzles: [] }), { status: 200 });
+			return new Response(JSON.stringify({ families: [] }), { status: 200 });
 		}) as unknown as typeof fetch;
 
 		await expect(
@@ -477,13 +477,13 @@ describe('uploadWithRetry', () => {
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			return new Response(JSON.stringify({ puzzles: [] }), {
+			return new Response(JSON.stringify({ families: [] }), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' }
 			});
 		}) as unknown as typeof fetch;
 
-		const dedupKey = 'test-puzzle\u000048\u00001:1';
+		const dedupKey = 'test-puzzle\u00001:1';
 		await uploadWithRetry('http://localhost:3000', {}, new FormData(), 'test-puzzle', dedupKey);
 
 		expect(capturedHeaders['Idempotency-Key']).toBeDefined();
@@ -497,36 +497,36 @@ describe('uploadWithRetry', () => {
 // ─── idempotencyKey / idempotencyKeyHeader ──────────────────────────
 
 describe('idempotencyKey', () => {
-	it('builds a composite key from name, pieceCount, and aspectRatio', () => {
-		const key = idempotencyKey('Sunset', 48, '1:1');
-		expect(key).toBe('Sunset\u000048\u00001:1');
+	it('builds a composite key from name and aspectRatio', () => {
+		const key = idempotencyKey('Sunset', '1:1');
+		expect(key).toBe('Sunset\u00001:1');
 	});
 
 	it('trims the name', () => {
-		const key = idempotencyKey('  Sunset  ', 48, '1:1');
-		expect(key).toBe('Sunset\u000048\u00001:1');
+		const key = idempotencyKey('  Sunset  ', '1:1');
+		expect(key).toBe('Sunset\u00001:1');
 	});
 
-	it('handles missing pieceCount and aspectRatio', () => {
+	it('handles missing aspectRatio', () => {
 		const key = idempotencyKey('Sunset');
-		expect(key).toBe('Sunset\u0000\u0000');
+		expect(key).toBe('Sunset\u0000');
 	});
 });
 
 describe('idempotencyKeyHeader', () => {
 	it('produces a stable hex hash for the same dedup key', () => {
-		const key = 'Sunset\u000048\u00001:1';
+		const key = 'Sunset\u00001:1';
 		expect(idempotencyKeyHeader(key)).toBe(idempotencyKeyHeader(key));
 	});
 
 	it('produces different hashes for different dedup keys', () => {
-		const a = idempotencyKeyHeader('Sunset\u000048\u00001:1');
-		const b = idempotencyKeyHeader('Sunset\u000048\u00004:3');
+		const a = idempotencyKeyHeader('Sunset\u00001:1');
+		const b = idempotencyKeyHeader('Sunset\u00004:3');
 		expect(a).not.toBe(b);
 	});
 
 	it('produces valid HTTP header content (hex, no NUL)', () => {
-		const header = idempotencyKeyHeader('test\u000012\u00001:1');
+		const header = idempotencyKeyHeader('test\u00001:1');
 		expect(header).toMatch(/^[0-9a-f]{64}$/);
 		expect(header).not.toContain('\u0000');
 	});

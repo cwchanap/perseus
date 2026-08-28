@@ -21,20 +21,35 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...actual,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined)
 	};
 });
 
-vi.mock('../../services/storage.worker');
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		uploadOriginalImage: vi.fn(),
+		createFamilyMetadata: vi.fn(),
+		createPuzzleMetadata: vi.fn(),
+		deleteFamilyMetadata: vi.fn(),
+		deletePuzzleMetadata: vi.fn(),
+		deleteOriginalImage: vi.fn(),
+		getPuzzle: vi.fn(),
+		listPuzzlesPage: vi.fn(),
+		getImage: vi.fn(),
+		resolveVariantReferenceKey: vi.fn()
+	};
+});
 vi.mock('../../services/player-auth.worker', () => ({
 	getPlayerSession: vi.fn()
 }));
 
-import puzzles from '../puzzles.worker';
+import puzzleFamilies from '../puzzle-families.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
-import { deletePuzzleOwnership, insertPuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleFamilyOwnership, insertPuzzleFamilyOwnership } from '@perseus/shared';
 
 // Minimal valid PNG (3:4 ratio)
 const PNG_HEADER = new Uint8Array([
@@ -54,14 +69,13 @@ const mockEnv = {
 function buildForm(): FormData {
 	const fd = new FormData();
 	fd.append('name', 'Coverage Puzzle');
-	fd.append('pieceCount', '48');
 	fd.append('aspectRatio', '3:4');
 	fd.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
 	return fd;
 }
 
 async function post(fd: FormData, env: any = mockEnv): Promise<Response> {
-	return puzzles.fetch(
+	return puzzleFamilies.fetch(
 		new Request('http://localhost/', {
 			method: 'POST',
 			headers: { Cookie: 'perseus_player_session=player-token' },
@@ -90,7 +104,9 @@ describe('POST / - workflow trigger failure cleanup logs', () => {
 		vi.clearAllMocks();
 		mockSession();
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
 		mockEnv.PUZZLE_WORKFLOW.create = vi.fn().mockRejectedValue(new Error('workflow down'));
@@ -100,7 +116,7 @@ describe('POST / - workflow trigger failure cleanup logs', () => {
 	});
 
 	it('logs when ownership delete rejects during workflow-trigger cleanup (line 483)', async () => {
-		vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 delete failed'));
+		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 delete failed'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await post(buildForm());
@@ -114,7 +130,7 @@ describe('POST / - workflow trigger failure cleanup logs', () => {
 	});
 
 	it('logs when metadata cleanup fails during workflow-trigger cleanup (line 487)', async () => {
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
 		} as any);
@@ -124,7 +140,7 @@ describe('POST / - workflow trigger failure cleanup logs', () => {
 
 		expect(res.status).toBe(500);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Failed to cleanup puzzle metadata after workflow trigger failure:',
+			'Failed to cleanup puzzle family metadata after workflow trigger failure:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
@@ -153,10 +169,12 @@ describe('POST / - ownership insert failure cleanup logs (lines 433, 440)', () =
 		vi.clearAllMocks();
 		mockSession();
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
-		vi.mocked(deletePuzzleOwnership).mockResolvedValue(undefined);
+		vi.mocked(deletePuzzleFamilyOwnership).mockResolvedValue(undefined);
 		mockEnv.PUZZLE_WORKFLOW.create = vi.fn().mockResolvedValue({ id: 'workflow-id' });
 	});
 	afterEach(() => {
@@ -164,8 +182,8 @@ describe('POST / - ownership insert failure cleanup logs (lines 433, 440)', () =
 	});
 
 	it('logs when metadata cleanup fails after ownership insert failure (line 433)', async () => {
-		vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
+		vi.mocked(insertPuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down'));
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
 		} as any);
@@ -176,14 +194,14 @@ describe('POST / - ownership insert failure cleanup logs (lines 433, 440)', () =
 		expect(res.status).toBe(500);
 		expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Failed to cleanup puzzle metadata after ownership insert failure:',
+			'Failed to cleanup puzzle family metadata after ownership insert failure:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
 	});
 
 	it('logs when image cleanup fails after ownership insert failure (line 440)', async () => {
-		vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+		vi.mocked(insertPuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down'));
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({
 			success: false,
 			error: new Error('R2 delete failed')
@@ -206,17 +224,19 @@ describe('POST / - missing workflow binding cleanup logs (lines 450, 454, 461)',
 		vi.clearAllMocks();
 		mockSession();
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
-		vi.mocked(deletePuzzleOwnership).mockResolvedValue(undefined);
+		vi.mocked(deletePuzzleFamilyOwnership).mockResolvedValue(undefined);
 	});
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});
 
 	it('logs when ownership cleanup rejects after missing workflow binding (line 450)', async () => {
-		vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down'));
 		const envWithoutWorkflow = {
 			PUZZLE_METADATA: mockEnv.PUZZLE_METADATA,
 			PUZZLES_BUCKET: mockEnv.PUZZLES_BUCKET
@@ -234,7 +254,7 @@ describe('POST / - missing workflow binding cleanup logs (lines 450, 454, 461)',
 	});
 
 	it('logs when metadata cleanup fails after missing workflow binding (line 454)', async () => {
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
 		} as any);
@@ -248,7 +268,7 @@ describe('POST / - missing workflow binding cleanup logs (lines 450, 454, 461)',
 
 		expect(res.status).toBe(503);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Failed to cleanup puzzle metadata after missing workflow binding:',
+			'Failed to cleanup puzzle family metadata after missing workflow binding:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
@@ -299,8 +319,8 @@ describe('POST / - outer catch block (lines 504-505)', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to create puzzle');
-		expect(consoleSpy).toHaveBeenCalledWith('Error creating puzzle:', expect.any(Error));
+		expect(body.message).toBe('Failed to create puzzle family');
+		expect(consoleSpy).toHaveBeenCalledWith('Error creating puzzle family:', expect.any(Error));
 		consoleSpy.mockRestore();
 		uuidSpy.mockRestore();
 	});

@@ -16,23 +16,38 @@ const dbContextMock = vi.hoisted(() => ({
 	completionWrites: {
 		write: vi.fn(),
 		beginPuzzleDeletion: vi.fn(async () => undefined),
-		finishPuzzleDeletion: vi.fn(async () => undefined)
+		finishPuzzleDeletion: vi.fn(async () => undefined),
+		finishFamilyFirstClears: vi.fn(async () => undefined)
 	}
 }));
 
 // Mock storage.worker functions
 vi.mock('../storage.worker', () => ({
-	deletePuzzleAssets: vi.fn(),
+	deleteFamilyCleanupAssets: vi.fn(),
 	deleteMetadataDO: vi.fn(),
+	deleteFamilyMetadata: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	deleteCleanupRecord: vi.fn(async () => undefined),
 	writeCleanupRecord: vi.fn(async () => undefined),
 	getAuthoritativeStatus: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
+	getFamily: vi.fn(),
+	listFamilies: vi.fn(),
 	listCleanupRecords: vi.fn(async () => []),
 	releaseIdempotencyKey: vi.fn(),
-	getIdempotencyReservation: vi.fn()
+	getIdempotencyReservation: vi.fn(),
+	buildCleanupRecordFromFamily: vi.fn(
+		(family: { id: string; variants?: Record<string, string>; idempotencyKey?: string }) => ({
+			familyId: family.id,
+			variantIds: family.variants ?? {
+				easy: `${family.id}-easy`,
+				normal: `${family.id}-normal`,
+				hard: `${family.id}-hard`
+			},
+			pieceCounts: { easy: 16, normal: 49, hard: 100 },
+			...(family.idempotencyKey ? { idempotencyKey: family.idempotencyKey } : {}),
+			createdAt: Date.now()
+		})
+	)
 }));
 
 // Mock db.worker so the reaper's D1 ownership cleanup doesn't touch a real DB.
@@ -41,47 +56,51 @@ vi.mock('../../db.worker', () => ({
 	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
-// Mock @perseus/shared's deletePuzzleOwnership and getAvatarTokensByPlayerIds
+// Mock @perseus/shared's deletePuzzleFamilyOwnership and getAvatarTokensByPlayerIds
 // so they stay no-op spies. getAvatarTokensByPlayerIds is overridden per-test
 // via the shared mock object.
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
-		deletePuzzleOwnership: vi.fn(async () => undefined),
+		deletePuzzleFamilyOwnership: vi.fn(async () => undefined),
 		getAvatarTokensByPlayerIds: vi.fn(async () => new Map())
 	};
 });
 
 // Import after mock so the reaper uses the mocked versions
 import {
-	deletePuzzleAssets,
+	deleteFamilyCleanupAssets,
 	deleteMetadataDO,
+	deleteFamilyMetadata,
 	deletePuzzleMetadata,
 	deleteCleanupRecord,
 	writeCleanupRecord,
 	getAuthoritativeStatus,
-	getPuzzle,
-	listPuzzles,
+	getFamily,
+	listFamilies,
 	listCleanupRecords,
 	releaseIdempotencyKey,
-	getIdempotencyReservation
+	getIdempotencyReservation,
+	buildCleanupRecordFromFamily
 } from '../storage.worker';
 import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
-import { deletePuzzleOwnership, getAvatarTokensByPlayerIds } from '@perseus/shared';
+import { deletePuzzleFamilyOwnership, getAvatarTokensByPlayerIds } from '@perseus/shared';
 
 const storage = {
-	deletePuzzleAssets,
+	deleteFamilyCleanupAssets,
 	deleteMetadataDO,
+	deleteFamilyMetadata,
 	deletePuzzleMetadata,
 	deleteCleanupRecord,
 	writeCleanupRecord,
 	getAuthoritativeStatus,
-	getPuzzle,
-	listPuzzles,
+	getFamily,
+	listFamilies,
 	listCleanupRecords,
 	releaseIdempotencyKey,
-	getIdempotencyReservation
+	getIdempotencyReservation,
+	buildCleanupRecordFromFamily
 } as any;
 
 // Map-backed KV mock so the reaper's cursor persistence (readReaperCursor /
@@ -127,32 +146,65 @@ const OLD_PROCESSING = NOW - REAP_AFTER_MS - 1;
 const RECENT_PROCESSING = NOW - 1000;
 const OLD_READY = NOW - REAP_AFTER_MS - 1;
 
-function puzzleSummary(id: string, status: string, createdAt: number) {
+function expectBeginPuzzleDeletionForAllVariants(familyId: string) {
+	for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			`${familyId}-${difficulty}`,
+			expect.any(Number)
+		);
+	}
+}
+
+function familySummary(id: string, status: string, createdAt: number) {
 	return {
 		id,
-		name: `Puzzle ${id}`,
-		pieceCount: 100,
+		name: `Family ${id}`,
 		status,
 		createdAt,
-		progress: { totalPieces: 100, generatedPieces: 0, updatedAt: createdAt }
+		aspectRatio: '1:1' as const
+	};
+}
+
+function makeFamilyMeta(
+	id: string,
+	status: string,
+	createdAt: number,
+	overrides: Record<string, unknown> = {}
+) {
+	return {
+		id,
+		name: `Family ${id}`,
+		status,
+		createdAt,
+		aspectRatio: '1:1' as const,
+		variants: {
+			easy: `${id}-easy`,
+			normal: `${id}-normal`,
+			hard: `${id}-hard`
+		},
+		...overrides
 	};
 }
 
 describe('reapStuckPuzzles', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyMetadata as any).mockResolvedValue({ success: true });
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(storage.writeCleanupRecord as any).mockResolvedValue(undefined);
-		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
+		(deletePuzzleFamilyOwnership as any).mockResolvedValue(undefined);
 		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
+		(storage.getFamily as any).mockImplementation(async (_kv: unknown, id: string) =>
+			makeFamilyMeta(id, 'processing', OLD_PROCESSING)
+		);
 	});
 
 	it('returns empty result when no puzzles exist', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({ puzzles: [], invalidCount: 0 });
+		(storage.listFamilies as any).mockResolvedValue({ families: [], invalidCount: 0 });
 		const env = makeEnv();
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.scanned).toBe(0);
@@ -161,8 +213,8 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('skips puzzles that are not processing', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('ready-1', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('ready-1', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
 		const env = makeEnv();
@@ -173,8 +225,8 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('skips recently-created processing puzzles (within threshold)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('recent-1', 'processing', RECENT_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('recent-1', 'processing', RECENT_PROCESSING)],
 			invalidCount: 0
 		});
 		const env = makeEnv();
@@ -185,11 +237,11 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('skips stuck processing puzzles whose workflow is still running', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -202,15 +254,15 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 	});
 
 	it('reaps stuck processing puzzles whose workflow errored', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -220,20 +272,28 @@ describe('reapStuckPuzzles', () => {
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.candidates).toBe(1);
 		expect(result.reaped).toBe(1);
-		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, {
-			puzzleId: 'stuck-1',
-			pieceCount: 100,
-			createdAt: expect.any(Number)
-		});
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ familyId: 'stuck-1', createdAt: expect.any(Number) })
+		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1',
+			'stuck-1-easy',
 			expect.any(Number)
 		);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-1', 100);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expectBeginPuzzleDeletionForAllVariants('stuck-1');
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'stuck-1',
+			expect.objectContaining({ easy: expect.any(String) }),
+			expect.objectContaining({ easy: expect.any(Number) })
+		);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1-easy');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-1');
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('stuck-1');
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-1');
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+			'stuck-1-easy'
+		);
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -248,11 +308,11 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('retains the fence and retries when required D1 finish fails after source cleanup', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -274,10 +334,10 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'stuck-1', pieceCount: 100 })
+			expect.objectContaining({ familyId: 'stuck-1' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1',
+			'stuck-1-easy',
 			expect.any(Number)
 		);
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
@@ -287,24 +347,26 @@ describe('reapStuckPuzzles', () => {
 		const secondResult = await reapStuckPuzzles(env, NOW);
 
 		expect(secondResult.reaped).toBe(1);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledTimes(2);
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(2);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledTimes(6);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(4);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
 		consoleSpy.mockRestore();
 	});
 
 	it('retains stuck record and tombstone when required ownership cleanup fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		(deletePuzzleOwnership as any).mockRejectedValueOnce(new Error('D1 ownership cleanup failed'));
+		(deletePuzzleFamilyOwnership as any).mockRejectedValueOnce(
+			new Error('D1 ownership cleanup failed')
+		);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 
@@ -315,10 +377,10 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'stuck-1' })
+			expect.objectContaining({ familyId: 'stuck-1' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1',
+			'stuck-1-easy',
 			expect.any(Number)
 		);
 		expect(result.details).toContainEqual(
@@ -332,29 +394,29 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('releases the DO reservation for a reaped puzzle that carries an idempotencyKey', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
-			pieceCount: 100,
 			idempotencyKey: 'reap-key'
 		});
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(1);
-		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, {
-			puzzleId: 'stuck-1',
-			pieceCount: 100,
-			idempotencyKey: 'reap-key',
-			createdAt: expect.any(Number)
-		});
-		// Regression: best-effort release after KV delete so the reservation
-		// doesn't dangle on the dead puzzleId forever.
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({
+				familyId: 'stuck-1',
+				idempotencyKey: 'reap-key',
+				createdAt: expect.any(Number)
+			})
+		);
+		// Regression: release runs after finish; failure retains the cleanup record.
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA_DO,
 			'reap-key',
@@ -362,36 +424,35 @@ describe('reapStuckPuzzles', () => {
 		);
 	});
 
-	it('continues reaping when the DO reservation release throws (best-effort)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+	it('retains cleanup record when the DO reservation release throws', async () => {
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
-			pieceCount: 100,
 			idempotencyKey: 'reap-key'
 		});
 		(storage.releaseIdempotencyKey as any).mockRejectedValue(new Error('DO unavailable'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
-		// KV delete still counts as reaped; DO release failure is logged,
-		// not fatal — operator force-release is the backstop.
-		expect(result.reaped).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'stuck-1', action: 'do-release-failed' })
 		);
 	});
 
 	it('reaps stuck processing puzzles whose workflow terminated', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -400,15 +461,16 @@ describe('reapStuckPuzzles', () => {
 		const env = makeEnv({ 'stuck-1': 'terminated' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(1);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1-easy');
 	});
 
 	it('skips stuck processing puzzles whose workflow status is unknown (liveness unverifiable)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -421,17 +483,17 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 	});
 
 	it('skips stuck processing puzzles whose workflow completed (KV lag, not orphan)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -444,19 +506,19 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'skip-complete-kv-lag')).toBe(true);
 	});
 
 	it('skips puzzles whose status changed between list and re-read', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		// getPuzzle returns 'ready' — status changed since the list
-		(storage.getPuzzle as any).mockResolvedValue({
+		// getFamily returns 'ready' — status changed since the list
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'ready',
 			name: 'Puzzle stuck-1',
@@ -470,11 +532,11 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('counts errors when workflow status check throws', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -491,7 +553,7 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
@@ -500,38 +562,41 @@ describe('reapStuckPuzzles', () => {
 		// invisible orphans if KV metadata were deleted. Preserve KV so the
 		// next reaper run retries R2 cleanup. The DO is already tombstoned,
 		// so the next run's getAuthoritativeStatus returns null (proceed).
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 error'));
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['families/stuck-1/original']
+		});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
-		expect(result.details.some((d) => d.action === 'r2-delete-failed')).toBe(true);
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'r2-delete-partial')).toBe(true);
 	});
 
 	it('processes multiple stuck puzzles in one run', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [
-				puzzleSummary('stuck-1', 'processing', OLD_PROCESSING),
-				puzzleSummary('stuck-2', 'processing', OLD_PROCESSING),
-				puzzleSummary('recent-1', 'processing', RECENT_PROCESSING),
-				puzzleSummary('ready-1', 'ready', OLD_READY)
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [
+				familySummary('stuck-1', 'processing', OLD_PROCESSING),
+				familySummary('stuck-2', 'processing', OLD_PROCESSING),
+				familySummary('recent-1', 'processing', RECENT_PROCESSING),
+				familySummary('ready-1', 'ready', OLD_READY)
 			],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockImplementation(async (kv: any, id: string) => ({
+		(storage.getFamily as any).mockImplementation(async (kv: any, id: string) => ({
 			id,
 			status: 'processing',
 			name: `Puzzle ${id}`,
@@ -542,15 +607,15 @@ describe('reapStuckPuzzles', () => {
 		expect(result.scanned).toBe(4);
 		expect(result.candidates).toBe(2);
 		expect(result.reaped).toBe(2);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(2);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledTimes(2);
 	});
 
 	it('skips puzzles with unrecognized workflow status string', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -566,11 +631,11 @@ describe('reapStuckPuzzles', () => {
 	it.each(['queued', 'paused', 'waiting', 'waitingForPause', 'rollingBack'])(
 		'skips puzzles whose workflow is in active status %s',
 		async (status) => {
-			(storage.listPuzzles as any).mockResolvedValue({
-				puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			(storage.listFamilies as any).mockResolvedValue({
+				families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 				invalidCount: 0
 			});
-			(storage.getPuzzle as any).mockResolvedValue({
+			(storage.getFamily as any).mockResolvedValue({
 				id: 'stuck-1',
 				status: 'processing',
 				name: 'Puzzle stuck-1',
@@ -585,11 +650,11 @@ describe('reapStuckPuzzles', () => {
 	);
 
 	it('reaps puzzles whose workflow instance was never created (not_found)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -607,17 +672,18 @@ describe('reapStuckPuzzles', () => {
 		expect(env.PUZZLE_WORKFLOW.get).toHaveBeenCalledWith('stuck-1');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'stuck-1' })
+			expect.objectContaining({ familyId: 'stuck-1' })
 		);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1-easy');
 	});
 
 	it('does not begin D1 deletion or mutate source when cleanup-record bootstrap fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -633,16 +699,16 @@ describe('reapStuckPuzzles', () => {
 		expect(result.errors).toBe(1);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
 	it('counts errors when KV metadata deletion fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -665,12 +731,12 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('counts errors on unexpected per-puzzle exception', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		// getPuzzle throws — triggers the outer per-puzzle catch
-		(storage.getPuzzle as any).mockRejectedValue(new Error('unexpected'));
+		// getFamily throws — triggers the outer per-puzzle catch
+		(storage.getFamily as any).mockRejectedValue(new Error('unexpected'));
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.candidates).toBe(1);
@@ -683,17 +749,17 @@ describe('reapStuckPuzzles', () => {
 		// Regression: partial R2 failure must NOT delete KV/D1 — the failed
 		// keys would become invisible orphans. Preserve KV so the next reaper
 		// run retries R2 cleanup.
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		(storage.deletePuzzleAssets as any).mockResolvedValue({
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
 			success: false,
 			failedKeys: ['puzzles/stuck-1/pieces/0.png', 'puzzles/stuck-1/pieces/1.png']
 		});
@@ -704,15 +770,15 @@ describe('reapStuckPuzzles', () => {
 		expect(result.errors).toBe(1);
 		expect(result.details.some((d) => d.action === 'r2-delete-partial')).toBe(true);
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 	});
 
 	it('does not mutate stuck source when D1 begin initialization throws', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -726,17 +792,17 @@ describe('reapStuckPuzzles', () => {
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
 	it('skips reaping when DO authoritative status is ready (workflow errored but finalize committed)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -751,17 +817,17 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'skip-do-ready')).toBe(true);
 	});
 
 	it('still reaps when DO authoritative status is processing (genuinely stuck)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -771,15 +837,16 @@ describe('reapStuckPuzzles', () => {
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(1);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1-easy');
 	});
 
 	it('still reaps when DO has no metadata (404 — truly orphaned)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -792,11 +859,11 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('skips reaping when DO status check throws (fail closed)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -812,11 +879,11 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('tombstones the DO before deleting KV metadata', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -834,11 +901,11 @@ describe('reapStuckPuzzles', () => {
 	});
 
 	it('does not delete KV when DO tombstone fails (retry on next scan)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -853,24 +920,24 @@ describe('reapStuckPuzzles', () => {
 		expect(result.errors).toBe(1);
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'stuck-1' })
+			expect.objectContaining({ familyId: 'stuck-1' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1',
+			'stuck-1-easy',
 			expect.any(Number)
 		);
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'do-tombstone-failed')).toBe(true);
 	});
 
 	it('does not delete D1 ownership when KV metadata deletion fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue({
+		(storage.getFamily as any).mockResolvedValue({
 			id: 'stuck-1',
 			status: 'processing',
 			name: 'Puzzle stuck-1',
@@ -887,7 +954,7 @@ describe('reapStuckPuzzles', () => {
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'kv-delete-failed')).toBe(true);
 	});
 });
@@ -895,13 +962,14 @@ describe('reapStuckPuzzles', () => {
 describe('reapCleanupRecords', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyMetadata as any).mockResolvedValue({ success: true });
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteCleanupRecord as any).mockResolvedValue(undefined);
 		(storage.writeCleanupRecord as any).mockResolvedValue(undefined);
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
-		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
+		(deletePuzzleFamilyOwnership as any).mockResolvedValue(undefined);
 		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
@@ -916,7 +984,12 @@ describe('reapCleanupRecords', () => {
 	});
 
 	it('cleans up completed duplicate puzzles from cleanup records', async () => {
-		const record = { puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 };
+		const record = {
+			familyId: 'dup-1',
+			variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+			pieceCounts: { easy: 16, normal: 49, hard: 100 },
+			createdAt: NOW - 60000
+		};
 		(storage.listCleanupRecords as any).mockResolvedValue([record]);
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
@@ -924,15 +997,22 @@ describe('reapCleanupRecords', () => {
 		expect(result.reaped).toBe(1);
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, record);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'dup-1',
+			'dup-1-easy',
 			expect.any(Number)
 		);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'dup-1', 50);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'dup-1',
+			expect.objectContaining({ easy: expect.any(String) }),
+			expect.objectContaining({ easy: expect.any(Number) })
+		);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1-easy');
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'dup-1');
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('dup-1');
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'dup-1');
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('dup-1-easy');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -946,7 +1026,12 @@ describe('reapCleanupRecords', () => {
 
 	it('retains the cleanup record and retries when required D1 finish fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 completion cleanup failed')
@@ -962,15 +1047,15 @@ describe('reapCleanupRecords', () => {
 			expect.objectContaining({ puzzleId: 'dup-1', action: 'cleanup-d1-finish-failed' })
 		);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, {
-			puzzleId: 'dup-1',
-			pieceCount: 50,
-			createdAt: NOW - 60000
-		});
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ familyId: 'dup-1', createdAt: NOW - 60000 })
+		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'dup-1',
+			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -978,15 +1063,20 @@ describe('reapCleanupRecords', () => {
 		const secondResult = await reapCleanupRecords(env);
 
 		expect(secondResult.reaped).toBe(1);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledTimes(2);
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(2);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledTimes(6);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(4);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 		consoleSpy.mockRestore();
 	});
 
 	it('cleans up errored workflows from cleanup records', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv({ 'dup-1': 'errored' });
 		const result = await reapCleanupRecords(env);
@@ -994,14 +1084,19 @@ describe('reapCleanupRecords', () => {
 		expect(env.PUZZLE_WORKFLOW.get).toHaveBeenCalledWith('dup-1');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'dup-1' })
+			expect.objectContaining({ familyId: 'dup-1' })
 		);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 	});
 
 	it('cleans up terminated workflows from cleanup records', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv({ 'dup-1': 'terminated' });
 		const result = await reapCleanupRecords(env);
@@ -1010,7 +1105,12 @@ describe('reapCleanupRecords', () => {
 
 	it('cleans up not_found workflows from cleanup records', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv();
 		const notFoundError = new Error('instance.not_found');
@@ -1023,18 +1123,24 @@ describe('reapCleanupRecords', () => {
 		expect(env.PUZZLE_WORKFLOW.get).toHaveBeenCalledWith('dup-1');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'dup-1' })
+			expect.objectContaining({ familyId: 'dup-1' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'dup-1',
+			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 	});
 
 	it('skips running workflows from cleanup records', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv({ 'dup-1': 'running' });
 		const result = await reapCleanupRecords(env);
@@ -1043,14 +1149,19 @@ describe('reapCleanupRecords', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
 	it('skips unknown-status workflows from cleanup records', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv({ 'dup-1': 'unknown' });
 		const result = await reapCleanupRecords(env);
@@ -1058,15 +1169,16 @@ describe('reapCleanupRecords', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
 	it('releases idempotency key when cleanup record has one', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
 			{
-				puzzleId: 'dup-1',
-				pieceCount: 50,
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
 				idempotencyKey: 'idem-key-1',
 				createdAt: NOW - 60000
 			}
@@ -1083,9 +1195,14 @@ describe('reapCleanupRecords', () => {
 
 	it('preserves KV and cleanup record when R2 deletion fails partially', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
-		(storage.deletePuzzleAssets as any).mockResolvedValue({
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
 			success: false,
 			failedKeys: ['puzzles/dup-1/original']
 		});
@@ -1099,7 +1216,12 @@ describe('reapCleanupRecords', () => {
 
 	it('preserves cleanup record when KV deletion fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({
 			success: false,
@@ -1115,7 +1237,12 @@ describe('reapCleanupRecords', () => {
 
 	it('skips when workflow status check fails with non-not_found error', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv();
 		env.PUZZLE_WORKFLOW.get = vi.fn(async () => {
@@ -1129,12 +1256,17 @@ describe('reapCleanupRecords', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
 	it('does not begin D1 deletion or mutate source when record re-ensure fails', async () => {
-		const record = { puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 };
+		const record = {
+			familyId: 'dup-1',
+			variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+			pieceCounts: { easy: 16, normal: 49, hard: 100 },
+			createdAt: NOW - 60000
+		};
 		(storage.listCleanupRecords as any).mockResolvedValue([record]);
 		(storage.writeCleanupRecord as any).mockRejectedValue(new Error('KV record write failed'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1147,15 +1279,23 @@ describe('reapCleanupRecords', () => {
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, record);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
 	it('preserves KV when R2 deletion throws', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
-		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 connection failed'));
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['families/dup-1/original']
+		});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
@@ -1165,11 +1305,12 @@ describe('reapCleanupRecords', () => {
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
-	it('logs but still reaps when idempotency key release fails', async () => {
+	it('retains cleanup record when idempotency key release fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
 			{
-				puzzleId: 'dup-1',
-				pieceCount: 50,
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
 				idempotencyKey: 'idem-1',
 				createdAt: NOW - 60000
 			}
@@ -1178,31 +1319,42 @@ describe('reapCleanupRecords', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
-		expect(result.reaped).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA_DO,
 			'idem-1',
 			'dup-1'
 		);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details).toContainEqual(
+			expect.objectContaining({ puzzleId: 'dup-1', action: 'cleanup-do-release-failed' })
+		);
 	});
 
 	it('retains record and tombstone when required ownership cleanup fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
-		(deletePuzzleOwnership as any).mockRejectedValueOnce(new Error('D1 delete failed'));
+		(deletePuzzleFamilyOwnership as any).mockRejectedValueOnce(new Error('D1 delete failed'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
 
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'dup-1');
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(expect.anything(), 'dup-1');
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'dup-1',
+			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'dup-1', action: 'cleanup-d1-finish-failed' })
 		);
@@ -1215,7 +1367,12 @@ describe('reapCleanupRecords', () => {
 
 	it('does not mutate source when D1 begin initialization throws', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		(getWorkerDbContext as any).mockImplementation(() => {
 			throw new Error('D1 init failed');
@@ -1226,14 +1383,19 @@ describe('reapCleanupRecords', () => {
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
 	it('does not count success when required cleanup-record deletion fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		(storage.deleteCleanupRecord as any).mockRejectedValue(new Error('KV delete failed'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1249,7 +1411,12 @@ describe('reapCleanupRecords', () => {
 
 	it('catches unexpected errors and records them as cleanup-error', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		// Make deletePuzzleMetadata throw a non-R2 error to trigger the outer catch
 		(storage.deletePuzzleMetadata as any).mockImplementation(() => {
@@ -1267,19 +1434,29 @@ describe('reapCleanupRecords', () => {
 
 	it('tombstones the DO before deleting R2/KV (idempotent re-tombstone)', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
 		expect(result.reaped).toBe(1);
-		// deleteMetadataDO must be called before deletePuzzleAssets.
+		// deleteMetadataDO must be called before deleteFamilyCleanupAssets.
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'dup-1');
-		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalled();
 	});
 
 	it('preserves R2/KV and cleanup record when DO tombstone fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
-			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+			{
+				familyId: 'dup-1',
+				variantIds: { easy: 'dup-1-easy', normal: 'dup-1-normal', hard: 'dup-1-hard' },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: NOW - 60000
+			}
 		]);
 		(storage.deleteMetadataDO as any).mockRejectedValue(new Error('DO unreachable'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1289,14 +1466,15 @@ describe('reapCleanupRecords', () => {
 		expect(result.errors).toBe(1);
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'dup-1' })
+			expect.objectContaining({ familyId: 'dup-1' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'dup-1',
+			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		// R2 and KV must NOT be deleted — a live DO can resurrect metadata.
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		// The failure must be recorded with the tombstone-failed action.
@@ -1309,36 +1487,32 @@ describe('reapCleanupRecords', () => {
 describe('reapOrphanedReservations', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyMetadata as any).mockResolvedValue({ success: true });
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(storage.writeCleanupRecord as any).mockResolvedValue(undefined);
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
-		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
+		(deletePuzzleFamilyOwnership as any).mockResolvedValue(undefined);
 		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
+		(storage.getFamily as any).mockImplementation(async (_kv: unknown, id: string) =>
+			makeFamilyMeta(id, 'ready', OLD_READY)
+		);
 	});
 
-	function puzzleMeta(id: string, overrides: Partial<Record<string, unknown>> = {}) {
-		return {
-			id,
-			name: `Puzzle ${id}`,
-			pieceCount: 100,
-			status: 'ready',
-			createdAt: OLD_READY,
-			progress: { totalPieces: 100, generatedPieces: 100, updatedAt: OLD_READY },
-			...overrides
-		};
+	function familyMeta(id: string, overrides: Partial<Record<string, unknown>> = {}) {
+		return makeFamilyMeta(id, 'ready', OLD_READY, overrides);
 	}
 
 	it('returns empty result when no puzzles carry an idempotencyKey', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a'));
+		(storage.getFamily as any).mockResolvedValue(familyMeta('a'));
 		const env = makeEnv();
 		const result = await reapOrphanedReservations(env);
 		expect(result.scanned).toBe(1);
@@ -1348,13 +1522,13 @@ describe('reapOrphanedReservations', () => {
 	});
 
 	it('skips puzzles that are the current reservation owner (not orphans)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getFamily as any).mockResolvedValue(familyMeta('a', { idempotencyKey: 'key-K' }));
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'a',
+			familyId: 'a',
 			status: 'committed'
 		});
 		const env = makeEnv({ a: 'complete' });
@@ -1364,7 +1538,7 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
@@ -1378,12 +1552,12 @@ describe('reapOrphanedReservations', () => {
 		// can review and force-delete true orphans via the runbook. A
 		// positive ownership mismatch (separate test) remains sufficient
 		// evidence for reaping.
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1393,21 +1567,21 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'skip-null-reservation')).toBe(true);
 	});
 
 	it('skips orphaned puzzles whose workflow is still alive', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { status: 'processing', idempotencyKey: 'key-K' })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { status: 'processing', idempotencyKey: 'key-K' })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		const env = makeEnv({ a: 'running' });
@@ -1416,7 +1590,7 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
@@ -1430,17 +1604,17 @@ describe('reapOrphanedReservations', () => {
 	//   5. A later scheduled reconciliation (this reaper) removes puzzle A.
 	it('reaps a completed orphan whose idempotency key was reclaimed by a retry', async () => {
 		// Step 1 + 4: puzzle A exists in KV as ready, workflow complete.
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		// Step 2: the reservation DO for key-K now points at puzzle b (the
 		// retry's replacement), proving A lost its reservation.
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		// Step 3 is implicit: no cleanup record exists (listCleanupRecords
@@ -1451,27 +1625,36 @@ describe('reapOrphanedReservations', () => {
 		// Step 5: A is fully reaped.
 		expect(result.candidates).toBe(1);
 		expect(result.reaped).toBe(1);
-		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, {
-			puzzleId: 'a',
-			pieceCount: 50,
-			idempotencyKey: 'key-K',
-			createdAt: expect.any(Number)
-		});
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({
+				familyId: 'a',
+				idempotencyKey: 'key-K',
+				createdAt: expect.any(Number)
+			})
+		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'a',
+			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'a');
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'a', 50);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a');
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'a',
+			expect.objectContaining({ easy: expect.any(String) }),
+			expect.objectContaining({ easy: expect.any(Number) })
+		);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a-easy');
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA_DO,
 			'key-K',
 			'a'
 		);
 		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'a');
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('a');
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'a');
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('a-easy');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -1485,15 +1668,15 @@ describe('reapOrphanedReservations', () => {
 	});
 
 	it('retains the fence and retries an orphan when required D1 finish fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
@@ -1512,12 +1695,13 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'a', idempotencyKey: 'key-K' })
+			expect.objectContaining({ familyId: 'a', idempotencyKey: 'key-K' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'a',
+			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -1525,40 +1709,45 @@ describe('reapOrphanedReservations', () => {
 		const secondResult = await reapOrphanedReservations(env);
 
 		expect(secondResult.reaped).toBe(1);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledTimes(2);
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(2);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledTimes(6);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(4);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a');
 		consoleSpy.mockRestore();
 	});
 
 	it('reaps an orphan whose workflow is dead (errored)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { status: 'processing', idempotencyKey: 'key-K', pieceCount: 30 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { status: 'processing', idempotencyKey: 'key-K', pieceCount: 30 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		const env = makeEnv({ a: 'errored' });
 		const result = await reapOrphanedReservations(env);
 		expect(result.reaped).toBe(1);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'a', 30);
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'a',
+			expect.objectContaining({ easy: expect.any(String) }),
+			expect.objectContaining({ easy: expect.any(Number) })
+		);
 	});
 
 	it('reaps an orphan whose workflow instance was never created (not_found)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'processing', OLD_PROCESSING)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { status: 'processing', idempotencyKey: 'key-K' })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { status: 'processing', idempotencyKey: 'key-K' })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'pending'
 		});
 		const env = makeEnv();
@@ -1572,20 +1761,20 @@ describe('reapOrphanedReservations', () => {
 		expect(env.PUZZLE_WORKFLOW.get).toHaveBeenCalledWith('a');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'a', idempotencyKey: 'key-K' })
+			expect.objectContaining({ familyId: 'a', idempotencyKey: 'key-K' })
 		);
 	});
 
 	it('does not begin D1 deletion or mutate source when orphan record bootstrap fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		(storage.writeCleanupRecord as any).mockRejectedValue(new Error('KV record write failed'));
@@ -1598,23 +1787,23 @@ describe('reapOrphanedReservations', () => {
 		expect(result.errors).toBe(1);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
 	it('preserves KV when R2 deletion fails partially on an orphan', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
-		(storage.deletePuzzleAssets as any).mockResolvedValue({
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
 			success: false,
 			failedKeys: ['puzzles/a/original']
 		});
@@ -1628,13 +1817,13 @@ describe('reapOrphanedReservations', () => {
 	});
 
 	it('preserves R2/KV when DO tombstone fails on an orphan', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getFamily as any).mockResolvedValue(familyMeta('a', { idempotencyKey: 'key-K' }));
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		(storage.deleteMetadataDO as any).mockRejectedValue(new Error('DO unreachable'));
@@ -1645,24 +1834,25 @@ describe('reapOrphanedReservations', () => {
 		expect(result.errors).toBe(1);
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'a', idempotencyKey: 'key-K' })
+			expect.objectContaining({ familyId: 'a', idempotencyKey: 'key-K' })
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'a',
+			'a-easy',
 			expect.any(Number)
 		);
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expectBeginPuzzleDeletionForAllVariants('a');
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'orphan-do-tombstone-failed')).toBe(true);
 	});
 
 	it('records orphan-reservation-check-failed when reservation lookup throws', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getFamily as any).mockResolvedValue(familyMeta('a', { idempotencyKey: 'key-K' }));
 		(storage.getIdempotencyReservation as any).mockImplementation(() => {
 			throw new Error('DO RPC blew up');
 		});
@@ -1676,15 +1866,15 @@ describe('reapOrphanedReservations', () => {
 
 	it('respects REAP_BATCH_LIMIT on orphan candidates', async () => {
 		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 5 }, (_, i) =>
-			puzzleSummary(`p${i}`, 'ready', OLD_READY)
+			familySummary(`p${i}`, 'ready', OLD_READY)
 		);
-		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
-		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
-			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		(storage.listFamilies as any).mockResolvedValue({ families: summaries, invalidCount: 0 });
+		(storage.getFamily as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(familyMeta(id, { idempotencyKey: `key-${id}` }))
 		);
 		(storage.getIdempotencyReservation as any).mockImplementation(
 			(_: DurableObjectNamespace, key: string) =>
-				Promise.resolve({ puzzleId: key.replace('key-', 'other-'), status: 'committed' })
+				Promise.resolve({ familyId: key.replace('key-', 'other-'), status: 'committed' })
 		);
 		const env = makeEnv();
 		// All workflows complete so all candidates are reaped.
@@ -1707,11 +1897,11 @@ describe('reapOrphanedReservations', () => {
 	// ones (p50..p54).
 	it('collects mismatches in input order, not async completion order', async () => {
 		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 5 }, (_, i) =>
-			puzzleSummary(`p${i}`, 'ready', OLD_READY)
+			familySummary(`p${i}`, 'ready', OLD_READY)
 		);
-		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
-		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
-			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		(storage.listFamilies as any).mockResolvedValue({ families: summaries, invalidCount: 0 });
+		(storage.getFamily as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(familyMeta(id, { idempotencyKey: `key-${id}` }))
 		);
 		// Delay earlier-catalog lookups so later-catalog ones resolve
 		// first. If mismatches were collected in async completion order,
@@ -1723,7 +1913,7 @@ describe('reapOrphanedReservations', () => {
 				const idx = Number(key.replace('key-p', ''));
 				const delay = (REAP_BATCH_LIMIT + 5 - idx) * 5;
 				return new Promise((resolve) =>
-					setTimeout(() => resolve({ puzzleId: `other-${idx}`, status: 'committed' }), delay)
+					setTimeout(() => resolve({ familyId: `other-p${idx}`, status: 'committed' }), delay)
 				);
 			}
 		);
@@ -1740,7 +1930,7 @@ describe('reapOrphanedReservations', () => {
 		// dispatches via Promise.all and invocation order within the
 		// batch is not guaranteed.
 		const reapedIds = (
-			vi.mocked(storage.deletePuzzleMetadata).mock.calls as Array<[unknown, string]>
+			vi.mocked(storage.deleteFamilyMetadata).mock.calls as Array<[unknown, string]>
 		)
 			.map((c) => c[1] as string)
 			.sort();
@@ -1750,18 +1940,18 @@ describe('reapOrphanedReservations', () => {
 		expect(reapedIds).not.toContain(`p${REAP_BATCH_LIMIT}`);
 	});
 
-	// Regression: the source catalog is sorted newest-first (listPuzzles).
+	// Regression: the source catalog is sorted newest-first (listFamilies).
 	// With the old batch-first approach, the same newest REAP_BATCH_LIMIT
 	// healthy puzzles would be selected every run, all confirmed as valid
 	// owners, and an older orphan at position 51+ would never be examined.
 	// The fix determines mismatches BEFORE applying the batch limit.
 	it('does not starve older orphans behind newer healthy owners', async () => {
 		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 1 }, (_, i) =>
-			puzzleSummary(`p${i}`, 'ready', OLD_READY - i)
+			familySummary(`p${i}`, 'ready', OLD_READY - i)
 		);
-		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
-		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
-			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		(storage.listFamilies as any).mockResolvedValue({ families: summaries, invalidCount: 0 });
+		(storage.getFamily as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(familyMeta(id, { idempotencyKey: `key-${id}` }))
 		);
 		// The first REAP_BATCH_LIMIT puzzles are healthy current owners.
 		// The last puzzle (p50) is an orphan — its key was reclaimed by a
@@ -1770,9 +1960,9 @@ describe('reapOrphanedReservations', () => {
 			(_: DurableObjectNamespace, key: string) => {
 				const id = key.replace('key-', '');
 				if (id === `p${REAP_BATCH_LIMIT}`) {
-					return Promise.resolve({ puzzleId: 'other-replacement', status: 'committed' });
+					return Promise.resolve({ familyId: 'other-replacement', status: 'committed' });
 				}
-				return Promise.resolve({ puzzleId: id, status: 'committed' });
+				return Promise.resolve({ familyId: id, status: 'committed' });
 			}
 		);
 		const env = makeEnv();
@@ -1784,20 +1974,19 @@ describe('reapOrphanedReservations', () => {
 		// being at position 51 in the newest-first catalog. Under the old
 		// batch-first code, result.reaped would be 0 (starved indefinitely).
 		expect(result.reaped).toBe(1);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
 			`p${REAP_BATCH_LIMIT}`
 		);
-		// The healthy owners must NOT be reaped.
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledTimes(1);
 	});
 
-	it('records orphan-meta-read-failed when getPuzzle throws during candidate scan', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+	it('records orphan-meta-read-failed when getFamily throws during candidate scan', async () => {
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockRejectedValue(new Error('KV read blew up'));
+		(storage.getFamily as any).mockRejectedValue(new Error('KV read blew up'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
@@ -1807,15 +1996,15 @@ describe('reapOrphanedReservations', () => {
 	});
 
 	it('skips orphan when workflow status check throws with non-not_found error', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		const statusError = new Error('workflow RPC unavailable');
@@ -1831,19 +2020,19 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 	});
 
 	it('skips orphan with unrecognized workflow status string', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1855,42 +2044,45 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.writeCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
 	it('preserves KV when R2 deletion throws on an orphan', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
-		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 connection lost'));
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['families/a/original']
+		});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(result.details.some((d) => d.action === 'orphan-r2-delete-failed')).toBe(true);
+		expect(result.details.some((d) => d.action === 'orphan-r2-delete-partial')).toBe(true);
 	});
 
 	it('records orphan-kv-delete-failed when KV metadata deletion fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({
@@ -1905,39 +2097,43 @@ describe('reapOrphanedReservations', () => {
 		expect(result.details.some((d) => d.action === 'orphan-kv-delete-failed')).toBe(true);
 	});
 
-	it('still reaps when idempotency key release fails (best-effort)', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+	it('retains orphan cleanup record when idempotency key release fails', async () => {
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		(storage.releaseIdempotencyKey as any).mockRejectedValue(new Error('DO release failed'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
-		expect(result.reaped).toBe(1);
-		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details).toContainEqual(
+			expect.objectContaining({ puzzleId: 'a', action: 'orphan-do-release-failed' })
+		);
 	});
 
 	it('retains orphan record and tombstone when required ownership cleanup fails', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
-		(deletePuzzleOwnership as any).mockRejectedValueOnce(new Error('D1 delete failed'));
+		(deletePuzzleFamilyOwnership as any).mockRejectedValueOnce(new Error('D1 delete failed'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
@@ -1945,9 +2141,10 @@ describe('reapOrphanedReservations', () => {
 		expect(result.errors).toBe(1);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'a',
+			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'a', action: 'orphan-d1-finish-failed' })
 		);
@@ -1959,15 +2156,15 @@ describe('reapOrphanedReservations', () => {
 	});
 
 	it('does not mutate orphan source when D1 begin initialization throws', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		(getWorkerDbContext as any).mockImplementationOnce(() => {
@@ -1979,20 +2176,20 @@ describe('reapOrphanedReservations', () => {
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
 	it('records orphan-error on unexpected per-candidate exception', async () => {
-		(storage.listPuzzles as any).mockResolvedValue({
-			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+		(storage.listFamilies as any).mockResolvedValue({
+			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(
-			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		(storage.getFamily as any).mockResolvedValue(
+			familyMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue({
-			puzzleId: 'b',
+			familyId: 'b',
 			status: 'committed'
 		});
 		// The KV delete call (line 860) is NOT inside an inner try/catch —
@@ -2028,16 +2225,16 @@ describe('reapOrphanedReservations', () => {
 	// and p50..p54 would never be visited.
 	it('advances cursor past persistently-failing candidates (no starvation)', async () => {
 		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 5 }, (_, i) =>
-			puzzleSummary(`p${i}`, 'ready', OLD_READY)
+			familySummary(`p${i}`, 'ready', OLD_READY)
 		);
-		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
-		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
-			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		(storage.listFamilies as any).mockResolvedValue({ families: summaries, invalidCount: 0 });
+		(storage.getFamily as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(familyMeta(id, { idempotencyKey: `key-${id}` }))
 		);
 		// All candidates are mismatches (key belongs to a different puzzleId).
 		(storage.getIdempotencyReservation as any).mockImplementation(
 			(_: DurableObjectNamespace, key: string) =>
-				Promise.resolve({ puzzleId: `other-${key}`, status: 'committed' })
+				Promise.resolve({ familyId: `other-${key}`, status: 'committed' })
 		);
 		// All workflows are complete so candidates pass the workflow check.
 		const env = makeEnv();
@@ -2048,7 +2245,8 @@ describe('reapOrphanedReservations', () => {
 		// succeeds for p50..p54.
 		(storage.deleteMetadataDO as any).mockImplementation(
 			(_: DurableObjectNamespace, id: string) => {
-				const idx = Number(id.replace('p', ''));
+				const familyId = id.includes('-') ? id.split('-')[0] : id;
+				const idx = Number(familyId.replace('p', ''));
 				if (idx < REAP_BATCH_LIMIT) {
 					return Promise.reject(new Error('DO tombstone always fails'));
 				}
@@ -2066,14 +2264,14 @@ describe('reapOrphanedReservations', () => {
 		expect(kvStore.get('reaper:cursor:orphaned-reservations')).toBe('50');
 
 		// Clear mock call history so run 2 assertions are isolated.
-		vi.mocked(storage.deletePuzzleMetadata).mockClear();
+		vi.mocked(storage.deleteFamilyMetadata).mockClear();
 
 		// Run 2: cursor=50, batch wraps to include p50..p54 first.
 		const result2 = await reapOrphanedReservations(env);
 		// p50..p54 should be reaped (5 candidates beyond the first batch).
 		expect(result2.reaped).toBe(5);
 		const reapedIds = (
-			vi.mocked(storage.deletePuzzleMetadata).mock.calls as Array<[unknown, string]>
+			vi.mocked(storage.deleteFamilyMetadata).mock.calls as Array<[unknown, string]>
 		)
 			.map((c) => c[1])
 			.sort();
@@ -2129,6 +2327,30 @@ describe('reapOrphanedAvatars', () => {
 		expect(result.scanned).toBe(0);
 		expect(result.candidates).toBe(0);
 		expect(result.reaped).toBe(0);
+	});
+
+	it('continues when avatar cursor read and persistence fail', async () => {
+		const env = makeAvatarEnv([]);
+		const kv = env.PUZZLE_METADATA as any;
+		kv.get.mockRejectedValueOnce(new Error('KV cursor read failed'));
+		kv.delete.mockRejectedValueOnce(new Error('KV cursor delete failed'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await reapOrphanedAvatars(env, NOW);
+
+		expect(result.scanned).toBe(0);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledWith({
+			prefix: 'avatars/',
+			cursor: undefined,
+			limit: AVATAR_GC_BATCH_LIMIT
+		});
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Reaper: failed to persist string cursor for orphaned-avatars-r2:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it('skips legacy unversioned keys (avatars/{playerId})', async () => {

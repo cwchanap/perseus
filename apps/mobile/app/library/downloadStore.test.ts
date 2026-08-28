@@ -10,11 +10,13 @@ import {
 } from './downloadStore';
 
 const ROOT = '/downloads';
-const THUMBNAIL_URL = 'http://api.test/puzzles/p1/thumbnail';
-const REFERENCE_URL = 'http://api.test/puzzles/p1/reference';
+const VARIANT_ID = '223e4567-e89b-42d3-a456-426614174001';
+const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174000';
+const THUMBNAIL_URL = `http://api.test/puzzles/${VARIANT_ID}/thumbnail`;
+const REFERENCE_URL = `http://api.test/puzzles/${VARIANT_ID}/reference`;
 
 function pieceUrl(id: number): string {
-	return `http://api.test/puzzles/p1/pieces/${id}/image`;
+	return `http://api.test/puzzles/${VARIANT_ID}/pieces/${id}/image`;
 }
 
 const DOWNLOADED_PNG: AssetDownloadResult = { kind: 'downloaded', extension: '.png', bytes: 128 };
@@ -132,9 +134,11 @@ function makePiece(id: number, index: number, puzzleId: string): PuzzlePiece {
 	};
 }
 
-function readyPuzzle(pieceIds: number[], id = 'p1'): ReadyPuzzle {
+function readyPuzzle(pieceIds: number[], id = VARIANT_ID): ReadyPuzzle {
 	return {
 		id,
+		familyId: FAMILY_ID,
+		difficulty: 'normal',
 		name: 'Test Puzzle',
 		pieceCount: pieceIds.length,
 		gridCols: pieceIds.length,
@@ -219,13 +223,13 @@ describe('downloadStore.downloadPuzzle', () => {
 		const result = await h.store.downloadPuzzle(h.puzzle);
 
 		expect(result.kind).toBe('installed');
-		expect(result.packagePath).toBe(`${ROOT}/p1`);
-		expect(result.thumbnailPath).toBe(`${ROOT}/p1/thumbnail.png`);
-		expect(result.referencePath).toBe(`${ROOT}/p1/reference.png`);
+		expect(result.packagePath).toBe(`${ROOT}/${VARIANT_ID}`);
+		expect(result.thumbnailPath).toBe(`${ROOT}/${VARIANT_ID}/thumbnail.png`);
+		expect(result.referencePath).toBe(`${ROOT}/${VARIANT_ID}/reference.png`);
 		expect(result.piecePaths).toEqual({
-			1: `${ROOT}/p1/pieces/1.png`,
-			2: `${ROOT}/p1/pieces/2.png`,
-			3: `${ROOT}/p1/pieces/3.png`
+			1: `${ROOT}/${VARIANT_ID}/pieces/1.png`,
+			2: `${ROOT}/${VARIANT_ID}/pieces/2.png`,
+			3: `${ROOT}/${VARIANT_ID}/pieces/3.png`
 		});
 		expect(result.manifest.downloadedAt).toBe(1720000000000);
 		expect(h.calls.map((call) => call.url)).toEqual([
@@ -236,9 +240,9 @@ describe('downloadStore.downloadPuzzle', () => {
 			pieceUrl(3)
 		]);
 
-		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(true);
-		expect(await h.fileOps.directoryExists(`${ROOT}/.staging/p1`)).toBe(false);
-		expect(await h.fileOps.readText(`${ROOT}/p1/manifest.json`)).toBe(
+		expect(await h.fileOps.directoryExists(`${ROOT}/${VARIANT_ID}`)).toBe(true);
+		expect(await h.fileOps.directoryExists(`${ROOT}/.staging/${VARIANT_ID}`)).toBe(false);
+		expect(await h.fileOps.readText(`${ROOT}/${VARIANT_ID}/manifest.json`)).toBe(
 			JSON.stringify(result.manifest)
 		);
 		expect(h.fileOps.removedDirectories).toEqual([]);
@@ -307,13 +311,13 @@ describe('downloadStore.downloadPuzzle', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(h.calls).toHaveLength(5);
-		expect(h.fileOps.removedDirectories).not.toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).not.toContain(`${ROOT}/.staging/${VARIANT_ID}`);
 
 		releasePending(DOWNLOADED_PNG);
 		await expect(downloading).rejects.toThrow('download_http_500');
 
 		expect(h.calls).toHaveLength(5);
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
 	});
 
 	it('downloads nothing when already cancelled', async () => {
@@ -322,7 +326,7 @@ describe('downloadStore.downloadPuzzle', () => {
 			'download_cancelled'
 		);
 		expect(h.calls).toHaveLength(0);
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
 	});
 
 	it('stops before the next chunk when cancelled mid-download', async () => {
@@ -335,7 +339,7 @@ describe('downloadStore.downloadPuzzle', () => {
 		).rejects.toThrow('download_cancelled');
 
 		expect(h.calls).toHaveLength(5);
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
 	});
 
 	it('rejects a zero-byte required asset', async () => {
@@ -344,7 +348,7 @@ describe('downloadStore.downloadPuzzle', () => {
 			url === pieceUrl(2) ? { kind: 'downloaded', extension: '.png', bytes: 0 } : DOWNLOADED_PNG
 		);
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('download_file_empty');
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
 	});
 
 	it('cleans staging when the final move fails', async () => {
@@ -353,13 +357,13 @@ describe('downloadStore.downloadPuzzle', () => {
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow(
 			'download_directory_move_failed'
 		);
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
-		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
+		expect(await h.fileOps.directoryExists(`${ROOT}/${VARIANT_ID}`)).toBe(false);
 	});
 
 	it('rejects when the final directory already exists', async () => {
 		const h = makeHarness([1, 2, 3]);
-		await h.fileOps.ensureDir(`${ROOT}/p1`);
+		await h.fileOps.ensureDir(`${ROOT}/${VARIANT_ID}`);
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('download_already_installed');
 		expect(h.calls).toHaveLength(0);
 	});
@@ -378,12 +382,12 @@ describe('downloadStore.downloadPuzzle', () => {
 
 	it('clears a stale staging directory for the same puzzle before downloading', async () => {
 		const h = makeHarness([1, 2, 3]);
-		await h.fileOps.ensureDir(`${ROOT}/.staging/p1`);
-		await h.fileOps.writeText(`${ROOT}/.staging/p1/leftover.txt`, 'stale');
+		await h.fileOps.ensureDir(`${ROOT}/.staging/${VARIANT_ID}`);
+		await h.fileOps.writeText(`${ROOT}/.staging/${VARIANT_ID}/leftover.txt`, 'stale');
 		await h.store.downloadPuzzle(h.puzzle);
 
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
-		expect(await h.fileOps.readText(`${ROOT}/p1/leftover.txt`)).toBeNull();
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
+		expect(await h.fileOps.readText(`${ROOT}/${VARIANT_ID}/leftover.txt`)).toBeNull();
 	});
 
 	it('rejects duplicate piece ids before building piece mappings', async () => {
@@ -391,8 +395,8 @@ describe('downloadStore.downloadPuzzle', () => {
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('duplicate_piece_ids');
 		expect(h.calls).toHaveLength(0);
 		expect(h.fileOps.removedDirectories).toEqual([]);
-		expect(await h.fileOps.directoryExists(`${ROOT}/.staging/p1`)).toBe(false);
-		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
+		expect(await h.fileOps.directoryExists(`${ROOT}/.staging/${VARIANT_ID}`)).toBe(false);
+		expect(await h.fileOps.directoryExists(`${ROOT}/${VARIANT_ID}`)).toBe(false);
 	});
 });
 
@@ -439,7 +443,7 @@ describe('downloadStore opportunistic reference', () => {
 			url === REFERENCE_URL ? Promise.reject(new Error('download_http_500')) : DOWNLOADED_PNG
 		);
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('download_http_500');
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/${VARIANT_ID}`);
 	});
 });
 
@@ -462,7 +466,7 @@ describe('downloadStore.scanDownloads and cleanupStaleStaging', () => {
 		expect(entry.thumbnailPath).toBe(installed.thumbnailPath);
 		expect(entry.referencePath).toBe(installed.referencePath);
 		expect(entry.piecePaths).toEqual(installed.piecePaths);
-		expect(entry.manifest.puzzle.id).toBe('p1');
+		expect(entry.manifest.puzzle.id).toBe(VARIANT_ID);
 	});
 
 	it('ignores staging during scan; cleanup removes only staging children', async () => {
@@ -477,7 +481,7 @@ describe('downloadStore.scanDownloads and cleanupStaleStaging', () => {
 
 		await h.store.cleanupStaleStaging();
 		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/in-progress`);
-		expect(h.fileOps.removedDirectories).not.toContain(`${ROOT}/p1`);
+		expect(h.fileOps.removedDirectories).not.toContain(`${ROOT}/${VARIANT_ID}`);
 	});
 
 	it('ensures the download roots exist during cleanup', async () => {
@@ -535,7 +539,7 @@ describe('downloadStore.scanDownloads and cleanupStaleStaging', () => {
 				expect(entry.packagePath, testCase.name).toBe(
 					testCase.name === 'folder name differs from manifest puzzle id'
 						? `${ROOT}/p2`
-						: `${ROOT}/p1`
+						: `${ROOT}/${VARIANT_ID}`
 				);
 			}
 		}
@@ -579,7 +583,7 @@ describe('downloadStore.scanDownloads and cleanupStaleStaging', () => {
 			const entry = entries[0]!;
 			expect(entry.kind, testCase.name).toBe('corrupt');
 			if (entry.kind === 'corrupt') {
-				expect(entry.puzzleId, testCase.name).toBe('p1');
+				expect(entry.puzzleId, testCase.name).toBe(VARIANT_ID);
 				expect(entry.packagePath, testCase.name).toBe(root);
 			}
 		}
@@ -606,22 +610,22 @@ describe('downloadStore.removeDownload', () => {
 		await seedValidPackage(h, readyPuzzle([1, 2], 'p2'));
 		await h.fileOps.ensureDir(`${ROOT}/.staging/in-progress`);
 
-		await h.store.removeDownload('p1');
+		await h.store.removeDownload(VARIANT_ID);
 
-		expect(h.fileOps.removedDirectories).toEqual([`${ROOT}/p1`]);
+		expect(h.fileOps.removedDirectories).toEqual([`${ROOT}/${VARIANT_ID}`]);
 	});
 
 	it('removes nested directories beneath the package directory', async () => {
 		const h = makeHarness([1, 2, 3]);
 		await seedValidPackage(h, h.puzzle);
 
-		expect(await h.fileOps.directoryExists(`${ROOT}/p1/pieces`)).toBe(true);
+		expect(await h.fileOps.directoryExists(`${ROOT}/${VARIANT_ID}/pieces`)).toBe(true);
 
-		await h.store.removeDownload('p1');
+		await h.store.removeDownload(VARIANT_ID);
 
-		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
-		expect(await h.fileOps.directoryExists(`${ROOT}/p1/pieces`)).toBe(false);
-		expect(h.fileOps.removedDirectories).toEqual([`${ROOT}/p1`]);
+		expect(await h.fileOps.directoryExists(`${ROOT}/${VARIANT_ID}`)).toBe(false);
+		expect(await h.fileOps.directoryExists(`${ROOT}/${VARIANT_ID}/pieces`)).toBe(false);
+		expect(h.fileOps.removedDirectories).toEqual([`${ROOT}/${VARIANT_ID}`]);
 	});
 
 	it('rejects unsafe puzzle ids without touching anything', async () => {

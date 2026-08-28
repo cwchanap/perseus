@@ -13,25 +13,35 @@ const dbContextMock = vi.hoisted(() => ({
 	completionWrites: {
 		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
 		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		finishFamilyFirstClears: vi.fn().mockResolvedValue(undefined),
 		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
 	}
 }));
 
-vi.mock('../../services/storage.worker', () => ({
-	getPuzzle: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn().mockResolvedValue(false),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	releaseIdempotencyKey: vi.fn(),
-	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
-	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
-	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
+		originalImageExists: vi.fn().mockResolvedValue(false),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		releaseIdempotencyKey: vi.fn(),
+		deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => dbContextMock.db),
@@ -43,13 +53,14 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
 
+import { cleanupRecordMatcher, makeFamilyMetadata } from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
@@ -103,14 +114,13 @@ describe('Admin Worker - invalid aspect ratio', () => {
 	it('returns 400 when aspectRatio is not a valid ratio', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		formData.append('aspectRatio', '16:9');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -146,11 +156,10 @@ describe('Admin Worker - outer catch in POST /puzzles', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -185,10 +194,9 @@ describe('Admin Worker - parseImageDimensions error catch', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Truncated Test');
-		formData.append('pieceCount', '225');
 		formData.append('image', new Blob([pngHeader], { type: 'image/png' }), 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -220,11 +228,10 @@ describe('Admin Worker - parseImageDimensions for JPEG', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'JPEG Test');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([JPEG_300X300], { type: 'image/jpeg' });
 		formData.append('image', blob, 'test.jpg');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -253,11 +260,10 @@ describe('Admin Worker - parseImageDimensions for WebP VP8 (lossy)', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'WebP VP8 Test');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([WEBP_VP8_300X300], { type: 'image/webp' });
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -286,11 +292,10 @@ describe('Admin Worker - parseImageDimensions for WebP VP8L (lossless)', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'WebP VP8L Test');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([WEBP_VP8L_300X300], { type: 'image/webp' });
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -319,11 +324,10 @@ describe('Admin Worker - parseImageDimensions for WebP VP8X (extended)', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'WebP VP8X Test');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([WEBP_VP8X_300X300], { type: 'image/webp' });
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -344,14 +348,13 @@ describe('Admin Worker - aspectRatiosMatch mismatch', () => {
 	it('returns 400 when JPEG image dimensions do not match requested aspect ratio', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Mismatch Test');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		const blob = new Blob([JPEG_400X320], { type: 'image/jpeg' });
 		formData.append('image', blob, 'test.jpg');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -366,22 +369,22 @@ describe('Admin Worker - aspectRatiosMatch mismatch', () => {
 	});
 });
 
-describe('Admin Worker - non-integer piece count', () => {
+describe('Admin Worker - rejects pieceCount field', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		__resetRateLimitStore();
 	});
 
-	it('returns 400 when pieceCount is not a finite integer', async () => {
+	it('returns 400 when pieceCount is provided', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Bad Count Test');
-		formData.append('pieceCount', 'abc');
+		formData.append('pieceCount', '225abc');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -392,7 +395,7 @@ describe('Admin Worker - non-integer piece count', () => {
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('bad_request');
-		expect(body.message).toContain('Invalid piece count');
+		expect(body.message).toMatch(/pieceCount/i);
 	});
 });
 
@@ -404,34 +407,19 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 	});
 
 	it('returns 500 when deletePuzzleMetadata fails', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
-			name: 'Test',
-			status: 'completed',
-			pieceCount: 100,
-			aspectRatio: '1:1',
-			gridCols: 10,
-			gridRows: 10,
-			imageWidth: 300,
-			imageHeight: 300,
-			createdAt: Date.now(),
-			progress: { totalPieces: 100, generatedPieces: 100, updatedAt: Date.now() },
-			pieces: [],
-			version: 0
-		} as any);
-		// Safe lifecycle: DO tombstone and R2 deletion succeed, then KV
-		// deletion fails. The route writes a cleanup record and defers to
-		// the reaper.
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		const familyId = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(familyId, 'ready'));
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
 		} as any);
 
-		const req = new Request('http://localhost/puzzle-delete/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', {
+		const req = new Request(`http://localhost/puzzle-family-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -444,10 +432,10 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 		expect(body.message).toBe('KV metadata cleanup failed, reaper will retry');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			baseEnv.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' })
+			cleanupRecordMatcher(familyId)
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+			`${familyId}-easy`,
 			expect.any(Number)
 		);
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
@@ -469,13 +457,12 @@ describe('Admin Worker - POST true outer catch', () => {
 
 		const formData = new FormData();
 		formData.append('name', 'Outer Catch Test');
-		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData

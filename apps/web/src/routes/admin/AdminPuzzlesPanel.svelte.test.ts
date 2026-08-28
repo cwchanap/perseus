@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPuzzlesPanel from './AdminPuzzlesPanel.svelte';
-import type { PuzzleSummary } from '$lib/types/puzzle';
+import type { PuzzleFamilySummary } from '@perseus/types';
 import { ApiError, deletePuzzle, fetchAdminPuzzles, getReferenceImageUrl } from '$lib/services/api';
 
 vi.mock('$lib/services/api', () => {
@@ -22,7 +22,7 @@ vi.mock('$lib/services/api', () => {
 		getReferenceImageUrl: vi.fn(
 			() => 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 		),
-		getThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
+		getFamilyThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
 		ApiError: MockApiError
 	};
 });
@@ -33,29 +33,47 @@ vi.mock('$lib/services/gameplay/session/persistence', () => ({
 	})
 }));
 
-const mockPuzzles: PuzzleSummary[] = [
-	{
-		id: 'p1',
-		name: 'Forest Scene',
-		pieceCount: 225,
+function familySummary(
+	id: string,
+	overrides: Partial<PuzzleFamilySummary> = {}
+): PuzzleFamilySummary {
+	return {
+		id,
+		name: `Family ${id}`,
+		aspectRatio: '1:1',
 		status: 'ready',
-		category: 'Nature'
-	},
-	{
-		id: 'p2',
+		createdAt: 1000,
+		variants: {
+			easy: { id: `${id}-e`, difficulty: 'easy', pieceCount: 16, status: 'ready' },
+			normal: { id: `${id}-n`, difficulty: 'normal', pieceCount: 49, status: 'ready' },
+			hard: { id: `${id}-h`, difficulty: 'hard', pieceCount: 100, status: 'ready' }
+		},
+		...overrides
+	};
+}
+
+const mockFamilies: PuzzleFamilySummary[] = [
+	familySummary('p1', { name: 'Forest Scene', category: 'Nature' }),
+	familySummary('p2', {
 		name: 'City Lights',
-		pieceCount: 225,
 		status: 'processing',
 		category: 'Architecture',
-		progress: { generatedPieces: 10, totalPieces: 225, updatedAt: 0 }
-	},
-	{
-		id: 'p3',
+		variants: {
+			easy: { id: 'p2-e', difficulty: 'easy', pieceCount: 16, status: 'processing' },
+			normal: { id: 'p2-n', difficulty: 'normal', pieceCount: 49, status: 'processing' },
+			hard: { id: 'p2-h', difficulty: 'hard', pieceCount: 100, status: 'processing' }
+		}
+	}),
+	familySummary('p3', {
 		name: 'Broken Puzzle',
-		pieceCount: 225,
 		status: 'failed',
-		category: 'Nature'
-	}
+		category: 'Nature',
+		variants: {
+			easy: { id: 'p3-e', difficulty: 'easy', pieceCount: 16, status: 'failed' },
+			normal: { id: 'p3-n', difficulty: 'normal', pieceCount: 49, status: 'failed' },
+			hard: { id: 'p3-h', difficulty: 'hard', pieceCount: 100, status: 'failed' }
+		}
+	})
 ];
 
 async function selectFilter(label: string, value: string) {
@@ -74,8 +92,8 @@ describe('AdminPuzzlesPanel', () => {
 		vi.useRealTimers();
 	});
 
-	it('shows admin puzzles including processing and failed states', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('shows admin families including processing and failed states', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -84,17 +102,20 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
 		await expect.element(page.getByText('PROCESSING').nth(1)).toBeVisible();
 		await expect.element(page.getByText('FAILED').nth(1)).toBeVisible();
+		await expect
+			.element(page.getByText('Easy / Normal / Hard: 16 / 49 / 100 pieces').first())
+			.toBeVisible();
 	});
 
-	it('opens and closes the reference preview for a ready puzzle', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('opens and closes the reference preview for a ready family', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
 		await page.getByRole('button', { name: 'View full image for Forest Scene' }).click();
 
 		await expect.element(page.getByRole('dialog', { name: 'Reference image' })).toBeVisible();
-		expect(vi.mocked(getReferenceImageUrl)).toHaveBeenCalledWith('p1');
+		expect(vi.mocked(getReferenceImageUrl)).toHaveBeenCalledWith('p1-e');
 		await expect
 			.element(page.getByRole('img', { name: 'Puzzle reference' }))
 			.toHaveAttribute(
@@ -109,7 +130,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('dismisses the reference preview with Escape', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -124,7 +145,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('shows the unavailable state when the reference image fails', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -135,8 +156,8 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('Reference image unavailable')).toBeVisible();
 	});
 
-	it('does not offer reference previews for processing or failed puzzles', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('does not offer reference previews for processing or failed families', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -149,8 +170,8 @@ describe('AdminPuzzlesPanel', () => {
 			.toBeNull();
 	});
 
-	it('filters puzzles through the SearchBar value callback', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('filters families through the SearchBar value callback', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -162,8 +183,8 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.poll(() => page.getByText('Broken Puzzle').query()).toBeNull();
 	});
 
-	it('filters puzzles by category', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('filters families by category', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -175,8 +196,8 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.poll(() => page.getByText('City Lights').query()).toBeNull();
 	});
 
-	it('filters puzzles by status', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('filters families by status', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -189,7 +210,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('combines the search, category, and status controls', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -204,7 +225,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('resets all active criteria', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -224,8 +245,8 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.poll(() => page.getByRole('button', { name: 'RESET' }).query()).toBeNull();
 	});
 
-	it('shows filtered-empty copy when criteria match no puzzles', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+	it('shows filtered-empty copy when criteria match no families', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -238,7 +259,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('shows the filtered and total count while criteria are active', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -248,7 +269,7 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('1 OF 3')).toBeVisible();
 	});
 
-	it('shows an API error when loading admin puzzles fails', async () => {
+	it('shows an API error when loading admin families fails', async () => {
 		vi.mocked(fetchAdminPuzzles).mockRejectedValue(
 			new ApiError(503, 'service_unavailable', 'Puzzle database unavailable')
 		);
@@ -259,8 +280,8 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('0 TOTAL')).toBeVisible();
 	});
 
-	it('deletes a ready puzzle after confirmation', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValueOnce(mockPuzzles).mockResolvedValueOnce([]);
+	it('deletes a ready family after confirmation', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValueOnce(mockFamilies).mockResolvedValueOnce([]);
 		vi.spyOn(window, 'confirm').mockReturnValue(true);
 		vi.mocked(deletePuzzle).mockResolvedValue(null);
 
@@ -274,8 +295,8 @@ describe('AdminPuzzlesPanel', () => {
 		});
 	});
 
-	it('sends force flag for processing puzzle deletion', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValueOnce(mockPuzzles).mockResolvedValueOnce([]);
+	it('sends force flag for processing family deletion', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValueOnce(mockFamilies).mockResolvedValueOnce([]);
 		vi.spyOn(window, 'confirm').mockReturnValue(true);
 		vi.mocked(deletePuzzle).mockResolvedValue(null);
 
@@ -290,7 +311,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('shows ApiError message in alert on delete failure', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 		vi.spyOn(window, 'confirm').mockReturnValue(true);
 		vi.mocked(deletePuzzle).mockRejectedValue(
 			new ApiError(500, 'internal_error', 'Server error occurred')
@@ -308,7 +329,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('shows partial delete warnings as a status message', async () => {
-		vi.mocked(fetchAdminPuzzles).mockResolvedValueOnce(mockPuzzles).mockResolvedValueOnce([]);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValueOnce(mockFamilies).mockResolvedValueOnce([]);
 		vi.spyOn(window, 'confirm').mockReturnValue(true);
 		vi.mocked(deletePuzzle).mockResolvedValue({
 			success: false,
@@ -330,8 +351,8 @@ describe('AdminPuzzlesPanel', () => {
 	it('replaces an existing success message when a new one arrives', async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		vi.mocked(fetchAdminPuzzles)
-			.mockResolvedValueOnce(mockPuzzles)
-			.mockResolvedValueOnce(mockPuzzles)
+			.mockResolvedValueOnce(mockFamilies)
+			.mockResolvedValueOnce(mockFamilies)
 			.mockResolvedValueOnce([]);
 		vi.spyOn(window, 'confirm').mockReturnValue(true);
 		vi.mocked(deletePuzzle)
@@ -361,20 +382,14 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.poll(() => page.getByText('Second warning').query()).toBeNull();
 	});
 
-	it('polls for a hidden processing puzzle after three seconds', async () => {
+	it('polls for a hidden processing family after three seconds', async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
-		const readyPuzzles: PuzzleSummary[] = [
-			{
-				id: 'p2',
-				name: 'City Lights',
-				pieceCount: 225,
-				status: 'ready',
-				category: 'Architecture'
-			}
+		const readyFamilies: PuzzleFamilySummary[] = [
+			familySummary('p2', { name: 'City Lights', status: 'ready', category: 'Architecture' })
 		];
 		vi.mocked(fetchAdminPuzzles)
-			.mockResolvedValueOnce(mockPuzzles)
-			.mockResolvedValueOnce(readyPuzzles);
+			.mockResolvedValueOnce(mockFamilies)
+			.mockResolvedValueOnce(readyFamilies);
 
 		render(AdminPuzzlesPanel);
 
@@ -390,7 +405,7 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('does not start polling when unmounted during the initial request', async () => {
-		let resolveInitialRequest!: (puzzles: PuzzleSummary[]) => void;
+		let resolveInitialRequest!: (families: PuzzleFamilySummary[]) => void;
 		vi.mocked(fetchAdminPuzzles).mockReturnValueOnce(
 			new Promise((resolve) => {
 				resolveInitialRequest = resolve;
@@ -405,7 +420,7 @@ describe('AdminPuzzlesPanel', () => {
 		unmount();
 		const setIntervalSpy = vi.spyOn(window, 'setInterval');
 		try {
-			resolveInitialRequest(mockPuzzles);
+			resolveInitialRequest(mockFamilies);
 			await new Promise((resolve) => window.setTimeout(resolve, 0));
 
 			expect(setIntervalSpy).not.toHaveBeenCalled();
@@ -415,13 +430,12 @@ describe('AdminPuzzlesPanel', () => {
 	});
 
 	it('paginates 21 rows using a fixed page size of 20', async () => {
-		const manyPuzzles: PuzzleSummary[] = Array.from({ length: 21 }, (_, index) => ({
-			id: `p${index + 1}`,
-			name: `Mission ${String(index + 1).padStart(2, '0')}`,
-			pieceCount: 100,
-			status: 'ready'
-		}));
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(manyPuzzles);
+		const manyFamilies: PuzzleFamilySummary[] = Array.from({ length: 21 }, (_, index) =>
+			familySummary(`p${index + 1}`, {
+				name: `Mission ${String(index + 1).padStart(2, '0')}`
+			})
+		);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(manyFamilies);
 
 		render(AdminPuzzlesPanel);
 

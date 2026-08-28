@@ -164,4 +164,61 @@ describe('PuzzleCompletionDialog', () => {
 		expect(page.getByTestId('completion-best-time').query()).toBeNull();
 		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
 	});
+
+	it('shows progression awards when the server returns them', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			awards: {
+				clearPoints: 200,
+				achievements: ['first_clear', 'getting_started'],
+				mastery: ['hintless'],
+				puzzleRank: 3
+			}
+		});
+
+		await expect
+			.element(page.getByTestId('completion-clear-points'))
+			.toHaveTextContent('+200 SCORE');
+		await expect
+			.element(page.getByTestId('completion-achievements'))
+			.toHaveTextContent('First Clear');
+		await expect
+			.element(page.getByTestId('completion-achievements'))
+			.toHaveTextContent('Getting Started');
+		await expect.element(page.getByTestId('completion-mastery')).toHaveTextContent('Hintless');
+		await expect
+			.element(page.getByTestId('completion-puzzle-rank'))
+			.toHaveTextContent('FAMILY RANK #3');
+	});
+
+	it('shows server personal best for standard timed completions', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			bestTime: 68,
+			isNewBest: false,
+			awards: {
+				personalBest: { bestTimeSeconds: 62, isNew: true }
+			}
+		});
+
+		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:02$/);
+		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+	});
+
+	it('shows server personal best for rotation timed completions', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			resultClass: 'rotation_timed',
+			rotationEnabled: true,
+			rotationUsed: true,
+			bestTime: 68,
+			isNewBest: false,
+			awards: {
+				personalBest: { bestTimeSeconds: 70, isNew: false }
+			}
+		});
+
+		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:10$/);
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	});
 });
