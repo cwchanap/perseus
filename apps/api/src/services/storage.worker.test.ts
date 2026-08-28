@@ -1,25 +1,92 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	getPuzzle,
+	getFamily,
 	createPuzzleMetadata,
+	createFamilyMetadata,
 	updatePuzzleMetadata,
 	deletePuzzleMetadata,
+	deleteFamilyMetadata,
 	listPuzzles,
 	listPuzzlesPage,
+	listFamiliesPage,
+	listFamilies,
+	enrichFamilySummary,
 	puzzleExists,
 	getOriginalKey,
 	getThumbnailKey,
 	getPieceKey,
+	getFamilyOriginalKey,
+	getFamilyThumbnailKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
+	deleteFamilySharedAssets,
+	deleteVariantPieceAssets,
 	getImage,
-	deletePuzzleAssets,
+	deleteFamilyCleanupAssets,
 	invalidateGalleryIndex,
+	resolveVariantReferenceKey,
 	writeCleanupRecord,
 	listCleanupRecords,
 	deleteCleanupRecord,
+	buildFamilyMetadata,
 	type PuzzleMetadata
 } from './storage.worker';
+import type { PuzzleFamilyMetadata } from '@perseus/types';
+
+const TEST_FAMILY_ID = '223e4567-e89b-42d3-a456-426614174000';
+const TEST_VARIANT_ID = '323e4567-e89b-42d3-a456-426614174001';
+const FAMILY_VARIANT_IDS = {
+	easy: '423e4567-e89b-42d3-a456-426614174010',
+	normal: '523e4567-e89b-42d3-a456-426614174011',
+	hard: '623e4567-e89b-42d3-a456-426614174012'
+};
+
+function makeReadyFamily(overrides: Partial<PuzzleFamilyMetadata> = {}): PuzzleFamilyMetadata {
+	const id = overrides.id ?? '223e4567-e89b-42d3-a456-426614174099';
+	return {
+		id,
+		name: overrides.name ?? 'Test Family',
+		aspectRatio: overrides.aspectRatio ?? '1:1',
+		createdAt: overrides.createdAt ?? 1000,
+		status: overrides.status ?? 'ready',
+		variants: overrides.variants ?? FAMILY_VARIANT_IDS,
+		...overrides
+	};
+}
+
+function storeFamily(
+	kv: ReturnType<typeof createMockKV>,
+	overrides: Partial<PuzzleFamilyMetadata> = {}
+): PuzzleFamilyMetadata {
+	const family = makeReadyFamily(overrides);
+	kv._store.set(`family:${family.id}`, JSON.stringify(family));
+	return family;
+}
+
+function pageFamilyId(n: number): string {
+	const suffix = String(n).padStart(12, '0');
+	return `523e4567-e89b-42d3-a456-${suffix}`;
+}
+
+function makeVariantMeta(id: string, createdAt: number): PuzzleMetadata {
+	return {
+		id,
+		familyId: TEST_FAMILY_ID,
+		difficulty: 'hard',
+		name: 'Test Puzzle',
+		pieceCount: 100,
+		gridCols: 10,
+		gridRows: 10,
+		imageWidth: 1000,
+		imageHeight: 800,
+		createdAt,
+		status: 'processing',
+		version: 0,
+		pieces: [],
+		progress: { totalPieces: 100, generatedPieces: 0, updatedAt: createdAt }
+	};
+}
 
 // Mock KVNamespace
 function createMockKV() {
@@ -81,13 +148,13 @@ function createMockDurableObjectNamespace(
 describe('Storage Key Helpers', () => {
 	describe('getOriginalKey', () => {
 		it('should return correct path for original image', () => {
-			expect(getOriginalKey('puzzle-123')).toBe('puzzles/puzzle-123/original');
+			expect(getOriginalKey('family-123')).toBe('families/family-123/original');
 		});
 	});
 
 	describe('getThumbnailKey', () => {
 		it('should return correct path for thumbnail', () => {
-			expect(getThumbnailKey('puzzle-123')).toBe('puzzles/puzzle-123/thumbnail.jpg');
+			expect(getThumbnailKey('family-123')).toBe('families/family-123/thumbnail.jpg');
 		});
 	});
 
@@ -101,11 +168,13 @@ describe('Storage Key Helpers', () => {
 
 describe('KV Metadata Operations', () => {
 	const samplePuzzle: PuzzleMetadata = {
-		id: 'test-puzzle-1',
+		id: TEST_VARIANT_ID,
+		familyId: TEST_FAMILY_ID,
+		difficulty: 'hard',
 		name: 'Test Puzzle',
-		pieceCount: 225,
-		gridCols: 15,
-		gridRows: 15,
+		pieceCount: 100,
+		gridCols: 10,
+		gridRows: 10,
 		imageWidth: 1000,
 		imageHeight: 800,
 		createdAt: Date.now(),
@@ -113,7 +182,7 @@ describe('KV Metadata Operations', () => {
 		version: 0,
 		pieces: [],
 		progress: {
-			totalPieces: 225,
+			totalPieces: 100,
 			generatedPieces: 0,
 			updatedAt: Date.now()
 		}
@@ -122,12 +191,12 @@ describe('KV Metadata Operations', () => {
 	describe('getPuzzle', () => {
 		it('should return puzzle metadata when exists', async () => {
 			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
 
-			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+			const result = await getPuzzle(mockKV as unknown as KVNamespace, TEST_VARIANT_ID);
 
 			expect(result).toEqual(samplePuzzle);
-			expect(mockKV.get).toHaveBeenCalledWith('puzzle:test-puzzle-1', 'json');
+			expect(mockKV.get).toHaveBeenCalledWith(`puzzle:${TEST_VARIANT_ID}`, 'json');
 		});
 
 		it('should return null when puzzle does not exist', async () => {
@@ -148,10 +217,10 @@ describe('KV Metadata Operations', () => {
 				gridRows: 2,
 				pieces: []
 			};
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(invalidPuzzle));
 
-			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
-				'Corrupt puzzle metadata for test-puzzle-1'
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, TEST_VARIANT_ID)).rejects.toThrow(
+				`Corrupt puzzle metadata for ${TEST_VARIANT_ID}`
 			);
 		});
 
@@ -162,10 +231,10 @@ describe('KV Metadata Operations', () => {
 				status: 'processing',
 				error: { message: 'Should not be here' }
 			};
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(invalidPuzzle));
 
-			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
-				'Corrupt puzzle metadata for test-puzzle-1'
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, TEST_VARIANT_ID)).rejects.toThrow(
+				`Corrupt puzzle metadata for ${TEST_VARIANT_ID}`
 			);
 		});
 
@@ -176,15 +245,15 @@ describe('KV Metadata Operations', () => {
 				status: 'failed',
 				error: { message: 'Failed' },
 				progress: {
-					totalPieces: 225,
+					totalPieces: 100,
 					generatedPieces: 10,
 					updatedAt: Date.now()
 				}
 			};
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(invalidPuzzle));
 
-			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
-				'Corrupt puzzle metadata for test-puzzle-1'
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, TEST_VARIANT_ID)).rejects.toThrow(
+				`Corrupt puzzle metadata for ${TEST_VARIANT_ID}`
 			);
 		});
 
@@ -211,16 +280,16 @@ describe('KV Metadata Operations', () => {
 					id: index
 				})),
 				progress: {
-					totalPieces: 225,
-					generatedPieces: 225,
+					totalPieces: 100,
+					generatedPieces: 100,
 					updatedAt: Date.now()
 				},
 				error: { message: 'Should not be here' }
 			};
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(invalidPuzzle));
 
-			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
-				'Corrupt puzzle metadata for test-puzzle-1'
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, TEST_VARIANT_ID)).rejects.toThrow(
+				`Corrupt puzzle metadata for ${TEST_VARIANT_ID}`
 			);
 		});
 	});
@@ -231,7 +300,10 @@ describe('KV Metadata Operations', () => {
 
 			await createPuzzleMetadata(mockKV as unknown as KVNamespace, samplePuzzle);
 
-			expect(mockKV.put).toHaveBeenCalledWith('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			expect(mockKV.put).toHaveBeenCalledWith(
+				`puzzle:${TEST_VARIANT_ID}`,
+				JSON.stringify(samplePuzzle)
+			);
 		});
 
 		it('should reject puzzle metadata with invalid grid structure', async () => {
@@ -239,8 +311,8 @@ describe('KV Metadata Operations', () => {
 			const invalidPuzzle = {
 				...samplePuzzle,
 				gridCols: 14,
-				gridRows: 15,
-				pieceCount: 225
+				gridRows: 10,
+				pieceCount: 100
 			};
 
 			await expect(
@@ -287,11 +359,11 @@ describe('KV Metadata Operations', () => {
 		it('should throw error when puzzle already exists (TOCTOU check)', async () => {
 			const mockKV = createMockKV();
 			// Pre-populate the KV store to simulate existing puzzle
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
 
 			await expect(
 				createPuzzleMetadata(mockKV as unknown as KVNamespace, samplePuzzle)
-			).rejects.toThrow('Puzzle with ID "test-puzzle-1" already exists');
+			).rejects.toThrow(`Puzzle with ID "${TEST_VARIANT_ID}" already exists`);
 		});
 	});
 
@@ -299,14 +371,18 @@ describe('KV Metadata Operations', () => {
 		it('should update existing puzzle metadata', async () => {
 			const { namespace, stub } = createMockDurableObjectNamespace();
 
-			await updatePuzzleMetadata(namespace as unknown as DurableObjectNamespace, 'test-puzzle-1', {
-				status: 'processing'
-			});
+			await updatePuzzleMetadata(
+				namespace as unknown as DurableObjectNamespace,
+				'TEST_VARIANT_ID',
+				{
+					status: 'processing'
+				}
+			);
 
 			expect(stub.fetch).toHaveBeenCalledTimes(1);
 			const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 			expect(body).toEqual({
-				puzzleId: 'test-puzzle-1',
+				puzzleId: 'TEST_VARIANT_ID',
 				updates: { status: 'processing' }
 			});
 		});
@@ -330,20 +406,20 @@ describe('KV Metadata Operations', () => {
 	describe('deletePuzzleMetadata', () => {
 		it('should delete puzzle metadata from KV', async () => {
 			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
 
-			const result = await deletePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+			const result = await deletePuzzleMetadata(mockKV as unknown as KVNamespace, TEST_VARIANT_ID);
 
 			expect(result.success).toBe(true);
-			expect(mockKV.delete).toHaveBeenCalledWith('puzzle:test-puzzle-1');
+			expect(mockKV.delete).toHaveBeenCalledWith(`puzzle:${TEST_VARIANT_ID}`);
 		});
 
 		it('should invalidate gallery index cache on delete', async () => {
 			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
-			mockKV._store.set('gallery:sorted-index', JSON.stringify([{ id: 'test-puzzle-1' }]));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
+			mockKV._store.set('gallery:sorted-index', JSON.stringify([{ id: 'TEST_VARIANT_ID' }]));
 
-			await deletePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+			await deletePuzzleMetadata(mockKV as unknown as KVNamespace, TEST_VARIANT_ID);
 
 			expect(mockKV.delete).toHaveBeenCalledWith('gallery:sorted-index');
 		});
@@ -352,9 +428,9 @@ describe('KV Metadata Operations', () => {
 	describe('puzzleExists', () => {
 		it('should return true when puzzle exists', async () => {
 			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
 
-			const result = await puzzleExists(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+			const result = await puzzleExists(mockKV as unknown as KVNamespace, TEST_VARIANT_ID);
 
 			expect(result).toBe(true);
 		});
@@ -380,25 +456,25 @@ describe('KV Metadata Operations', () => {
 
 		it('should return puzzle summaries sorted by createdAt descending', async () => {
 			const mockKV = createMockKV();
-			const puzzle1 = { ...samplePuzzle, id: 'puzzle-1', createdAt: 1000 };
-			const puzzle2 = { ...samplePuzzle, id: 'puzzle-2', createdAt: 3000 };
-			const puzzle3 = { ...samplePuzzle, id: 'puzzle-3', createdAt: 2000 };
+			const puzzle1 = makeVariantMeta('723e4567-e89b-42d3-a456-426614174001', 1000);
+			const puzzle2 = makeVariantMeta('823e4567-e89b-42d3-a456-426614174002', 3000);
+			const puzzle3 = makeVariantMeta('933e4567-e89b-42d3-a456-426614174003', 2000);
 
-			mockKV._store.set('puzzle:puzzle-1', JSON.stringify(puzzle1));
-			mockKV._store.set('puzzle:puzzle-2', JSON.stringify(puzzle2));
-			mockKV._store.set('puzzle:puzzle-3', JSON.stringify(puzzle3));
+			mockKV._store.set(`puzzle:${puzzle1.id}`, JSON.stringify(puzzle1));
+			mockKV._store.set(`puzzle:${puzzle2.id}`, JSON.stringify(puzzle2));
+			mockKV._store.set(`puzzle:${puzzle3.id}`, JSON.stringify(puzzle3));
 
 			const result = await listPuzzles(mockKV as unknown as KVNamespace);
 
 			expect(result.puzzles).toHaveLength(3);
-			expect(result.puzzles[0].id).toBe('puzzle-2'); // Most recent first
-			expect(result.puzzles[1].id).toBe('puzzle-3');
-			expect(result.puzzles[2].id).toBe('puzzle-1');
+			expect(result.puzzles[0].id).toBe(puzzle2.id); // Most recent first
+			expect(result.puzzles[1].id).toBe(puzzle3.id);
+			expect(result.puzzles[2].id).toBe(puzzle1.id);
 		});
 
 		it('should return only summary fields', async () => {
 			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
 
 			const result = await listPuzzles(mockKV as unknown as KVNamespace);
 
@@ -430,6 +506,110 @@ describe('KV Metadata Operations', () => {
 			expect(result.puzzles[1].id).toBe('puzzle-beta');
 			expect(result.puzzles[2].id).toBe('puzzle-gamma');
 		});
+	});
+});
+
+describe('Family metadata operations', () => {
+	it('throws when family metadata is corrupt', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			`family:${TEST_FAMILY_ID}`,
+			JSON.stringify({ id: TEST_FAMILY_ID, name: 'Corrupt' })
+		);
+
+		await expect(getFamily(kv as unknown as KVNamespace, TEST_FAMILY_ID)).rejects.toThrow(
+			`Corrupt family metadata for ${TEST_FAMILY_ID}`
+		);
+	});
+
+	it('throws for an empty family ID', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: '' });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Family ID is required and must be a non-empty string'
+		);
+	});
+
+	it('throws for a whitespace-only family ID', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: '   ' });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Family ID is required and must be a non-empty string'
+		);
+	});
+
+	it('throws for an empty family name', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: pageFamilyId(70), name: '' });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Family name is required and must be a non-empty string'
+		);
+	});
+
+	it('throws when a family ID already exists', async () => {
+		const kv = createMockKV();
+		const family = storeFamily(kv, { id: pageFamilyId(71) });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			`Family with ID "${family.id}" already exists`
+		);
+	});
+
+	it('throws for invalid family metadata structure', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({
+			id: pageFamilyId(72),
+			variants: { ...FAMILY_VARIANT_IDS, hard: 'not-a-uuid' }
+		});
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Invalid family metadata structure'
+		);
+	});
+
+	it('stores a valid family and exposes it to getFamily', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: pageFamilyId(73) });
+
+		await createFamilyMetadata(kv as unknown as KVNamespace, family);
+
+		expect(kv._store.get(`family:${family.id}`)).toBe(JSON.stringify(family));
+		await expect(getFamily(kv as unknown as KVNamespace, family.id)).resolves.toEqual(family);
+	});
+
+	it('deletes family metadata and invalidates the gallery index', async () => {
+		const kv = createMockKV();
+		storeFamily(kv, { id: TEST_FAMILY_ID });
+		kv._store.set('gallery:sorted-index', JSON.stringify([{ id: TEST_FAMILY_ID }]));
+
+		const result = await deleteFamilyMetadata(kv as unknown as KVNamespace, TEST_FAMILY_ID);
+
+		expect(result).toEqual({ success: true });
+		expect(kv.delete).toHaveBeenNthCalledWith(1, `family:${TEST_FAMILY_ID}`);
+		expect(kv.delete).toHaveBeenNthCalledWith(2, 'gallery:sorted-index');
+		expect(kv._store.has(`family:${TEST_FAMILY_ID}`)).toBe(false);
+		expect(kv._store.has('gallery:sorted-index')).toBe(false);
+	});
+
+	it('returns a failure when deleting family metadata fails', async () => {
+		const kv = createMockKV();
+		const deleteError = new Error('KV delete failed');
+		kv.delete.mockRejectedValueOnce(deleteError);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await deleteFamilyMetadata(kv as unknown as KVNamespace, TEST_FAMILY_ID);
+
+		expect(result.success).toBe(false);
+		expect(result.error).toBeInstanceOf(Error);
+		expect(result.error).toBe(deleteError);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`Failed to delete family metadata for ${TEST_FAMILY_ID}`),
+			deleteError
+		);
+		consoleSpy.mockRestore();
 	});
 });
 
@@ -475,14 +655,18 @@ describe('R2 Asset Operations', () => {
 
 			await uploadOriginalImage(
 				mockBucket as unknown as R2Bucket,
-				'puzzle-123',
+				TEST_FAMILY_ID,
 				imageData,
 				'image/jpeg'
 			);
 
-			expect(mockBucket.put).toHaveBeenCalledWith('puzzles/puzzle-123/original', imageData, {
-				httpMetadata: { contentType: 'image/jpeg' }
-			});
+			expect(mockBucket.put).toHaveBeenCalledWith(
+				`families/${TEST_FAMILY_ID}/original`,
+				imageData,
+				{
+					httpMetadata: { contentType: 'image/jpeg' }
+				}
+			);
 		});
 	});
 
@@ -517,16 +701,16 @@ describe('R2 Asset Operations', () => {
 	describe('deleteOriginalImage', () => {
 		it('should delete original image and return true', async () => {
 			const mockBucket = createMockR2Bucket();
-			mockBucket._store.set('puzzles/puzzle-123/original', {
+			mockBucket._store.set(`families/${TEST_FAMILY_ID}/original`, {
 				data: new ArrayBuffer(100),
 				contentType: 'image/jpeg'
 			});
 
-			const result = await deleteOriginalImage(mockBucket as unknown as R2Bucket, 'puzzle-123');
+			const result = await deleteOriginalImage(mockBucket as unknown as R2Bucket, TEST_FAMILY_ID);
 
 			expect(result.success).toBe(true);
-			expect(mockBucket.delete).toHaveBeenCalledWith('puzzles/puzzle-123/original');
-			expect(mockBucket._store.has('puzzles/puzzle-123/original')).toBe(false);
+			expect(mockBucket.delete).toHaveBeenCalledWith(`families/${TEST_FAMILY_ID}/original`);
+			expect(mockBucket._store.has(`families/${TEST_FAMILY_ID}/original`)).toBe(false);
 		});
 
 		it('should return false and log error on delete failure', async () => {
@@ -551,82 +735,171 @@ describe('R2 Asset Operations', () => {
 		});
 	});
 
-	describe('deletePuzzleAssets', () => {
-		it('should delete original, thumbnail, and all piece images', async () => {
+	describe('deleteFamilySharedAssets', () => {
+		it('deletes the family original and thumbnail assets', async () => {
 			const mockBucket = createMockR2Bucket();
-			const pieceCount = 4;
+			const familyId = 'family-shared';
+			const keys = [getFamilyOriginalKey(familyId), getFamilyThumbnailKey(familyId)];
 
-			await deletePuzzleAssets(mockBucket as unknown as R2Bucket, 'puzzle-123', pieceCount);
+			const result = await deleteFamilySharedAssets(mockBucket as unknown as R2Bucket, familyId);
 
-			// Should have been called with all keys
-			expect(mockBucket.delete).toHaveBeenCalled();
-			const deleteCall = mockBucket.delete.mock.calls[0][0] as string[];
-			expect(deleteCall).toContain('puzzles/puzzle-123/original');
-			expect(deleteCall).toContain('puzzles/puzzle-123/thumbnail.jpg');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/0.png');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/1.png');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/2.png');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/3.png');
+			expect(result).toEqual({ success: true, failedKeys: [] });
+			expect(mockBucket.delete).toHaveBeenCalledWith(keys);
+		});
+	});
+
+	describe('deleteVariantPieceAssets', () => {
+		it('deletes every piece key from zero through the piece count', async () => {
+			const mockBucket = createMockR2Bucket();
+			const variantId = 'variant-pieces';
+			const keys = [
+				getPieceKey(variantId, 0),
+				getPieceKey(variantId, 1),
+				getPieceKey(variantId, 2)
+			];
+
+			const result = await deleteVariantPieceAssets(
+				mockBucket as unknown as R2Bucket,
+				variantId,
+				3
+			);
+
+			expect(result).toEqual({ success: true, failedKeys: [] });
+			expect(mockBucket.delete).toHaveBeenCalledWith(keys);
 		});
 
-		it('should batch delete when piece count exceeds 1000', async () => {
+		it('returns failed piece keys when R2 deletion fails', async () => {
 			const mockBucket = createMockR2Bucket();
-			const pieceCount = 1500; // Will need 2 batches
+			const variantId = 'variant-failure';
+			const keys = [getPieceKey(variantId, 0), getPieceKey(variantId, 1)];
+			mockBucket.delete.mockRejectedValueOnce(new Error('R2 delete failed'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-			await deletePuzzleAssets(mockBucket as unknown as R2Bucket, 'puzzle-123', pieceCount);
+			const result = await deleteVariantPieceAssets(
+				mockBucket as unknown as R2Bucket,
+				variantId,
+				2
+			);
 
-			// Should have been called twice (2 batches)
+			expect(result).toEqual({ success: false, failedKeys: keys });
+			expect(mockBucket.delete).toHaveBeenCalledWith(keys);
+			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('deleteFamilyCleanupAssets', () => {
+		it('deletes family original/thumbnail under familyId and pieces under each variant id', async () => {
+			const mockBucket = createMockR2Bucket();
+			const familyId = 'family-abc';
+			const variantIds = {
+				easy: 'variant-easy',
+				normal: 'variant-normal',
+				hard: 'variant-hard'
+			};
+			const pieceCounts = { easy: 2, normal: 1, hard: 1 };
+
+			await deleteFamilyCleanupAssets(
+				mockBucket as unknown as R2Bucket,
+				familyId,
+				variantIds,
+				pieceCounts
+			);
+
+			expect(mockBucket.delete).toHaveBeenCalled();
+			const deleteCall = mockBucket.delete.mock.calls[0][0] as string[];
+			expect(deleteCall).toContain(getFamilyOriginalKey(familyId));
+			expect(deleteCall).toContain(getFamilyThumbnailKey(familyId));
+			expect(deleteCall).not.toContain(getFamilyOriginalKey(variantIds.easy));
+			expect(deleteCall).not.toContain(getFamilyThumbnailKey(variantIds.easy));
+			expect(deleteCall).toContain(getPieceKey(variantIds.easy, 0));
+			expect(deleteCall).toContain(getPieceKey(variantIds.easy, 1));
+			expect(deleteCall).toContain(getPieceKey(variantIds.normal, 0));
+			expect(deleteCall).toContain(getPieceKey(variantIds.hard, 0));
+		});
+
+		it('should batch delete when total key count exceeds 1000', async () => {
+			const mockBucket = createMockR2Bucket();
+			const variantIds = {
+				easy: 'variant-easy',
+				normal: 'variant-normal',
+				hard: 'variant-hard'
+			};
+			const pieceCounts = { easy: 500, normal: 500, hard: 2 };
+
+			await deleteFamilyCleanupAssets(
+				mockBucket as unknown as R2Bucket,
+				'family-abc',
+				variantIds,
+				pieceCounts
+			);
+
 			expect(mockBucket.delete).toHaveBeenCalledTimes(2);
-
-			// First batch should have 1000 items
 			const firstBatch = mockBucket.delete.mock.calls[0][0] as string[];
 			expect(firstBatch.length).toBe(1000);
-
-			// Second batch should have remaining items (1502 total - 1000 = 502)
-			// 1500 pieces + original + thumbnail = 1502 total
 			const secondBatch = mockBucket.delete.mock.calls[1][0] as string[];
-			expect(secondBatch.length).toBe(502);
+			expect(secondBatch.length).toBe(4);
 		});
 	});
 });
 
+describe('listFamilies', () => {
+	it('scans the family: KV prefix (not puzzle:)', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(1);
+		const familyB = pageFamilyId(2);
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 2000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 1000 });
+		kv._store.set('puzzle:orphan-variant', JSON.stringify(makeVariantMeta('orphan-variant', 3000)));
+
+		const result = await listFamilies(kv as unknown as KVNamespace);
+
+		expect(kv.list).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'family:' }));
+		expect(result.families).toHaveLength(2);
+		expect(result.families.map((f) => f.id)).toEqual([familyA, familyB]);
+		expect(result.invalidCount).toBe(0);
+	});
+
+	it('handles paginated results, null entries, invalid metadata, and tied timestamps', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(60);
+		const familyB = pageFamilyId(61);
+		const nullKey = 'family:missing';
+		const invalidKey = 'family:invalid';
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 5000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 5000 });
+		kv._store.set(invalidKey, JSON.stringify({ id: 'invalid', name: 'Invalid' }));
+		kv.list.mockImplementation(async (options) => {
+			if (options?.cursor === 'page-2') {
+				return {
+					keys: [{ name: invalidKey }, { name: `family:${familyB}` }],
+					list_complete: true
+				};
+			}
+			return {
+				keys: [{ name: `family:${familyA}` }, { name: nullKey }],
+				list_complete: false,
+				cursor: 'page-2'
+			};
+		});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await listFamilies(kv as unknown as KVNamespace);
+
+		expect(kv.list).toHaveBeenCalledTimes(2);
+		expect(result.families.map((family) => family.id)).toEqual([familyA, familyB]);
+		expect(result.invalidCount).toBe(2);
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('keys returned null'));
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Invalid family metadata'),
+			expect.objectContaining({ id: 'invalid' })
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('2 invalid entries out of 4'));
+		consoleSpy.mockRestore();
+	});
+});
+
 describe('listPuzzlesPage', () => {
-	function makeReadyPuzzle(overrides: Partial<PuzzleMetadata> = {}): PuzzleMetadata {
-		const puzzle = {
-			id: 'p-default',
-			name: 'Test Puzzle',
-			pieceCount: 225,
-			gridCols: 15,
-			gridRows: 15,
-			imageWidth: 1000,
-			imageHeight: 800,
-			createdAt: 1000,
-			status: 'ready',
-			version: 0,
-			pieces: [],
-			...overrides
-		} as PuzzleMetadata;
-
-		if (puzzle.status === 'ready' && puzzle.pieces.length !== puzzle.pieceCount) {
-			puzzle.pieces = Array.from({ length: puzzle.pieceCount }, (_value, index) => ({
-				id: index,
-				puzzleId: puzzle.id,
-				correctX: index % puzzle.gridCols,
-				correctY: Math.floor(index / puzzle.gridCols),
-				edges: {
-					top: 'flat',
-					right: 'flat',
-					bottom: 'flat',
-					left: 'flat'
-				},
-				imagePath: `pieces/${index}.png`
-			}));
-		}
-
-		return puzzle;
-	}
-
-	it('returns empty result when no puzzles exist', async () => {
+	it('returns empty result when no families exist', async () => {
 		const kv = createMockKV();
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
 			offset: 0,
@@ -636,32 +909,21 @@ describe('listPuzzlesPage', () => {
 		expect(result).not.toHaveProperty('nextCursor');
 	});
 
-	it('excludes non-ready puzzles', async () => {
+	it('excludes non-ready families', async () => {
 		const kv = createMockKV();
-		kv._store.set('puzzle:r1', JSON.stringify(makeReadyPuzzle({ id: 'r1', status: 'ready' })));
-		kv._store.set(
-			'puzzle:p1',
-			JSON.stringify(
-				makeReadyPuzzle({
-					id: 'p1',
-					status: 'processing',
-					progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 0 }
-				} as unknown as PuzzleMetadata)
-			)
-		);
+		const readyId = pageFamilyId(1);
+		storeFamily(kv, { id: readyId, status: 'ready' });
+		storeFamily(kv, { id: pageFamilyId(2), status: 'processing' });
 
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
 		expect(result.total).toBe(1);
-		expect(result.puzzles[0].id).toBe('r1');
+		expect(result.puzzles[0].id).toBe(readyId);
 	});
 
 	it('returns correct page slice', async () => {
 		const kv = createMockKV();
 		for (let i = 0; i < 5; i++) {
-			kv._store.set(
-				`puzzle:p${i}`,
-				JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
-			);
+			storeFamily(kv, { id: pageFamilyId(i), name: 'Puzzle ' + i, createdAt: i });
 		}
 
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 2, limit: 2 });
@@ -673,11 +935,9 @@ describe('listPuzzlesPage', () => {
 
 	it('filters by q — case-insensitive substring on name', async () => {
 		const kv = createMockKV();
-		kv._store.set(
-			'puzzle:a',
-			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Mountain Forest' }))
-		);
-		kv._store.set('puzzle:b', JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Ocean View' })));
+		const forestId = pageFamilyId(10);
+		storeFamily(kv, { id: forestId, name: 'Mountain Forest' });
+		storeFamily(kv, { id: pageFamilyId(11), name: 'Ocean View' });
 
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
 			q: 'FOREST',
@@ -685,19 +945,14 @@ describe('listPuzzlesPage', () => {
 			limit: 20
 		});
 		expect(result.total).toBe(1);
-		expect(result.puzzles[0].id).toBe('a');
+		expect(result.puzzles[0].id).toBe(forestId);
 	});
 
 	it('filters by category', async () => {
 		const kv = createMockKV();
-		kv._store.set(
-			'puzzle:a',
-			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'A', category: 'Nature' }))
-		);
-		kv._store.set(
-			'puzzle:b',
-			JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'B', category: 'Art' }))
-		);
+		const natureId = pageFamilyId(20);
+		storeFamily(kv, { id: natureId, name: 'A', category: 'Nature' });
+		storeFamily(kv, { id: pageFamilyId(21), name: 'B', category: 'Art' });
 
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
 			category: 'Nature',
@@ -705,99 +960,14 @@ describe('listPuzzlesPage', () => {
 			limit: 20
 		});
 		expect(result.total).toBe(1);
-		expect(result.puzzles[0].id).toBe('a');
-	});
-
-	it('combines q and category filters', async () => {
-		const kv = createMockKV();
-		kv._store.set(
-			'puzzle:a',
-			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Mountain Forest', category: 'Nature' }))
-		);
-		kv._store.set(
-			'puzzle:b',
-			JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Mountain Art', category: 'Art' }))
-		);
-		kv._store.set(
-			'puzzle:c',
-			JSON.stringify(makeReadyPuzzle({ id: 'c', name: 'Ocean View', category: 'Nature' }))
-		);
-
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-			q: 'mountain',
-			category: 'Nature',
-			offset: 0,
-			limit: 20
-		});
-		expect(result.total).toBe(1);
-		expect(result.puzzles[0].id).toBe('a');
-	});
-
-	it('returns empty puzzles when offset exceeds total', async () => {
-		const kv = createMockKV();
-		kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1' })));
-
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 100, limit: 20 });
-		expect(result.total).toBe(1);
-		expect(result.puzzles).toHaveLength(0);
-	});
-
-	it('breaks ties deterministically by id when createdAt is equal', async () => {
-		const kv = createMockKV();
-		const sharedTimestamp = 5000;
-		kv._store.set(
-			'puzzle:p-beta',
-			JSON.stringify(makeReadyPuzzle({ id: 'p-beta', name: 'Beta', createdAt: sharedTimestamp }))
-		);
-		kv._store.set(
-			'puzzle:p-alpha',
-			JSON.stringify(makeReadyPuzzle({ id: 'p-alpha', name: 'Alpha', createdAt: sharedTimestamp }))
-		);
-		kv._store.set(
-			'puzzle:p-gamma',
-			JSON.stringify(makeReadyPuzzle({ id: 'p-gamma', name: 'Gamma', createdAt: sharedTimestamp }))
-		);
-
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
-		expect(result.total).toBe(3);
-		expect(result.puzzles[0].id).toBe('p-alpha');
-		expect(result.puzzles[1].id).toBe('p-beta');
-		expect(result.puzzles[2].id).toBe('p-gamma');
-	});
-
-	it('fetches all keys across multiple KV list pages', async () => {
-		const kv = createMockKV();
-		kv._store.set('puzzle:a', JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha' })));
-		kv._store.set('puzzle:b', JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Beta' })));
-
-		let callCount = 0;
-		kv.list.mockImplementation(async () => {
-			callCount++;
-			if (callCount === 1) {
-				return { keys: [{ name: 'puzzle:a' }], list_complete: false, cursor: 'cursor1' };
-			}
-			return { keys: [{ name: 'puzzle:b' }], list_complete: true, cursor: undefined };
-		});
-
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
-		expect(result.total).toBe(2);
-		expect(kv.list).toHaveBeenCalledTimes(2);
-		const ids = result.puzzles.map((p) => p.id).sort();
-		expect(ids).toEqual(['a', 'b']);
+		expect(result.puzzles[0].id).toBe(natureId);
 	});
 
 	it('caches the sorted index after first call and reads from cache on subsequent calls', async () => {
 		const kv = createMockKV();
-		kv._store.set(
-			'puzzle:a',
-			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
-		);
-		kv._store.set(
-			'puzzle:b',
-			JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Beta', createdAt: 200 }))
-		);
+		storeFamily(kv, { id: pageFamilyId(30), name: 'Alpha', createdAt: 100 });
+		storeFamily(kv, { id: pageFamilyId(31), name: 'Beta', createdAt: 200 });
 
-		// First call — should trigger full scan and write the cache
 		const result1 = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
 		expect(result1.total).toBe(2);
 		expect(kv.list).toHaveBeenCalledTimes(1);
@@ -807,280 +977,126 @@ describe('listPuzzlesPage', () => {
 			expect.objectContaining({ expirationTtl: 60 })
 		);
 
-		// Second call — should read from cache, no additional kv.list calls
 		const result2 = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 1 });
 		expect(result2.total).toBe(2);
 		expect(result2.puzzles).toHaveLength(1);
-		expect(kv.list).toHaveBeenCalledTimes(1); // still 1, not 2
+		expect(kv.list).toHaveBeenCalledTimes(1);
 	});
 
-	it('returns results even when cache write fails', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+	it('returns nextCursor when there are more items', async () => {
 		const kv = createMockKV();
-		kv._store.set(
-			'puzzle:a',
-			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
-		);
+		for (let i = 0; i < 3; i++) {
+			storeFamily(kv, { id: pageFamilyId(40 + i), createdAt: i });
+		}
 
-		// eslint-disable-next-line @typescript-eslint/no-unused-vars
-		kv.put.mockImplementation(async (key: string, _value?: string) => {
-			if (key === 'gallery:sorted-index') {
-				throw new Error('KV write quota exceeded');
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 2
+		});
+		expect(result.puzzles).toHaveLength(2);
+		expect(result.nextCursor).toBeDefined();
+	});
+
+	it('returns families when rebuilding a paginated index and its cache write fails', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(80);
+		const familyB = pageFamilyId(81);
+		const nullKey = 'family:missing-gallery';
+		const invalidKey = 'family:invalid-gallery';
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 2000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 1000 });
+		kv._store.set(invalidKey, JSON.stringify({ id: 'invalid-gallery', name: 'Invalid' }));
+		kv.list.mockImplementation(async (options) => {
+			if (options?.cursor === 'gallery-page-2') {
+				return {
+					keys: [{ name: invalidKey }, { name: `family:${familyB}` }],
+					list_complete: true
+				};
 			}
+			return {
+				keys: [{ name: `family:${familyA}` }, { name: nullKey }],
+				list_complete: false,
+				cursor: 'gallery-page-2'
+			};
+		});
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		kv.put.mockImplementation(async (key, value) => {
+			if (key === 'gallery:sorted-index') throw new Error('KV cache write failed');
+			kv._store.set(key, value);
+		});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20
 		});
 
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
-
-		expect(result.total).toBe(1);
-		expect(result.puzzles[0].id).toBe('a');
+		expect(kv.list).toHaveBeenCalledTimes(2);
+		expect(result.total).toBe(2);
+		expect(result.families.map((family) => family.id)).toEqual([familyA, familyB]);
+		expect(kv.put).toHaveBeenCalledWith(
+			'gallery:sorted-index',
+			expect.any(String),
+			expect.objectContaining({ expirationTtl: 60 })
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('buildGalleryIndex: 1 keys returned null')
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('buildGalleryIndex: 1 invalid metadata entries')
+		);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			'Failed to write gallery index cache:',
 			expect.any(Error)
 		);
-
 		consoleSpy.mockRestore();
 	});
+});
 
-	it('rebuilds cache when cached value is not an array', async () => {
+describe('Family summaries and variant references', () => {
+	it('mixes stored and synthesized variants for a processing family', async () => {
 		const kv = createMockKV();
-		kv._store.set('gallery:sorted-index', JSON.stringify({ corrupted: true })); // non-array JSON
-		kv._store.set(
-			'puzzle:a',
-			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
+		const family = makeReadyFamily({ id: TEST_FAMILY_ID, status: 'processing' });
+		const realVariant = {
+			...makeVariantMeta(family.variants.hard, 2000),
+			familyId: family.id,
+			status: 'processing' as const
+		};
+		kv._store.set(`puzzle:${realVariant.id}`, JSON.stringify(realVariant));
+
+		const summary = await enrichFamilySummary(kv as unknown as KVNamespace, family);
+
+		expect(summary.variants.hard).toEqual({
+			id: family.variants.hard,
+			difficulty: 'hard',
+			pieceCount: 100,
+			status: 'processing'
+		});
+		expect(summary.variants.normal).toEqual({
+			id: family.variants.normal,
+			difficulty: 'normal',
+			pieceCount: 49,
+			status: 'processing'
+		});
+		expect(summary.variants.easy).toEqual({
+			id: family.variants.easy,
+			difficulty: 'easy',
+			pieceCount: 16,
+			status: 'processing'
+		});
+	});
+
+	it('resolves a stored variant to its family original and unknown variants to null', async () => {
+		const kv = createMockKV();
+		const variant = makeVariantMeta(TEST_VARIANT_ID, 1000);
+		kv._store.set(`puzzle:${variant.id}`, JSON.stringify(variant));
+
+		expect(await resolveVariantReferenceKey(kv as unknown as KVNamespace, TEST_VARIANT_ID)).toBe(
+			`families/${TEST_FAMILY_ID}/original`
 		);
-
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
-		expect(result.total).toBe(1);
-		expect(kv.list).toHaveBeenCalledTimes(1); // fell through to full scan
-	});
-
-	it('logs a console error for null KV entries and excludes them from results', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const kv = createMockKV();
-		kv._store.set('puzzle:good', JSON.stringify(makeReadyPuzzle({ id: 'good' })));
-
-		// Force kv.get to return null for puzzle:missing even though list returns its key
-		const originalGet = kv.get.getMockImplementation() ?? (async () => null);
-		kv.get.mockImplementation(async (key: string, type?: string) => {
-			if (key === 'puzzle:missing') return null;
-			return originalGet(key, type);
-		});
-		kv._store.set('puzzle:missing', 'placeholder'); // ensures list sees the key
-
-		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
-
-		expect(result.total).toBe(1);
-		expect(result.puzzles[0].id).toBe('good');
-		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('null'));
-
-		consoleSpy.mockRestore();
-	});
-
-	describe('cursor-based pagination', () => {
-		it('returns nextCursor when there are more items', async () => {
-			const kv = createMockKV();
-			for (let i = 0; i < 5; i++) {
-				kv._store.set(
-					`puzzle:p${i}`,
-					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
-				);
-			}
-
-			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 2
-			});
-			expect(result.puzzles).toHaveLength(2);
-			expect(result.nextCursor).toBeDefined();
-			expect(result.total).toBe(5);
-		});
-
-		it('does not return nextCursor on last page', async () => {
-			const kv = createMockKV();
-			kv._store.set('puzzle:p0', JSON.stringify(makeReadyPuzzle({ id: 'p0', createdAt: 0 })));
-			kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1', createdAt: 1 })));
-
-			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 20
-			});
-			expect(result.puzzles).toHaveLength(2);
-			expect(result).not.toHaveProperty('nextCursor');
-		});
-
-		it('does not return nextCursor when result count equals limit', async () => {
-			const kv = createMockKV();
-			// Exactly 3 items with limit=3 — no next page should be signaled
-			for (let i = 0; i < 3; i++) {
-				kv._store.set(
-					`puzzle:p${i}`,
-					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
-				);
-			}
-
-			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 3
-			});
-			expect(result.puzzles).toHaveLength(3);
-			expect(result).not.toHaveProperty('nextCursor');
-		});
-
-		it('fetches next page using cursor', async () => {
-			const kv = createMockKV();
-			for (let i = 0; i < 5; i++) {
-				kv._store.set(
-					`puzzle:p${i}`,
-					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
-				);
-			}
-
-			// Page 1
-			const page1 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 2
-			});
-			expect(page1.puzzles).toHaveLength(2);
-			expect(page1.nextCursor).toBeDefined();
-
-			// Page 2 using cursor
-			const page2 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 2,
-				cursor: page1.nextCursor
-			});
-			expect(page2.puzzles).toHaveLength(2);
-			// Should not duplicate any items from page 1
-			const page1Ids = new Set(page1.puzzles.map((p) => p.id));
-			for (const p of page2.puzzles) {
-				expect(page1Ids.has(p.id)).toBe(false);
-			}
-
-			// Page 3 using cursor
-			const page3 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 2,
-				cursor: page2.nextCursor
-			});
-			expect(page3.puzzles).toHaveLength(1);
-			expect(page3).not.toHaveProperty('nextCursor');
-		});
-
-		it('cursor works with category filter', async () => {
-			const kv = createMockKV();
-			kv._store.set(
-				'puzzle:a',
-				JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'A', category: 'Nature', createdAt: 100 }))
-			);
-			kv._store.set(
-				'puzzle:b',
-				JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'B', category: 'Nature', createdAt: 200 }))
-			);
-			kv._store.set(
-				'puzzle:c',
-				JSON.stringify(makeReadyPuzzle({ id: 'c', name: 'C', category: 'Art', createdAt: 300 }))
-			);
-
-			const page1 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 1,
-				category: 'Nature'
-			});
-			expect(page1.puzzles).toHaveLength(1);
-			expect(page1.puzzles[0].id).toBe('b'); // newest first
-
-			const page2 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 1,
-				category: 'Nature',
-				cursor: page1.nextCursor
-			});
-			expect(page2.puzzles).toHaveLength(1);
-			expect(page2.puzzles[0].id).toBe('a');
-		});
-
-		it('cursor works with search query', async () => {
-			const kv = createMockKV();
-			kv._store.set(
-				'puzzle:a',
-				JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Mountain Forest', createdAt: 100 }))
-			);
-			kv._store.set(
-				'puzzle:b',
-				JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Mountain Lake', createdAt: 200 }))
-			);
-			kv._store.set(
-				'puzzle:c',
-				JSON.stringify(makeReadyPuzzle({ id: 'c', name: 'Ocean View', createdAt: 300 }))
-			);
-
-			const page1 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 1,
-				q: 'mountain'
-			});
-			expect(page1.puzzles[0].id).toBe('b');
-
-			const page2 = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 1,
-				q: 'mountain',
-				cursor: page1.nextCursor
-			});
-			expect(page2.puzzles[0].id).toBe('a');
-		});
-
-		it('treats invalid cursor as offset 0', async () => {
-			const kv = createMockKV();
-			kv._store.set('puzzle:a', JSON.stringify(makeReadyPuzzle({ id: 'a', createdAt: 100 })));
-
-			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 20,
-				cursor: 'not-valid-base64!!!'
-			});
-			expect(result.puzzles).toHaveLength(1);
-		});
-
-		it('cursor tokens are URL-safe (no + / = characters)', async () => {
-			const kv = createMockKV();
-			for (let i = 0; i < 5; i++) {
-				kv._store.set(
-					`puzzle:p${i}`,
-					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
-				);
-			}
-
-			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 2
-			});
-			expect(result.nextCursor).toBeDefined();
-			// Cursor should be Base64URL-encoded: no +, /, or = characters
-			expect(result.nextCursor).not.toMatch(/[+/=]/);
-		});
-
-		it('decodes legacy standard-Base64 cursors for backward compatibility', async () => {
-			const kv = createMockKV();
-			for (let i = 0; i < 5; i++) {
-				kv._store.set(
-					`puzzle:p${i}`,
-					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
-				);
-			}
-
-			// Manually create a standard Base64 cursor (old format)
-			const legacyCursor = btoa(JSON.stringify({ createdAt: 3, id: 'p3' }));
-
-			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
-				offset: 0,
-				limit: 20,
-				cursor: legacyCursor
-			});
-			// Cursor points after p3 (createdAt=3). In DESC order, remaining are p2, p1, p0.
-			expect(result.puzzles).toHaveLength(3);
-			expect(result.puzzles.map((p) => p.id)).toEqual(['p2', 'p1', 'p0']);
-		});
+		expect(
+			await resolveVariantReferenceKey(kv as unknown as KVNamespace, 'unknown-variant')
+		).toBeNull();
 	});
 });
 
@@ -1110,37 +1126,50 @@ describe('invalidateGalleryIndex', () => {
 	});
 });
 
+function makeCleanupRecord(
+	familyId = 'f1e4567-e89b-42d3-a456-426614174000',
+	overrides: Partial<{
+		variantIds: Record<'easy' | 'normal' | 'hard', string>;
+		pieceCounts: Record<'easy' | 'normal' | 'hard', number>;
+		idempotencyKey: string;
+		createdAt: number;
+	}> = {}
+) {
+	return {
+		familyId,
+		variantIds: overrides.variantIds ?? FAMILY_VARIANT_IDS,
+		pieceCounts: overrides.pieceCounts ?? { easy: 16, normal: 49, hard: 100 },
+		createdAt: overrides.createdAt ?? 1700000000000,
+		...(overrides.idempotencyKey ? { idempotencyKey: overrides.idempotencyKey } : {})
+	};
+}
+
 describe('cleanup records', () => {
 	it('writeCleanupRecord writes JSON to the cleanup: prefix key', async () => {
 		const kv = createMockKV();
-		const record = { puzzleId: 'p-1', pieceCount: 50, createdAt: 1700000000000 };
+		const record = makeCleanupRecord();
 		await writeCleanupRecord(kv as unknown as KVNamespace, record);
-		expect(kv.put).toHaveBeenCalledWith('cleanup:p-1', JSON.stringify(record));
+		expect(kv.put).toHaveBeenCalledWith(`cleanup:${record.familyId}`, JSON.stringify(record));
 	});
 
 	it('writeCleanupRecord writes with idempotencyKey when provided', async () => {
 		const kv = createMockKV();
-		const record = {
-			puzzleId: 'p-2',
-			pieceCount: 100,
-			idempotencyKey: 'key-1',
-			createdAt: 1700000000000
-		};
+		const record = makeCleanupRecord('f2e4567-e89b-42d3-a456-426614174001', {
+			idempotencyKey: 'key-1'
+		});
 		await writeCleanupRecord(kv as unknown as KVNamespace, record);
-		expect(kv.put).toHaveBeenCalledWith('cleanup:p-2', JSON.stringify(record));
+		expect(kv.put).toHaveBeenCalledWith(`cleanup:${record.familyId}`, JSON.stringify(record));
 	});
 
 	it('listCleanupRecords returns all cleanup records', async () => {
 		const kv = createMockKV();
-		const record1 = { puzzleId: 'p-1', pieceCount: 50, createdAt: 1700000000000 };
-		const record2 = {
-			puzzleId: 'p-2',
-			pieceCount: 100,
+		const record1 = makeCleanupRecord('f1e4567-e89b-42d3-a456-426614174010');
+		const record2 = makeCleanupRecord('f2e4567-e89b-42d3-a456-426614174011', {
 			idempotencyKey: 'key-1',
 			createdAt: 1700000000001
-		};
-		kv._store.set('cleanup:p-1', JSON.stringify(record1));
-		kv._store.set('cleanup:p-2', JSON.stringify(record2));
+		});
+		kv._store.set(`cleanup:${record1.familyId}`, JSON.stringify(record1));
+		kv._store.set(`cleanup:${record2.familyId}`, JSON.stringify(record2));
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(2);
@@ -1148,68 +1177,90 @@ describe('cleanup records', () => {
 		expect(records).toContainEqual(record2);
 	});
 
-	it('listCleanupRecords skips entries without puzzleId', async () => {
+	it('listCleanupRecords skips entries without familyId', async () => {
 		const kv = createMockKV();
-		kv._store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+		const good = makeCleanupRecord();
+		kv._store.set(`cleanup:${good.familyId}`, JSON.stringify(good));
 		kv._store.set('cleanup:bad', JSON.stringify({ foo: 'bar' }));
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(1);
-		expect(records[0].puzzleId).toBe('p-1');
+		expect(records[0].familyId).toBe(good.familyId);
 	});
 
-	it('listCleanupRecords rejects non-string puzzleId (number/object/null)', async () => {
+	it('listCleanupRecords rejects missing variant IDs or invalid familyId', async () => {
 		const kv = createMockKV();
+		const good = makeCleanupRecord('a1e4567-e89b-42d3-a456-426614174020');
+		kv._store.set(`cleanup:${good.familyId}`, JSON.stringify(good));
 		kv._store.set(
-			'cleanup:good',
-			JSON.stringify({ puzzleId: 'good', pieceCount: 50, createdAt: 0 })
+			'cleanup:num',
+			JSON.stringify({
+				familyId: 123,
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
-		// Numeric puzzleId — must be rejected (would flow into asset deletion).
-		kv._store.set('cleanup:num', JSON.stringify({ puzzleId: 123, pieceCount: 50, createdAt: 0 }));
-		// Object puzzleId — must be rejected.
 		kv._store.set(
-			'cleanup:obj',
-			JSON.stringify({ puzzleId: { x: 1 }, pieceCount: 50, createdAt: 0 })
+			'cleanup:partial',
+			JSON.stringify({
+				familyId: 'b1e4567-e89b-42d3-a456-426614174021',
+				variantIds: { easy: FAMILY_VARIANT_IDS.easy },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
-		// Empty-string puzzleId — must be rejected.
-		kv._store.set('cleanup:empty', JSON.stringify({ puzzleId: '', pieceCount: 50, createdAt: 0 }));
+		kv._store.set(
+			'cleanup:empty',
+			JSON.stringify({
+				familyId: '',
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: 0
+			})
+		);
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(1);
-		expect(records[0].puzzleId).toBe('good');
+		expect(records[0].familyId).toBe(good.familyId);
 	});
 
-	it('listCleanupRecords rejects non-finite pieceCount (NaN/Infinity/string)', async () => {
+	it('listCleanupRecords rejects non-finite pieceCounts per difficulty', async () => {
 		const kv = createMockKV();
-		kv._store.set(
-			'cleanup:good',
-			JSON.stringify({ puzzleId: 'good', pieceCount: 50, createdAt: 0 })
-		);
-		// NaN pieceCount — must be rejected.
+		const good = makeCleanupRecord('c1e4567-e89b-42d3-a456-426614174030');
+		kv._store.set(`cleanup:${good.familyId}`, JSON.stringify(good));
 		kv._store.set(
 			'cleanup:nan',
-			JSON.stringify({ puzzleId: 'nan', pieceCount: NaN, createdAt: 0 })
+			JSON.stringify({
+				familyId: 'd1e4567-e89b-42d3-a456-426614174031',
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: NaN, normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
-		// Infinity pieceCount — must be rejected.
-		kv._store.set(
-			'cleanup:inf',
-			JSON.stringify({ puzzleId: 'inf', pieceCount: Infinity, createdAt: 0 })
-		);
-		// String pieceCount — must be rejected (typeof check).
 		kv._store.set(
 			'cleanup:str',
-			JSON.stringify({ puzzleId: 'str', pieceCount: '50', createdAt: 0 })
+			JSON.stringify({
+				familyId: 'e1e4567-e89b-42d3-a456-426614174032',
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: '16', normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(1);
-		expect(records[0].puzzleId).toBe('good');
+		expect(records[0].familyId).toBe(good.familyId);
 	});
 
 	it('listCleanupRecords handles paginated KV list results', async () => {
+		const record1 = makeCleanupRecord('f1e4567-e89b-42d3-a456-426614174040');
+		const record2 = makeCleanupRecord('f2e4567-e89b-42d3-a456-426614174041', {
+			createdAt: 1
+		});
 		const store = new Map<string, string>();
-		store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
-		store.set('cleanup:p-2', JSON.stringify({ puzzleId: 'p-2', pieceCount: 60, createdAt: 1 }));
+		store.set(`cleanup:${record1.familyId}`, JSON.stringify(record1));
+		store.set(`cleanup:${record2.familyId}`, JSON.stringify(record2));
 
 		let listCall = 0;
 		const kv = {
@@ -1227,12 +1278,12 @@ describe('cleanup records', () => {
 					listCall++;
 					if (listCall === 1) {
 						return {
-							keys: [{ name: 'cleanup:p-1' }],
+							keys: [{ name: `cleanup:${record1.familyId}` }],
 							list_complete: false,
 							cursor: 'next-page'
 						};
 					}
-					return { keys: [{ name: 'cleanup:p-2' }], list_complete: true };
+					return { keys: [{ name: `cleanup:${record2.familyId}` }], list_complete: true };
 				}
 			)
 		} as unknown as KVNamespace;
@@ -1242,50 +1293,47 @@ describe('cleanup records', () => {
 		expect(kv.list).toHaveBeenCalledTimes(2);
 	});
 
+	it('listCleanupRecords filters a record with a non-string idempotency key', async () => {
+		const kv = createMockKV();
+		const invalidRecord = makeCleanupRecord('f3e4567-e89b-42d3-a456-426614174050', {
+			idempotencyKey: 'key-to-corrupt'
+		});
+		const validRecord = makeCleanupRecord('f4e4567-e89b-42d3-a456-426614174051');
+		await writeCleanupRecord(kv as unknown as KVNamespace, invalidRecord);
+		await writeCleanupRecord(kv as unknown as KVNamespace, validRecord);
+
+		const stored = JSON.parse(kv._store.get(`cleanup:${invalidRecord.familyId}`) ?? '{}') as {
+			idempotencyKey?: unknown;
+		};
+		stored.idempotencyKey = 42;
+		kv._store.set(`cleanup:${invalidRecord.familyId}`, JSON.stringify(stored));
+
+		const records = await listCleanupRecords(kv as unknown as KVNamespace);
+
+		expect(records).toEqual([validRecord]);
+	});
+
 	it('deleteCleanupRecord deletes the cleanup: prefix key', async () => {
 		const kv = createMockKV();
-		kv._store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+		const record = makeCleanupRecord();
+		kv._store.set(`cleanup:${record.familyId}`, JSON.stringify(record));
 
-		await deleteCleanupRecord(kv as unknown as KVNamespace, 'p-1');
-		expect(kv.delete).toHaveBeenCalledWith('cleanup:p-1');
-		expect(kv._store.has('cleanup:p-1')).toBe(false);
+		await deleteCleanupRecord(kv as unknown as KVNamespace, record.familyId);
+		expect(kv.delete).toHaveBeenCalledWith(`cleanup:${record.familyId}`);
+		expect(kv._store.has(`cleanup:${record.familyId}`)).toBe(false);
 	});
 });
 
 describe('listPuzzlesPage — cursor fallback', () => {
-	function makeReadyPuzzle(overrides: Partial<PuzzleMetadata> = {}): PuzzleMetadata {
-		const puzzle = {
-			id: 'p-default',
-			name: 'Test Puzzle',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 1000,
-			imageHeight: 800,
-			createdAt: 1000,
-			status: 'ready',
-			version: 0,
-			pieces: new Array(4).fill({})
-		} as PuzzleMetadata;
-		return { ...puzzle, ...overrides } as PuzzleMetadata;
-	}
-
 	it('falls back to isAfterCursor when cursor item is not in the filtered set', async () => {
-		// Cursor points to a puzzle that was deleted or changed status, so
-		// findIndex returns -1. The code falls back to filtering with
-		// isAfterCursor.
 		const kv = createMockKV();
-		// Three ready puzzles; cursor points to a deleted one between p1 and p2.
-		kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1', createdAt: 3000 })));
-		kv._store.set('puzzle:p2', JSON.stringify(makeReadyPuzzle({ id: 'p2', createdAt: 2000 })));
-		kv._store.set('puzzle:p3', JSON.stringify(makeReadyPuzzle({ id: 'p3', createdAt: 1000 })));
+		const p1 = pageFamilyId(50);
+		const p2 = pageFamilyId(51);
+		const p3 = pageFamilyId(52);
+		storeFamily(kv, { id: p1, createdAt: 3000 });
+		storeFamily(kv, { id: p2, createdAt: 2000 });
+		storeFamily(kv, { id: p3, createdAt: 1000 });
 
-		// Cursor for a deleted puzzle at createdAt=2500, id='deleted-mid'
-		// (between p1 and p2). The cursor item is not in the filtered set,
-		// so findIndex returns -1 and the fallback filters with isAfterCursor.
-		// isAfterCursor returns true for items strictly after the cursor:
-		// p2 (createdAt=2000 < 2500 → true) and p3 (createdAt=1000 < 2500 → true).
-		// p1 (createdAt=3000 > 2500 → false, comes before cursor).
 		const cursor = btoa(JSON.stringify({ createdAt: 2500, id: 'deleted-mid' }));
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
 			offset: 0,
@@ -1294,40 +1342,136 @@ describe('listPuzzlesPage — cursor fallback', () => {
 		});
 
 		const ids = result.puzzles.map((p) => p.id);
-		expect(ids).toContain('p2');
-		expect(ids).toContain('p3');
-		expect(ids).not.toContain('p1');
+		expect(ids).toContain(p2);
+		expect(ids).toContain(p3);
+		expect(ids).not.toContain(p1);
+	});
+});
+
+describe('listFamiliesPage — cursor handling', () => {
+	it('continues after a valid cursor for an existing family', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(90);
+		const middleId = pageFamilyId(91);
+		const lastId = pageFamilyId(92);
+		storeFamily(kv, { id: firstId, createdAt: 5000 });
+		storeFamily(kv, { id: middleId, createdAt: 5000 });
+		storeFamily(kv, { id: lastId, createdAt: 5000 });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		const cursor = btoa(JSON.stringify({ createdAt: 5000, id: middleId }))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20,
+			cursor
+		});
+
+		expect(result.total).toBe(3);
+		expect(result.families.map((family) => family.id)).toEqual([lastId]);
+	});
+
+	it('uses the ID tie-break when a same-time cursor is filtered out', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(93);
+		const cursorId = pageFamilyId(94);
+		const lastId = pageFamilyId(95);
+		storeFamily(kv, { id: firstId, createdAt: 6000, status: 'ready' });
+		storeFamily(kv, { id: cursorId, createdAt: 6000, status: 'processing' });
+		storeFamily(kv, { id: lastId, createdAt: 6000, status: 'ready' });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		const cursor = btoa(JSON.stringify({ createdAt: 6000, id: cursorId }))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20,
+			cursor
+		});
+
+		expect(result.total).toBe(2);
+		expect(result.families.map((family) => family.id)).toEqual([lastId]);
+	});
+
+	it('treats a cursor with an invalid JSON shape as no cursor', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(96);
+		storeFamily(kv, { id: firstId, createdAt: 2000 });
+		storeFamily(kv, { id: pageFamilyId(97), createdAt: 1000 });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		const cursor = btoa('{"x":12}').replace(/=+$/, '');
+		expect(cursor.length % 4).toBe(3);
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 1,
+			cursor
+		});
+
+		expect(result.families.map((family) => family.id)).toEqual([firstId]);
+	});
+
+	it('treats an undecodable cursor as no cursor', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(98);
+		storeFamily(kv, { id: firstId, createdAt: 2000 });
+		storeFamily(kv, { id: pageFamilyId(99), createdAt: 1000 });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 1,
+			cursor: 'not-base64!'
+		});
+
+		expect(result.families.map((family) => family.id)).toEqual([firstId]);
 	});
 });
 
 describe('listPuzzles — invalid metadata in gallery index', () => {
-	it('logs invalid metadata entries during buildGalleryIndex', async () => {
+	it('logs invalid metadata entries during listPuzzles scan', async () => {
 		const kv = createMockKV();
-		// One valid puzzle (pieces array must match pieceCount for 'ready' status)
-		kv._store.set(
-			'puzzle:valid',
-			JSON.stringify({
-				id: 'valid',
-				name: 'Valid',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
-				imageWidth: 100,
-				imageHeight: 100,
-				createdAt: 1000,
-				status: 'ready',
-				version: 0,
-				pieces: new Array(4).fill({})
-			})
-		);
-		// One invalid puzzle (missing required fields)
+		const validId = '823e4567-e89b-42d3-a456-426614174060';
+		const valid = makeVariantMeta(validId, 1000);
+		kv._store.set(`puzzle:${validId}`, JSON.stringify(valid));
 		kv._store.set('puzzle:invalid', JSON.stringify({ id: 'invalid', foo: 'bar' }));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const result = await listPuzzles(kv as unknown as KVNamespace);
 		expect(result.puzzles).toHaveLength(1);
-		expect(result.puzzles[0].id).toBe('valid');
+		expect(result.puzzles[0].id).toBe(validId);
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('invalid entries'));
 		consoleSpy.mockRestore();
+	});
+});
+
+describe('buildFamilyMetadata', () => {
+	it('includes idempotencyKey on the family record when provided', () => {
+		const family = buildFamilyMetadata({
+			familyId: TEST_FAMILY_ID,
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			createdAt: 1000,
+			variantIds: FAMILY_VARIANT_IDS,
+			idempotencyKey: 'upload-key-1'
+		});
+
+		expect(family.idempotencyKey).toBe('upload-key-1');
+	});
+
+	it('omits idempotencyKey when not provided', () => {
+		const family = buildFamilyMetadata({
+			familyId: TEST_FAMILY_ID,
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			createdAt: 1000,
+			variantIds: FAMILY_VARIANT_IDS
+		});
+
+		expect('idempotencyKey' in family).toBe(false);
 	});
 });

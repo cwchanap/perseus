@@ -2,9 +2,9 @@
 /**
  * Coverage tests for admin.worker.ts best-effort D1 ownership catch blocks:
  * - getWorkerDb throwing on the ownership insert (line 612)
- * - deletePuzzleOwnership rejecting during missing-workflow-binding cleanup (line 633)
+ * - deletePuzzleFamilyOwnership rejecting during missing-workflow-binding cleanup (line 633)
  * - getWorkerDb throwing during missing-workflow-binding cleanup (line 636)
- * - deletePuzzleOwnership rejecting during workflow-trigger-failure cleanup (line 671)
+ * - deletePuzzleFamilyOwnership rejecting during workflow-trigger-failure cleanup (line 671)
  * - getWorkerDb throwing during workflow-trigger-failure cleanup (line 674)
  * - getWorkerDbContext throwing before committed DELETE source mutation
  * - required completion cleanup rejecting after DELETE source mutation
@@ -20,24 +20,40 @@ const dbContextMock = vi.hoisted(() => ({
 		write: vi.fn(),
 		isPuzzleTombstoned: vi.fn().mockResolvedValue(false),
 		beginPuzzleDeletion: vi.fn(async () => undefined),
-		finishPuzzleDeletion: vi.fn(async () => undefined)
+		finishPuzzleDeletion: vi.fn(async () => undefined),
+		finishFamilyFirstClears: vi.fn(async () => undefined)
 	}
 }));
 
-vi.mock('../../services/storage.worker', () => ({
-	getPuzzle: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
-	createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
-	uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
-	deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
-	originalImageExists: vi.fn().mockResolvedValue(false),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	listPuzzles: vi.fn(),
-	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
-	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
-	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
+		deletePuzzleMetadata: vi
+			.fn()
+			.mockResolvedValue({ success: true })
+			.mockResolvedValue({ success: true }),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined).mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined).mockResolvedValue(undefined),
+		deleteOriginalImage: vi
+			.fn()
+			.mockResolvedValue({ success: true })
+			.mockResolvedValue({ success: true }),
+		originalImageExists: vi.fn().mockResolvedValue(false),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
+		deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => dbContextMock.db),
@@ -50,9 +66,10 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
+import { makeFamilyMetadata } from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleFamilyOwnership } from '@perseus/shared';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
@@ -72,7 +89,6 @@ const baseEnv = {
 function buildFormData(): FormData {
 	const formData = new FormData();
 	formData.append('name', 'Coverage Puzzle');
-	formData.append('pieceCount', '225');
 	const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 	formData.append('image', blob, 'test.png');
 	return formData;
@@ -87,7 +103,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		// Restore default non-throwing getWorkerDb between tests.
 		vi.mocked(getWorkerDb).mockImplementation(() => dbContextMock.db as any);
 		vi.mocked(getWorkerDbContext).mockImplementation(() => dbContextMock as any);
-		vi.mocked(deletePuzzleOwnership).mockResolvedValue(undefined as any);
+		vi.mocked(deletePuzzleFamilyOwnership).mockResolvedValue(undefined as any);
 		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -104,7 +120,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			...baseEnv,
 			PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) }
 		};
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -117,12 +133,12 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 	});
 
-	it('logs when deletePuzzleOwnership rejects during missing-workflow-binding cleanup (line 633)', async () => {
+	it('logs when deletePuzzleFamilyOwnership rejects during missing-workflow-binding cleanup (line 633)', async () => {
 		// No PUZZLE_WORKFLOW binding → the missing-binding branch runs and
 		// attempts to clean up the ownership row just inserted.
-		vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down') as any);
+		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down') as any);
 		const mockEnv = { ...baseEnv };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -145,7 +161,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			return {} as any;
 		});
 		const mockEnv = { ...baseEnv };
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -158,8 +174,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 	});
 
-	it('logs when deletePuzzleOwnership rejects during workflow-trigger-failure cleanup (line 671)', async () => {
-		vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down') as any);
+	it('logs when deletePuzzleFamilyOwnership rejects during workflow-trigger-failure cleanup (line 671)', async () => {
+		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down') as any);
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
@@ -171,7 +187,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 				)
 			}
 		};
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -202,7 +218,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 				)
 			}
 		};
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()
@@ -219,20 +235,15 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		vi.mocked(getWorkerDbContext).mockImplementation(() => {
 			throw new Error('DB init failed');
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: VALID_UUID,
-			name: 'Ready Puzzle',
-			status: 'ready',
-			pieceCount: 4
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${VALID_UUID}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -244,19 +255,14 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 		expect(storage.writeCleanupRecord).toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 	});
 
 	it('returns 500 and retains the record when required completion cleanup rejects', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: VALID_UUID,
-			name: 'Ready Puzzle',
-			status: 'ready',
-			pieceCount: 4
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
@@ -265,7 +271,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+		const req = new Request(`http://localhost/puzzle-family-delete/${VALID_UUID}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -275,8 +281,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			expect.stringContaining(`Failed to finish fenced cleanup for ${VALID_UUID}`),
 			expect.any(Error)
 		);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, VALID_UUID);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });

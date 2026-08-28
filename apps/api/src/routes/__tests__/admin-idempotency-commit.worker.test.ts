@@ -1,21 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn(),
-	puzzleExists: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		failIdempotencyKey: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
+		originalImageExists: vi.fn(),
+		puzzleExists: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -38,9 +47,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
@@ -78,9 +87,8 @@ function createEnv(workflow = createWorkflow()) {
 function createRequest(idempotencyKey: string): Request {
 	const formData = new FormData();
 	formData.append('name', 'Commit Puzzle');
-	formData.append('pieceCount', '225');
 	formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'puzzle.png');
-	return new Request('http://localhost/puzzles', {
+	return new Request('http://localhost/puzzle-families', {
 		method: 'POST',
 		headers: {
 			cookie: 'session=valid.token',
@@ -119,13 +127,20 @@ describe('Admin Worker idempotency commit handling', () => {
 	it('returns an existing processing puzzle when its pending workflow is alive', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			puzzleId: 'existing-puzzle',
+			familyId: 'existing-puzzle',
 			status: 'pending'
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
+		vi.mocked(storage.getFamily).mockResolvedValue({
 			id: 'existing-puzzle',
+			name: 'Test Family',
+			aspectRatio: '1:1',
 			status: 'processing',
-			idempotencyKey: 'alive-key'
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
 		} as any);
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -149,11 +164,41 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
+	it('returns 409 when committing the alive pending reservation fails', async () => {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: true,
+			familyId: 'existing-puzzle',
+			status: 'pending'
+		});
+		vi.mocked(storage.getFamily).mockResolvedValue({
+			id: 'existing-puzzle',
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			status: 'processing',
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
+		} as any);
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValueOnce(new Error('DO write failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const workflow = createWorkflow('running');
+
+		const response = await admin.fetch(createRequest('alive-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = (await response.json()) as any;
+		expect(body.message).toBe('Idempotency-Key in flight; reservation commit failed, retry');
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
 	it('returns 500 after all post-create idempotency commit retries fail transiently', async () => {
 		vi.useFakeTimers();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'new-puzzle',
+			familyId: 'new-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
@@ -170,12 +215,41 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 		expect(workflow.create).toHaveBeenCalledWith({
 			id: 'new-puzzle',
-			params: { puzzleId: 'new-puzzle' }
+			params: { familyId: 'new-puzzle' }
 		});
 		// Transient failure: retain workflow and assets for client retry
 		expect(workflow.get).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns 500 from orphan cleanup when a commit conflict winner has no family metadata', async () => {
+		vi.useFakeTimers();
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			familyId: 'new-puzzle',
+			status: 'pending'
+		});
+		// Conflict-shaped failure: the reservation was reclaimed by a retry,
+		// so the route attempts orphaned-workflow cleanup. The family KV row
+		// is missing (already reaped), so cleanup aborts with 500.
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(
+			new Error('Idempotency key owned by another puzzle')
+		);
+		vi.mocked(storage.getFamily).mockResolvedValue(null);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const workflow = createWorkflow();
+
+		const responsePromise = admin.fetch(createRequest('conflict-key'), createEnv(workflow) as any);
+		await vi.runAllTimersAsync();
+		const response = await responsePromise;
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as any;
+		expect(body.message).toContain(
+			'Idempotency reservation was reclaimed by a retry; family metadata missing'
+		);
+		expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 	});
 
 	it('fails (not releases) the reservation when an error reaches the outer catch after workflow.create() succeeds', async () => {
@@ -186,7 +260,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		// workflow alongside the already-started one.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'guard-puzzle',
+			familyId: 'guard-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));

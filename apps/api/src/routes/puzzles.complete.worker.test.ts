@@ -8,6 +8,7 @@ const { workerDb, completionWrites } = vi.hoisted(() => ({
 		write: vi.fn(),
 		beginPuzzleDeletion: vi.fn(),
 		finishPuzzleDeletion: vi.fn(),
+		finishFamilyFirstClears: vi.fn(),
 		isPuzzleTombstoned: vi.fn()
 	} as unknown as CompletionWriteExecutor
 }));
@@ -25,23 +26,34 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			status: 'recorded' as const,
 			completedAt: 100
 		})),
-		// Stub the backfill so it doesn't hit the mock DB ({}). The route makes
-		// the completion decision first, then backfills only non-tombstoned responses.
-		ensurePuzzleOwnership: vi.fn(async () => {}),
+		ensurePuzzleFamilyOwnership: vi.fn(async () => {}),
 		SYSTEM_OWNER_ID: actual.SYSTEM_OWNER_ID
 	};
 });
 
-// The route only checks truthiness of the getPuzzle result; a minimal stand-in
-// (cast to satisfy the PuzzleMetadata | null return type) is sufficient.
 vi.mock('../services/storage.worker', () => ({
 	getPuzzle: vi.fn().mockResolvedValue({
 		id: 'pz',
+		familyId: '323e4567-e89b-42d3-a456-426614174001',
+		difficulty: 'easy',
 		name: 'Test Puzzle',
 		pieceCount: 4,
+		aspectRatio: '4:3',
 		createdAt: 100,
 		status: 'ready'
-	} as never)
+	} as never),
+	getFamily: vi.fn().mockResolvedValue({
+		id: '323e4567-e89b-42d3-a456-426614174001',
+		name: 'Test Family',
+		aspectRatio: '4:3',
+		status: 'ready',
+		createdAt: 100,
+		variants: {
+			easy: 'pz',
+			normal: 'pz-normal',
+			hard: 'pz-hard'
+		}
+	})
 }));
 
 vi.mock('../services/player-auth.worker', () => ({
@@ -52,8 +64,12 @@ import complete from '../routes/puzzles.complete.worker';
 import * as dbModule from '../db.worker';
 import * as playerAuth from '../services/player-auth.worker';
 import * as storage from '../services/storage.worker';
-import { recordVersionedCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
-import type { RecordPuzzleCompletionV1 } from '@perseus/types';
+import {
+	recordVersionedCompletion,
+	ensurePuzzleFamilyOwnership,
+	SYSTEM_OWNER_ID
+} from '@perseus/shared';
+import type { RecordPuzzleCompletionV2 } from '@perseus/types';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -72,46 +88,53 @@ const TEST_PLAYER: PlayerSessionRecord = {
 
 const AUTH_COOKIE = { Cookie: 'perseus_player_session=player-token' };
 const DUMMY_ENV = { DB: {} } as never;
-// A valid UUIDv4 (puzzle IDs are crypto.randomUUID()); 'pz1' is rejected by the
-// format check, so tests that exercise the happy path use this instead.
 const PUZZLE_ID = '123e4567-e89b-42d3-a456-426614174000';
+const FAMILY_ID = '323e4567-e89b-42d3-a456-426614174001';
 const RUN_ID = '223e4567-e89b-42d3-a456-426614174000';
 
-const VERSIONED_CASES: { name: string; request: RecordPuzzleCompletionV1 }[] = [
+const VERSIONED_CASES: { name: string; request: RecordPuzzleCompletionV2 }[] = [
 	{
 		name: 'standard timed',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 91
+			elapsedActiveSeconds: 91,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'rotation timed',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'rotation_timed',
-			elapsedActiveSeconds: 92
+			elapsedActiveSeconds: 92,
+			hintsUsed: 0,
+			incorrectAttempts: 1
 		}
 	},
 	{
 		name: 'assisted timed',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'assisted_timed',
-			elapsedActiveSeconds: 93
+			elapsedActiveSeconds: 93,
+			hintsUsed: 2,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'relaxed',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'relaxed',
-			elapsedActiveSeconds: null
+			elapsedActiveSeconds: null,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		}
 	}
 ];
@@ -119,59 +142,82 @@ const VERSIONED_CASES: { name: string; request: RecordPuzzleCompletionV1 }[] = [
 const MALFORMED_VERSIONED_CASES: { name: string; request: unknown }[] = [
 	{
 		name: 'unsupported version never falls back to timeSeconds',
-		request: { version: 2, timeSeconds: 90 }
+		request: { version: 1, timeSeconds: 90 }
 	},
 	{
 		name: 'missing run ID',
 		request: {
-			version: 1,
+			version: 2,
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 90
+			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'unknown result class',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'unknown',
-			elapsedActiveSeconds: 90
+			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'timed result with null elapsed time',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: null
+			elapsedActiveSeconds: null,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'fractional active time',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 90.7
+			elapsedActiveSeconds: 90.7,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'active time above the legacy ceiling',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 86_401
+			elapsedActiveSeconds: 86_401,
+			hintsUsed: 0,
+			incorrectAttempts: 0
+		}
+	},
+	{
+		name: 'negative hints used',
+		request: {
+			version: 2,
+			runId: RUN_ID,
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 90,
+			hintsUsed: -1,
+			incorrectAttempts: 0
 		}
 	},
 	{
 		name: 'extra field',
 		request: {
-			version: 1,
+			version: 2,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
 			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
 			timeSeconds: 90
 		}
 	}
@@ -187,6 +233,18 @@ function jsonHeaders() {
 	return { 'Content-Type': 'application/json', ...AUTH_COOKIE };
 }
 
+function requestStandardCompletion() {
+	return buildApp().request(
+		`/api/puzzles/${PUZZLE_ID}/complete`,
+		{
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify(VERSIONED_CASES[0].request)
+		},
+		DUMMY_ENV
+	);
+}
+
 describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	beforeEach(() => {
 		vi.mocked(dbModule.getWorkerDb).mockReset();
@@ -199,20 +257,21 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
 			id: PUZZLE_ID,
+			familyId: FAMILY_ID,
+			difficulty: 'easy',
 			name: 'Test Puzzle',
 			pieceCount: 4,
+			aspectRatio: '4:3',
 			createdAt: 100,
 			status: 'ready'
 		} as never);
-		// Reset call history on every asserted mock so each test only reflects
-		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
 		vi.mocked(storage.getPuzzle).mockClear();
 		vi.mocked(recordVersionedCompletion).mockReset();
 		vi.mocked(recordVersionedCompletion).mockResolvedValue({
 			status: 'recorded',
 			completedAt: 100
 		});
-		vi.mocked(ensurePuzzleOwnership).mockClear();
+		vi.mocked(ensurePuzzleFamilyOwnership).mockClear();
 	});
 
 	it('rejects the removed legacy timeSeconds body', async () => {
@@ -226,7 +285,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 	});
 
-	it('backfills a system-owned puzzle row after recording the completion', async () => {
+	it('backfills a system-owned family row after recording the completion', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
 			{
@@ -237,27 +296,23 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(200);
-		// The backfill is invoked with a system-owned row built from the loaded
-		// puzzle metadata, so listPlayerStats can later resolve the name.
-		expect(ensurePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), {
-			id: PUZZLE_ID,
+		expect(ensurePuzzleFamilyOwnership).toHaveBeenCalledWith(expect.anything(), {
+			id: FAMILY_ID,
 			ownerId: SYSTEM_OWNER_ID,
 			name: 'Test Puzzle',
-			pieceCount: 4,
+			aspectRatio: '4:3',
 			status: 'ready',
 			createdAt: 100
 		});
-		// The completion decision comes first so tombstoned outcomes cannot
-		// recreate ownership while a deletion is in flight.
-		const backfillOrder = vi.mocked(ensurePuzzleOwnership).mock.invocationCallOrder[0];
+		const backfillOrder = vi.mocked(ensurePuzzleFamilyOwnership).mock.invocationCallOrder[0];
 		const recordOrder = vi.mocked(recordVersionedCompletion).mock.invocationCallOrder[0];
 		expect(backfillOrder).toBeGreaterThan(recordOrder);
 		expect(dbModule.getWorkerDbContext).toHaveBeenCalledOnce();
 	});
 
-	it('still records the completion when the ownership backfill fails (best-effort)', async () => {
+	it('still records the completion when the family ownership backfill fails (best-effort)', async () => {
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		vi.mocked(ensurePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+		vi.mocked(ensurePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down'));
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
 			{
@@ -272,14 +327,14 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		consoleSpy.mockRestore();
 	});
 
-	it('includes the puzzle category in the ownership backfill when present', async () => {
-		// Covers the `puzzle.category ? { category } : {}` true branch: a
-		// puzzle with a category must propagate it into the backfilled row so
-		// listPlayerStats can surface it.
+	it('includes the puzzle category in the family ownership backfill when present', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
 			id: PUZZLE_ID,
+			familyId: FAMILY_ID,
+			difficulty: 'easy',
 			name: 'Categorized Puzzle',
 			pieceCount: 4,
+			aspectRatio: '4:3',
 			createdAt: 100,
 			status: 'ready',
 			category: 'nature'
@@ -294,11 +349,11 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(200);
-		expect(ensurePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), {
-			id: PUZZLE_ID,
+		expect(ensurePuzzleFamilyOwnership).toHaveBeenCalledWith(expect.anything(), {
+			id: FAMILY_ID,
 			ownerId: SYSTEM_OWNER_ID,
 			name: 'Categorized Puzzle',
-			pieceCount: 4,
+			aspectRatio: '4:3',
 			category: 'nature',
 			status: 'ready',
 			createdAt: 100
@@ -350,6 +405,8 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	it('returns 404 when the puzzle is not ready', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
 			id: PUZZLE_ID,
+			familyId: FAMILY_ID,
+			difficulty: 'easy',
 			name: 'Test Puzzle',
 			pieceCount: 4,
 			createdAt: 100,
@@ -384,6 +441,21 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		const body = (await res.json()) as { error: string; message: string };
 		expect(body.error).toBe('internal_error');
 		expect(body.message).toBe('Failed to retrieve puzzle');
+		expect(recordVersionedCompletion).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 500 when parent family resolution fails', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(storage.getFamily).mockRejectedValueOnce(new Error('Corrupt family metadata'));
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to retrieve puzzle'
+		});
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
@@ -429,11 +501,103 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(recordVersionedCompletion).toHaveBeenCalledWith(
+			workerDb,
 			completionWrites,
 			'p1',
 			PUZZLE_ID,
-			request
+			request,
+			{ familyId: FAMILY_ID, difficulty: 'easy' }
 		);
+	});
+
+	it('returns { ok: true } when the completion result has no awards', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+	});
+
+	it('omits awards when the completion result has an empty awards object', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: {}
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+	});
+
+	it('serializes clear points in completion awards', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: { clearPoints: 100 }
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true, awards: { clearPoints: 100 } });
+	});
+
+	it('omits empty achievement and mastery awards while serializing personal best and rank', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: {
+				achievements: [],
+				mastery: [],
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			ok: true,
+			awards: {
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
+	});
+
+	it('serializes every populated completion award field', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: {
+				clearPoints: 100,
+				achievements: ['first_clear'],
+				mastery: ['hintless', 'flawless', 'rotation_clear'],
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			ok: true,
+			awards: {
+				clearPoints: 100,
+				achievements: ['first_clear'],
+				mastery: ['hintless', 'flawless', 'rotation_clear'],
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
 	});
 
 	it('returns 200 for an exact versioned replay', async () => {
@@ -453,7 +617,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
-		expect(ensurePuzzleOwnership).toHaveBeenCalledOnce();
+		expect(ensurePuzzleFamilyOwnership).toHaveBeenCalledOnce();
 	});
 
 	it('returns structured 409 for a versioned run ID conflict', async () => {
@@ -470,7 +634,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 		expect(res.status).toBe(409);
 		expect(await res.json()).toMatchObject({ error: 'run_id_conflict' });
-		expect(ensurePuzzleOwnership).toHaveBeenCalledOnce();
+		expect(ensurePuzzleFamilyOwnership).toHaveBeenCalledOnce();
 	});
 
 	it('returns structured 429 for a new versioned run at quota', async () => {
@@ -490,7 +654,32 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			error: 'completion_quota_exceeded',
 			message: 'Completion history limit reached'
 		});
-		expect(ensurePuzzleOwnership).toHaveBeenCalledOnce();
+		expect(ensurePuzzleFamilyOwnership).toHaveBeenCalledOnce();
+	});
+
+	it('returns structured 404 when variant is ready but parent family failed', async () => {
+		vi.mocked(storage.getFamily).mockResolvedValueOnce({
+			id: FAMILY_ID,
+			name: 'Failed Family',
+			aspectRatio: '4:3',
+			status: 'failed',
+			createdAt: 100,
+			variants: { easy: PUZZLE_ID, normal: 'pz-normal', hard: 'pz-hard' }
+		} as never);
+
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify(VERSIONED_CASES[0].request)
+			},
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
+		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 	});
 
 	it('returns structured 404 for a versioned replay fenced by a tombstone', async () => {
@@ -507,7 +696,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 		expect(res.status).toBe(404);
 		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
-		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
+		expect(ensurePuzzleFamilyOwnership).not.toHaveBeenCalled();
 	});
 
 	it('returns structured 500 when Worker context acquisition fails', async () => {
@@ -533,7 +722,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		});
 		expect(dbModule.getWorkerDb).not.toHaveBeenCalled();
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
-		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
+		expect(ensurePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 

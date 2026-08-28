@@ -31,14 +31,23 @@ const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: tru
 
 /** Representative gallery cards so the scan covers real interactive markup
  *  (card links, images, buttons) rather than just the empty state. */
-const GALLERY_CARDS = [
-	{ id: 'e2e-square-4', name: 'Square 4', pieceCount: 4, status: 'ready' },
-	{ id: 'e2e-landscape-12', name: 'Landscape 12', pieceCount: 12, status: 'ready' },
-	{ id: 'e2e-square-100', name: 'Square 100', pieceCount: 100, status: 'ready' }
-];
+const GALLERY_FAMILIES = [
+	{
+		id: 'fam-square-4',
+		name: 'Square 4',
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1,
+		variants: {
+			easy: { id: 'e2e-square-4', difficulty: 'easy', pieceCount: 16, status: 'ready' },
+			normal: { id: 'e2e-landscape-12', difficulty: 'normal', pieceCount: 49, status: 'ready' },
+			hard: { id: 'e2e-square-100', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+		}
+	}
+] as const;
 
-function pagedResponse(puzzles: typeof GALLERY_CARDS) {
-	return { puzzles, total: puzzles.length, offset: 0, limit: 20 };
+function pagedFamilyResponse(families: typeof GALLERY_FAMILIES) {
+	return { families, total: families.length, offset: 0, limit: 20 };
 }
 
 test.describe('accessibility @a11y', () => {
@@ -52,9 +61,9 @@ test.describe('accessibility @a11y', () => {
 		const listReleased = new Promise<void>((resolve) => {
 			releaseList = resolve;
 		});
-		await page.route(/\/api\/puzzles(?:\?.*)?$/, async (route) => {
+		await page.route(/\/api\/puzzle-families(?:\?.*)?$/, async (route) => {
 			await listReleased;
-			await route.fulfill({ json: pagedResponse(GALLERY_CARDS) });
+			await route.fulfill({ json: pagedFamilyResponse(GALLERY_FAMILIES) });
 		});
 
 		await page.goto('/');

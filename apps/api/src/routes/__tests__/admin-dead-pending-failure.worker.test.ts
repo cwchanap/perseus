@@ -1,21 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn(),
-	puzzleExists: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		failIdempotencyKey: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listFamilies: vi.fn(),
+		enrichFamilySummary: vi.fn(),
+		originalImageExists: vi.fn(),
+		puzzleExists: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -38,9 +47,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
@@ -57,9 +66,8 @@ const PNG_HEADER = new Uint8Array([
 function createRequest(): Request {
 	const formData = new FormData();
 	formData.append('name', 'Dead Pending Puzzle');
-	formData.append('pieceCount', '225');
 	formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'puzzle.png');
-	return new Request('http://localhost/puzzles', {
+	return new Request('http://localhost/puzzle-families', {
 		method: 'POST',
 		headers: {
 			cookie: 'session=valid.token',
@@ -72,14 +80,24 @@ function createRequest(): Request {
 describe('Admin Worker dead pending reclaim failure', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		const staleAt = Date.now() - 10 * 60 * 1000;
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			puzzleId: 'dead-pending-puzzle',
-			status: 'pending'
+			familyId: 'dead-pending-puzzle',
+			status: 'pending',
+			reservedAt: staleAt
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
+		vi.mocked(storage.getFamily).mockResolvedValue({
 			id: 'dead-pending-puzzle',
-			status: 'processing'
+			name: 'Dead Pending Family',
+			aspectRatio: '1:1',
+			status: 'processing',
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
 		} as any);
 		vi.mocked(storage.failIdempotencyKey).mockRejectedValue(new Error('DO unavailable'));
 	});

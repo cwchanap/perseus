@@ -5,17 +5,25 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	getPuzzle: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	originalImageExists: vi.fn().mockResolvedValue(false),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	listPuzzles: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		originalImageExists: vi.fn().mockResolvedValue(false),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		listFamilies: vi.fn()
+	};
+});
 
 vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({})),
@@ -30,8 +38,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
@@ -271,11 +279,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makePng(300, 300);
 		const formData = new FormData();
 		formData.append('name', 'Mismatched Puzzle');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '3:4');
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -294,11 +301,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makePng(400, 400);
 		const formData = new FormData();
 		formData.append('name', 'Square Puzzle');
-		formData.append('pieceCount', '16');
 		formData.append('aspectRatio', '1:1');
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -313,11 +319,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makePng(400, 300);
 		const formData = new FormData();
 		formData.append('name', 'Landscape Puzzle');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -332,11 +337,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makePng(300, 400);
 		const formData = new FormData();
 		formData.append('name', 'Portrait Puzzle');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '3:4');
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -352,11 +356,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeJpeg(600, 400);
 		const formData = new FormData();
 		formData.append('name', 'Mismatched JPEG');
-		formData.append('pieceCount', '16');
 		formData.append('aspectRatio', '1:1');
 		formData.append('image', blob, 'test.jpg');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -373,11 +376,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeJpeg(800, 600);
 		const formData = new FormData();
 		formData.append('name', 'Matched JPEG');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		formData.append('image', blob, 'test.jpg');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -392,11 +394,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebP(500, 500);
 		const formData = new FormData();
 		formData.append('name', 'Mismatched WebP');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '3:4');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -413,11 +414,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebP(300, 400);
 		const formData = new FormData();
 		formData.append('name', 'Matched WebP');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '3:4');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -433,11 +433,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makePng(403, 300);
 		const formData = new FormData();
 		formData.append('name', 'Near Match');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -453,11 +452,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makePng(300, 200);
 		const formData = new FormData();
 		formData.append('name', 'Way Off');
-		formData.append('pieceCount', '16');
 		formData.append('aspectRatio', '1:1');
 		formData.append('image', blob, 'test.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -476,11 +474,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = new Blob([header], { type: 'image/png' });
 		const formData = new FormData();
 		formData.append('name', 'Tiny Puzzle');
-		formData.append('pieceCount', '16');
 		formData.append('aspectRatio', '1:1');
 		formData.append('image', blob, 'tiny.png');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -497,11 +494,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebPVp8x(400, 300);
 		const formData = new FormData();
 		formData.append('name', 'VP8X Landscape');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -516,11 +512,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebPVp8x(300, 400);
 		const formData = new FormData();
 		formData.append('name', 'VP8X Portrait');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '3:4');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -535,11 +530,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebPVp8x(500, 500);
 		const formData = new FormData();
 		formData.append('name', 'VP8X Square');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '3:4');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -556,11 +550,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebPVp8l(400, 300);
 		const formData = new FormData();
 		formData.append('name', 'VP8L Landscape');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData
@@ -575,11 +568,10 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		const blob = makeWebPVp8l(500, 500);
 		const formData = new FormData();
 		formData.append('name', 'VP8L Square');
-		formData.append('pieceCount', '12');
 		formData.append('aspectRatio', '4:3');
 		formData.append('image', blob, 'test.webp');
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: formData

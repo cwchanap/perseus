@@ -12,6 +12,7 @@ import {
 	FIXTURES,
 	FIXTURE_IDS,
 	buildGameplayConfig,
+	familyIdForFixtureIndex,
 	getFixture,
 	type GameplayFixtureId
 } from './catalog';
@@ -42,6 +43,17 @@ function expectPermutation(order: readonly number[], n: number): void {
 		expect(identity).toBe(false);
 	}
 }
+
+describe('catalog - family id and difficulty', () => {
+	for (const id of FIXTURE_IDS) {
+		it(`${id} pins familyId and difficulty for progression harness`, () => {
+			const fixture = getFixture(id);
+			const index = FIXTURE_IDS.indexOf(id);
+			expect(fixture.familyId).toBe(familyIdForFixtureIndex(index));
+			expect(fixture.difficulty).toBe('easy');
+		});
+	}
+});
 
 describe('catalog - fixture registry', () => {
 	it('ships exactly the five documented fixture ids', () => {
