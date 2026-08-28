@@ -42,14 +42,13 @@ const FAMILY_VARIANT_IDS = {
 };
 
 function makeReadyFamily(overrides: Partial<PuzzleFamilyMetadata> = {}): PuzzleFamilyMetadata {
-	const id = overrides.id ?? '223e4567-e89b-42d3-a456-426614174099';
 	return {
-		id,
-		name: overrides.name ?? 'Test Family',
-		aspectRatio: overrides.aspectRatio ?? '1:1',
-		createdAt: overrides.createdAt ?? 1000,
-		status: overrides.status ?? 'ready',
-		variants: overrides.variants ?? FAMILY_VARIANT_IDS,
+		id: '223e4567-e89b-42d3-a456-426614174099',
+		name: 'Test Family',
+		aspectRatio: '1:1',
+		createdAt: 1000,
+		status: 'ready',
+		variants: FAMILY_VARIANT_IDS,
 		...overrides
 	};
 }
@@ -370,18 +369,14 @@ describe('KV Metadata Operations', () => {
 		it('should update existing puzzle metadata', async () => {
 			const { namespace, stub } = createMockDurableObjectNamespace();
 
-			await updatePuzzleMetadata(
-				namespace as unknown as DurableObjectNamespace,
-				'TEST_VARIANT_ID',
-				{
-					status: 'processing'
-				}
-			);
+			await updatePuzzleMetadata(namespace as unknown as DurableObjectNamespace, TEST_VARIANT_ID, {
+				status: 'processing'
+			});
 
 			expect(stub.fetch).toHaveBeenCalledTimes(1);
 			const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 			expect(body).toEqual({
-				puzzleId: 'TEST_VARIANT_ID',
+				puzzleId: TEST_VARIANT_ID,
 				updates: { status: 'processing' }
 			});
 		});
@@ -416,7 +411,7 @@ describe('KV Metadata Operations', () => {
 		it('should invalidate gallery index cache on delete', async () => {
 			const mockKV = createMockKV();
 			mockKV._store.set(`puzzle:${TEST_VARIANT_ID}`, JSON.stringify(samplePuzzle));
-			mockKV._store.set('gallery:sorted-index', JSON.stringify([{ id: 'TEST_VARIANT_ID' }]));
+			mockKV._store.set('gallery:sorted-index', JSON.stringify([{ id: TEST_VARIANT_ID }]));
 
 			await deletePuzzleMetadata(mockKV as unknown as KVNamespace, TEST_VARIANT_ID);
 

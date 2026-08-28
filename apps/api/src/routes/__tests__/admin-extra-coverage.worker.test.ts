@@ -378,7 +378,7 @@ describe('Admin Worker - rejects pieceCount field', () => {
 	it('returns 400 when pieceCount is provided', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Bad Count Test');
-		formData.append('pieceCount', '225abc');
+		formData.append('pieceCount', '225');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 

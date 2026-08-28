@@ -56,6 +56,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
+import { makeFamilyMetadata } from './helpers/family-fixtures';
 
 const PNG_HEADER = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -130,18 +131,9 @@ describe('Admin Worker idempotency commit handling', () => {
 			familyId: 'existing-puzzle',
 			status: 'pending'
 		});
-		vi.mocked(storage.getFamily).mockResolvedValue({
-			id: 'existing-puzzle',
-			name: 'Test Family',
-			aspectRatio: '1:1',
-			status: 'processing',
-			variants: {
-				easy: '423e4567-e89b-42d3-a456-426614174010',
-				normal: '523e4567-e89b-42d3-a456-426614174011',
-				hard: '623e4567-e89b-42d3-a456-426614174012'
-			},
-			createdAt: 1000
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(
+			makeFamilyMetadata('existing-puzzle', 'processing')
+		);
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const workflow = createWorkflow('running');
@@ -170,18 +162,9 @@ describe('Admin Worker idempotency commit handling', () => {
 			familyId: 'existing-puzzle',
 			status: 'pending'
 		});
-		vi.mocked(storage.getFamily).mockResolvedValue({
-			id: 'existing-puzzle',
-			name: 'Test Family',
-			aspectRatio: '1:1',
-			status: 'processing',
-			variants: {
-				easy: '423e4567-e89b-42d3-a456-426614174010',
-				normal: '523e4567-e89b-42d3-a456-426614174011',
-				hard: '623e4567-e89b-42d3-a456-426614174012'
-			},
-			createdAt: 1000
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(
+			makeFamilyMetadata('existing-puzzle', 'processing')
+		);
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValueOnce(new Error('DO write failed'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const workflow = createWorkflow('running');

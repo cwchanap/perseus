@@ -31,30 +31,34 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
-vi.mock('../services/storage.worker', () => ({
-	getPuzzle: vi.fn().mockResolvedValue({
-		id: 'pz',
-		familyId: '323e4567-e89b-42d3-a456-426614174001',
-		difficulty: 'easy',
-		name: 'Test Puzzle',
-		pieceCount: 4,
-		aspectRatio: '4:3',
-		createdAt: 100,
-		status: 'ready'
-	} as never),
-	getFamily: vi.fn().mockResolvedValue({
-		id: '323e4567-e89b-42d3-a456-426614174001',
-		name: 'Test Family',
-		aspectRatio: '4:3',
-		status: 'ready',
-		createdAt: 100,
-		variants: {
-			easy: 'pz',
-			normal: 'pz-normal',
-			hard: 'pz-hard'
-		}
-	})
-}));
+vi.mock('../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn().mockResolvedValue({
+			id: 'pz',
+			familyId: '323e4567-e89b-42d3-a456-426614174001',
+			difficulty: 'easy',
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			aspectRatio: '4:3',
+			createdAt: 100,
+			status: 'ready'
+		} as never),
+		getFamily: vi.fn().mockResolvedValue({
+			id: '323e4567-e89b-42d3-a456-426614174001',
+			name: 'Test Family',
+			aspectRatio: '4:3',
+			status: 'ready',
+			createdAt: 100,
+			variants: {
+				easy: 'pz',
+				normal: 'pz-normal',
+				hard: 'pz-hard'
+			}
+		})
+	};
+});
 
 vi.mock('../services/player-auth.worker', () => ({
 	getPlayerSession: vi.fn()

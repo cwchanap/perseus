@@ -673,8 +673,20 @@ describe('API Service - player allowlist', () => {
 describe('API Service - fetchAdminPuzzles', () => {
 	it('returns list of puzzle families including non-ready ones', async () => {
 		const mockFamilies = [
-			{ id: 'f1', name: 'Family 1', aspectRatio: '1:1', status: 'ready', variants: [] },
-			{ id: 'f2', name: 'Family 2', aspectRatio: '1:1', status: 'processing', variants: [] }
+			{
+				id: 'f1',
+				name: 'Family 1',
+				aspectRatio: '1:1',
+				status: 'ready',
+				variants: { easy: 'v1-easy', normal: 'v1-normal', hard: 'v1-hard' }
+			},
+			{
+				id: 'f2',
+				name: 'Family 2',
+				aspectRatio: '1:1',
+				status: 'processing',
+				variants: { easy: 'v2-easy', normal: 'v2-normal', hard: 'v2-hard' }
+			}
 		];
 		vi.stubGlobal(
 			'fetch',

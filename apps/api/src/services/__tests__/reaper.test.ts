@@ -276,10 +276,6 @@ describe('reapStuckPuzzles', () => {
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ familyId: 'stuck-1', createdAt: expect.any(Number) })
 		);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1-easy',
-			expect.any(Number)
-		);
 		expectBeginPuzzleDeletionForAllVariants('stuck-1');
 		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
 			env.PUZZLES_BUCKET,
@@ -336,10 +332,7 @@ describe('reapStuckPuzzles', () => {
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ familyId: 'stuck-1' })
 		);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1-easy',
-			expect.any(Number)
-		);
+		expectBeginPuzzleDeletionForAllVariants('stuck-1');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -379,10 +372,7 @@ describe('reapStuckPuzzles', () => {
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ familyId: 'stuck-1' })
 		);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1-easy',
-			expect.any(Number)
-		);
+		expectBeginPuzzleDeletionForAllVariants('stuck-1');
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'stuck-1', action: 'd1-finish-failed' })
 		);
@@ -922,10 +912,7 @@ describe('reapStuckPuzzles', () => {
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ familyId: 'stuck-1' })
 		);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'stuck-1-easy',
-			expect.any(Number)
-		);
+		expectBeginPuzzleDeletionForAllVariants('stuck-1');
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
@@ -2245,7 +2232,9 @@ describe('reapOrphanedReservations', () => {
 		// succeeds for p50..p54.
 		(storage.deleteMetadataDO as any).mockImplementation(
 			(_: DurableObjectNamespace, id: string) => {
-				const familyId = id.includes('-') ? id.split('-')[0] : id;
+				// Strip only the known difficulty suffix — UUID family ids contain
+				// hyphens, so split('-')[0] would truncate them.
+				const familyId = id.replace(/-(easy|normal|hard)$/, '');
 				const idx = Number(familyId.replace('p', ''));
 				if (idx < REAP_BATCH_LIMIT) {
 					return Promise.reject(new Error('DO tombstone always fails'));

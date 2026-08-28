@@ -111,6 +111,8 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 	});
 
 	it('returns 500 when deletePuzzleAssets or deletePuzzleMetadata throws', async () => {
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
+
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
 			id: VALID_UUID,
 			name: 'Test Puzzle',

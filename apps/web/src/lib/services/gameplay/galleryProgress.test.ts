@@ -226,7 +226,9 @@ describe('discoverGalleryProgress', () => {
 			expectedLandscape12,
 			expectedPortrait12
 		]);
-		expect(contexts.some((captured) => captured.puzzleId === 'bad')).toBe(false);
+		// The corrupt family contributes no contexts: neither its own id nor
+		// any identifier derived from it may appear.
+		expect(contexts.some((captured) => captured.puzzleId.startsWith('bad-fam'))).toBe(false);
 	});
 
 	it('selects the greatest lastUpdated resumable current candidate', () => {
