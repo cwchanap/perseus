@@ -131,14 +131,12 @@ test.describe('gameplay smoke @smoke', () => {
 			string,
 			unknown
 		>;
-		expect(body).toMatchObject({
-			version: 2,
+		expect(body).toEqual({
+			version: 1,
 			runId,
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 1,
-			hintsUsed: 0
+			elapsedActiveSeconds: 1
 		});
-		expect(typeof body.incorrectAttempts).toBe('number');
 
 		// The local stats record pins the same run id (idempotency guard).
 		const stats = await page.evaluate((k) => localStorage.getItem(k), STATS_KEY);
@@ -222,11 +220,9 @@ test.describe('gameplay smoke @smoke', () => {
 			(r) => r.bodyJson as Record<string, unknown>
 		);
 		expect(bodies[0]).toMatchObject({
-			version: 2,
+			version: 1,
 			runId,
-			resultClass: 'standard_timed',
-			hintsUsed: 0,
-			incorrectAttempts: 0
+			resultClass: 'standard_timed'
 		});
 		// The seal is immutable: the retry projects an identical request body.
 		expect(bodies[1]).toEqual(bodies[0]);

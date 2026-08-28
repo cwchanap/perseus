@@ -20,8 +20,7 @@ import {
 import { actionsForProgress, buildDownloadedRows, classifyProgress } from './downloadedLibrary';
 
 const IDS = [2, 7, 11, 19] as const;
-const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174000';
-const PUZZLE_ID = '223e4567-e89b-42d3-a456-426614174001';
+const PUZZLE_ID = 'p1';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 
 const canonicalPieces = IDS.map((id, index) => ({
@@ -76,8 +75,6 @@ function sessionSpec(): SessionPuzzleSpec {
 function makePuzzle(): ReadyPuzzle {
 	return {
 		id: PUZZLE_ID,
-		familyId: FAMILY_ID,
-		difficulty: 'normal',
 		name: 'Test Puzzle',
 		category: 'Nature',
 		pieceCount: IDS.length,

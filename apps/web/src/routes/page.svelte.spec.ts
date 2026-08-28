@@ -3,7 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import Page from './+page.svelte';
 import { fetchPuzzles } from '$lib/services/api';
-import type { PuzzleFamilyListResponse, PuzzleFamilySummary } from '$lib/types/puzzle';
+import type { PuzzleListResponse, PuzzleSummary } from '$lib/types/puzzle';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -17,10 +17,10 @@ vi.mock('$lib/services/api', () => {
 		}
 	}
 	return {
-		fetchPuzzles: vi.fn().mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 }),
+		fetchPuzzles: vi.fn().mockResolvedValue([]),
 		fetchPuzzle: vi.fn(),
 		ApiError: MockApiError,
-		getFamilyThumbnailUrl: vi.fn((id: string) => `/api/puzzle-families/${id}/thumbnail`),
+		getThumbnailUrl: vi.fn((id: string) => `/api/puzzles/${id}/thumbnail`),
 		getPieceImageUrl: vi.fn()
 	};
 });
@@ -29,31 +29,15 @@ vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn().mockReturnValue(null)
 }));
 
-function makeFamily(id: string, name: string, category?: string): PuzzleFamilySummary {
-	return {
-		id,
-		name,
-		aspectRatio: '1:1',
-		status: 'ready',
-		createdAt: 1,
-		...(category ? { category: category as PuzzleFamilySummary['category'] } : {}),
-		variants: {
-			easy: { id: `${id}-e`, difficulty: 'easy', pieceCount: 16, status: 'ready' },
-			normal: { id: `${id}-n`, difficulty: 'normal', pieceCount: 49, status: 'ready' },
-			hard: { id: `${id}-h`, difficulty: 'hard', pieceCount: 100, status: 'ready' }
-		}
-	};
-}
-
-const mockFamilies: PuzzleFamilySummary[] = [
-	makeFamily('p1', 'Forest Scene', 'Nature'),
-	makeFamily('p2', 'City Skyline', 'Architecture')
+const mockPuzzles: PuzzleSummary[] = [
+	{ id: 'p1', name: 'Forest Scene', pieceCount: 100, status: 'ready', category: 'Nature' },
+	{ id: 'p2', name: 'City Skyline', pieceCount: 200, status: 'ready', category: 'Architecture' }
 ];
 
 describe('/+page.svelte', () => {
 	beforeEach(() => {
 		vi.mocked(fetchPuzzles).mockResolvedValue({
-			families: [],
+			puzzles: [],
 			total: 0,
 			offset: 0,
 			limit: 20
@@ -68,9 +52,9 @@ describe('/+page.svelte', () => {
 	});
 
 	it('should show loading state while fetching', async () => {
-		let resolvePromise!: (value: PuzzleFamilyListResponse) => void;
+		let resolvePromise!: (value: PuzzleListResponse) => void;
 		vi.mocked(fetchPuzzles).mockReturnValue(
-			new Promise<PuzzleFamilyListResponse>((res) => {
+			new Promise<PuzzleListResponse>((res) => {
 				resolvePromise = res;
 			})
 		);
@@ -79,12 +63,12 @@ describe('/+page.svelte', () => {
 
 		await expect.element(page.getByTestId('loading-state')).toBeVisible();
 
-		resolvePromise({ families: [], total: 0, offset: 0, limit: 20 });
+		resolvePromise({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		await expect.element(page.getByTestId('loading-state')).not.toBeInTheDocument();
 	});
 
 	it('should show empty state when no puzzles exist', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
+		vi.mocked(fetchPuzzles).mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		render(Page);
 
 		await expect.element(page.getByTestId('empty-state')).toBeVisible();
@@ -92,8 +76,8 @@ describe('/+page.svelte', () => {
 
 	it('should show puzzle grid when puzzles are loaded', async () => {
 		vi.mocked(fetchPuzzles).mockResolvedValue({
-			families: mockFamilies,
-			total: mockFamilies.length,
+			puzzles: mockPuzzles,
+			total: mockPuzzles.length,
 			offset: 0,
 			limit: 20
 		});
@@ -123,8 +107,8 @@ describe('/+page.svelte', () => {
 
 	it('should show category filter when puzzles are loaded', async () => {
 		vi.mocked(fetchPuzzles).mockResolvedValue({
-			families: mockFamilies,
-			total: mockFamilies.length,
+			puzzles: mockPuzzles,
+			total: mockPuzzles.length,
 			offset: 0,
 			limit: 20
 		});
@@ -136,13 +120,13 @@ describe('/+page.svelte', () => {
 	it('should show no puzzles in category message when filter has no matches', async () => {
 		vi.mocked(fetchPuzzles)
 			.mockResolvedValueOnce({
-				families: mockFamilies,
-				total: mockFamilies.length,
+				puzzles: mockPuzzles,
+				total: mockPuzzles.length,
 				offset: 0,
 				limit: 20
 			})
 			.mockResolvedValueOnce({
-				families: [],
+				puzzles: [],
 				total: 0,
 				offset: 0,
 				limit: 20

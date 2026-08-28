@@ -41,11 +41,6 @@ function validSeedRunId(): string {
 	return '00000000-0000-4000-8000-00000000fffe';
 }
 
-function validFamilyId(): string {
-	// Distinct tail (0xfffd) so it never collides with run/seed ids in tests.
-	return '00000000-0000-4000-8000-00000000fffd';
-}
-
 function makeDefinition(
 	pieceCount: number,
 	aspectRatio: PuzzleAspectRatio,
@@ -54,8 +49,6 @@ function makeDefinition(
 	const { rows, cols } = gridFor(pieceCount, aspectRatio);
 	return {
 		fixtureId: 'e2e-test',
-		familyId: validFamilyId(),
-		difficulty: 'easy',
 		name: 'Test fixture',
 		aspectRatio,
 		pieceCount,
@@ -180,39 +173,6 @@ describe('buildFixture - edges', () => {
 			expect(neighbor).toBeDefined();
 			expect(piece.edges.bottom).toBe(OPPOSITE[neighbor!.edges.top]!);
 		}
-	});
-});
-
-describe('buildFixture - family id', () => {
-	it('rejects a malformed familyId', () => {
-		expect(() => buildFixture(makeDefinition(4, '1:1', { familyId: 'not-a-uuid' }))).toThrow(
-			/familyId/i
-		);
-	});
-
-	it('rejects a missing familyId', () => {
-		const def = makeDefinition(4, '1:1');
-		const { familyId: _, ...without } = def;
-		expect(() => buildFixture(without as GameplayFixtureDefinition)).toThrow(/familyId/i);
-	});
-
-	it('accepts a valid familyId and exposes it on the fixture', () => {
-		const id = validFamilyId();
-		const fixture = buildFixture(makeDefinition(4, '1:1', { familyId: id }));
-		expect(fixture.familyId).toBe(id);
-	});
-});
-
-describe('buildFixture - difficulty', () => {
-	it('rejects an invalid difficulty', () => {
-		expect(() =>
-			buildFixture(makeDefinition(4, '1:1', { difficulty: 'nightmare' as 'easy' }))
-		).toThrow(/difficulty/i);
-	});
-
-	it('accepts a valid difficulty and exposes it on the fixture', () => {
-		const fixture = buildFixture(makeDefinition(4, '1:1', { difficulty: 'easy' }));
-		expect(fixture.difficulty).toBe('easy');
 	});
 });
 

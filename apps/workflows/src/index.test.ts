@@ -6,12 +6,7 @@ import type { PuzzleMetadata } from './types';
 import { MAX_IMAGE_DIMENSION } from './types';
 import type { Env } from './index';
 import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
-import type { WorkflowParams, PuzzleAspectRatio } from './types';
-import {
-	PUZZLE_DIFFICULTIES,
-	getDifficultyPieceCount,
-	getGridDimensionsForAspectRatio
-} from './types';
+import type { WorkflowParams } from './types';
 
 // Mock cloudflare:workers module
 vi.mock('cloudflare:workers', async () => {
@@ -130,7 +125,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...actual,
-		setPuzzleFamilyStatus: vi.fn().mockResolvedValue(undefined)
+		// Spy on the D1 status write so tests can assert the workflow keeps D1
+		// in sync without needing a full D1Database mock. Resolves by default.
+		setPuzzleStatus: vi.fn().mockResolvedValue(undefined)
 	};
 });
 
@@ -158,6 +155,12 @@ function createMockBucket(bytes: ArrayBuffer) {
 			arrayBuffer: vi.fn(async () => bytes)
 		})),
 		put: vi.fn(async () => undefined)
+	};
+}
+
+function createMockKv(metadata: PuzzleMetadata) {
+	return {
+		get: vi.fn(async () => metadata)
 	};
 }
 
@@ -193,76 +196,24 @@ class TestWorkflow extends PerseusWorkflow {
 	}
 }
 
-const familyId = '550e8400-e29b-41d4-a716-446655440000';
-const variantIds = {
-	easy: '550e8400-e29b-41d4-a716-446655440001',
-	normal: '550e8400-e29b-41d4-a716-446655440002',
-	hard: '550e8400-e29b-41d4-a716-446655440003'
-};
-
-const sampleFamilyMetadata = {
-	id: familyId,
+const sampleMetadata: PuzzleMetadata = {
+	id: '550e8400-e29b-41d4-a716-446655440000',
 	name: 'Test Puzzle',
-	aspectRatio: '1:1' as const,
+	pieceCount: 4,
+	gridCols: 2,
+	gridRows: 2,
+	imageWidth: 100,
+	imageHeight: 100,
 	createdAt: 1700000000000,
-	status: 'processing' as const,
-	variants: variantIds
-};
-
-function createFamilyMockKv(options?: { aspectRatio?: PuzzleAspectRatio }) {
-	const aspectRatio = options?.aspectRatio ?? '1:1';
-	const familyMeta = { ...sampleFamilyMetadata, aspectRatio };
-	const variantStore: Record<string, PuzzleMetadata> = {};
-	for (const difficulty of PUZZLE_DIFFICULTIES) {
-		const variantId = variantIds[difficulty];
-		const pieceCount = getDifficultyPieceCount(aspectRatio, difficulty);
-		const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, aspectRatio);
-		variantStore[variantId] = {
-			id: variantId,
-			familyId,
-			difficulty,
-			name: 'Test Puzzle',
-			aspectRatio,
-			pieceCount,
-			gridCols: cols,
-			gridRows: rows,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: 1700000000000,
-			status: 'processing',
-			version: 0,
-			pieces: [],
-			progress: {
-				totalPieces: pieceCount,
-				generatedPieces: 0,
-				updatedAt: 1700000000000
-			}
-		};
+	status: 'processing',
+	version: 0,
+	pieces: [],
+	progress: {
+		totalPieces: 4,
+		generatedPieces: 0,
+		updatedAt: 1700000000000
 	}
-	return {
-		get: vi.fn(async (key: string, type?: string) => {
-			if (key === `family:${familyId}`) {
-				const value = JSON.stringify(familyMeta);
-				return type === 'json' ? JSON.parse(value) : value;
-			}
-			if (key.startsWith('puzzle:')) {
-				const id = key.slice('puzzle:'.length);
-				const meta = variantStore[id];
-				if (!meta) return null;
-				return type === 'json' ? meta : JSON.stringify(meta);
-			}
-			return null;
-		}),
-		put: vi.fn(async () => undefined)
-	};
-}
-
-function totalPiecesForAspectRatio(aspectRatio: PuzzleAspectRatio): number {
-	return PUZZLE_DIFFICULTIES.reduce(
-		(sum, difficulty) => sum + getDifficultyPieceCount(aspectRatio, difficulty),
-		0
-	);
-}
+};
 
 describe('updateMetadata', () => {
 	afterEach(() => {
@@ -321,6 +272,13 @@ describe('updateMetadata', () => {
 	});
 
 	it('frees the source image after generating a row of pieces', async () => {
+		const puzzleId = sampleMetadata.id;
+		const minimalMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 1,
+			gridCols: 1,
+			gridRows: 1
+		};
 		const { namespace } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -329,8 +287,7 @@ describe('updateMetadata', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			familyId: familyId,
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(minimalMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -339,7 +296,7 @@ describe('updateMetadata', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -381,6 +338,7 @@ describe('Workflow Execution - Image Validation', () => {
 	});
 
 	it('should reject images exceeding MAX_IMAGE_BYTES', async () => {
+		const puzzleId = sampleMetadata.id;
 		const oversizedBytes = new ArrayBuffer(MAX_IMAGE_BYTES + 1);
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
@@ -390,7 +348,7 @@ describe('Workflow Execution - Image Validation', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(oversizedBytes),
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -403,7 +361,7 @@ describe('Workflow Execution - Image Validation', () => {
 			'Please use a smaller image.';
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -413,14 +371,16 @@ describe('Workflow Execution - Image Validation', () => {
 		expect(stub.fetch).toHaveBeenCalledTimes(1);
 		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 		expect(body).toEqual({
-			puzzleId: familyId,
+			puzzleId,
 			updates: {
-				status: 'failed'
+				status: 'failed',
+				error: { message }
 			}
 		});
 	});
 
 	it('should reject images exceeding MAX_IMAGE_DIMENSION', async () => {
+		const puzzleId = sampleMetadata.id;
 		mockWidth = MAX_IMAGE_DIMENSION + 1;
 		mockHeight = MAX_IMAGE_DIMENSION + 2;
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
@@ -431,7 +391,7 @@ describe('Workflow Execution - Image Validation', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -442,7 +402,7 @@ describe('Workflow Execution - Image Validation', () => {
 		const message = `Image dimensions ${mockWidth}x${mockHeight} exceed maximum ${MAX_IMAGE_DIMENSION}px`;
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -452,9 +412,10 @@ describe('Workflow Execution - Image Validation', () => {
 		expect(stub.fetch).toHaveBeenCalledTimes(1);
 		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 		expect(body).toEqual({
-			puzzleId: familyId,
+			puzzleId,
 			updates: {
-				status: 'failed'
+				status: 'failed',
+				error: { message }
 			}
 		});
 	});
@@ -470,6 +431,7 @@ describe('Workflow Execution - Image Validation', () => {
 		// would NOT reject — if this test throws with the header dimensions
 		// (5000x5000), the pre-check caught it. PhotonImage.new_from_byteslice
 		// must not have been called.
+		const puzzleId = sampleMetadata.id;
 		// PNG with width=5000 (0x1388), height=5000 — exceeds MAX_IMAGE_DIMENSION (4096).
 		// Signature (8) + IHDR length (4) + "IHDR" (4) + width (4) + height (4) = 24 bytes.
 		const oversizedPngHeader = new Uint8Array([
@@ -506,7 +468,7 @@ describe('Workflow Execution - Image Validation', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(oversizedPngHeader.buffer),
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -516,7 +478,7 @@ describe('Workflow Execution - Image Validation', () => {
 
 		const message = `Image dimensions 5000x5000 exceed maximum ${MAX_IMAGE_DIMENSION}px`;
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -536,9 +498,10 @@ describe('Workflow Execution - Image Validation', () => {
 		expect(stub.fetch).toHaveBeenCalledTimes(1);
 		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 		expect(body).toEqual({
-			puzzleId: familyId,
+			puzzleId,
 			updates: {
-				status: 'failed'
+				status: 'failed',
+				error: { message }
 			}
 		});
 	});
@@ -557,7 +520,7 @@ describe('Workflow Execution - Parameter Validation', () => {
 		workflow.setEnv({} as Env);
 
 		const event = {
-			payload: { familyId: 'not-a-uuid' },
+			payload: { puzzleId: 'not-a-uuid' },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -572,7 +535,7 @@ describe('Workflow Execution - Parameter Validation', () => {
 		workflow.setEnv({} as Env);
 
 		const event = {
-			payload: { familyId: '' },
+			payload: { puzzleId: '' },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -591,13 +554,14 @@ describe('Workflow Execution - Resource Loading', () => {
 		vi.restoreAllMocks();
 		// vi.restoreAllMocks does not restore vi.fn mocks created in vi.mock
 		// factories, so a mockRejectedValue from one test leaks into the next.
-		// Reset setPuzzleFamilyStatus to its factory default (resolves undefined).
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		vi.mocked(setPuzzleFamilyStatus).mockReset();
-		vi.mocked(setPuzzleFamilyStatus).mockResolvedValue(undefined);
+		// Reset setPuzzleStatus to its factory default (resolves undefined).
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockResolvedValue(undefined);
 	});
 
 	it('marks puzzle as failed when metadata not found', async () => {
+		const puzzleId = sampleMetadata.id;
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -615,7 +579,7 @@ describe('Workflow Execution - Resource Loading', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -628,7 +592,7 @@ describe('Workflow Execution - Resource Loading', () => {
 	});
 
 	it('marks puzzle as failed when original image not found in R2', async () => {
-		const workflowFamilyId = familyId;
+		const puzzleId = sampleMetadata.id;
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -641,7 +605,7 @@ describe('Workflow Execution - Resource Loading', () => {
 		};
 		const env = {
 			PUZZLES_BUCKET: nullBucket,
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -650,13 +614,13 @@ describe('Workflow Execution - Resource Loading', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
 
 		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
-			`Original image not found for family ${workflowFamilyId}`
+			`Original image not found for puzzle ${puzzleId}`
 		);
 
 		expect(stub.fetch).toHaveBeenCalledTimes(1);
@@ -665,9 +629,9 @@ describe('Workflow Execution - Resource Loading', () => {
 	});
 
 	it('mirrors the failed status into D1 on mark-failed (keeps stores in sync)', async () => {
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		vi.mocked(setPuzzleFamilyStatus).mockClear();
-		const workflowFamilyId = familyId;
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockClear();
+		const puzzleId = sampleMetadata.id;
 		const { namespace } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -680,7 +644,7 @@ describe('Workflow Execution - Resource Loading', () => {
 		};
 		const env = {
 			PUZZLES_BUCKET: nullBucket,
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -689,23 +653,19 @@ describe('Workflow Execution - Resource Loading', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
 
 		const step = createMockStep();
 		await expect(workflow.run(event, step)).rejects.toThrow(
-			`Original image not found for family ${workflowFamilyId}`
+			`Original image not found for puzzle ${puzzleId}`
 		);
 
-		expect(setPuzzleFamilyStatus).toHaveBeenCalledWith(
-			expect.anything(),
-			workflowFamilyId,
-			'failed'
-		);
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
 		expect(step.do).toHaveBeenCalledWith(
-			'mirror-family-failed-status-to-d1',
+			'mirror-failed-status-to-d1',
 			{
 				retries: {
 					limit: 3,
@@ -718,8 +678,8 @@ describe('Workflow Execution - Resource Loading', () => {
 	});
 
 	it('keeps the original processing error authoritative when D1 down', async () => {
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		const workflowFamilyId = familyId;
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		const puzzleId = sampleMetadata.id;
 		const { namespace } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -732,7 +692,7 @@ describe('Workflow Execution - Resource Loading', () => {
 		};
 		const env = {
 			PUZZLES_BUCKET: nullBucket,
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -741,28 +701,28 @@ describe('Workflow Execution - Resource Loading', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
 
 		const step = createMockStep();
-		vi.mocked(setPuzzleFamilyStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockReset();
 		// One-shot mock: the callback runs once, rejects, and step.do throws
 		// so the rejection reaches mirrorPuzzleStatusToD1()'s outer catch.
-		vi.mocked(setPuzzleFamilyStatus).mockRejectedValue(new Error('D1 down'));
+		vi.mocked(setPuzzleStatus).mockRejectedValue(new Error('D1 down'));
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		await expect(workflow.run(event, step)).rejects.toThrow(
-			`Original image not found for family ${workflowFamilyId}`
+			`Original image not found for puzzle ${puzzleId}`
 		);
 
 		// The D1 mirror callback ran once and rejected; the outer wrapper
 		// catch logged the site-aware final error and swallowed it, so the
 		// workflow still rejects with the original processing error.
-		expect(setPuzzleFamilyStatus).toHaveBeenCalledTimes(1);
+		expect(setPuzzleStatus).toHaveBeenCalledTimes(1);
 		expect(errorSpy).toHaveBeenCalledWith(
-			expect.stringContaining('D1 mirror mirror-family-failed-status-to-d1 failed'),
+			expect.stringContaining('D1 mirror mirror-failed-status-to-d1 failed'),
 			expect.any(Error)
 		);
 		// Verify no CRITICAL log fired regardless of argument count — the
@@ -784,14 +744,20 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		vi.restoreAllMocks();
 		// vi.restoreAllMocks does not restore vi.fn mocks created in vi.mock
 		// factories, so a mockRejectedValue from one test leaks into the next.
-		// Reset setPuzzleFamilyStatus to its factory default (resolves undefined).
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		vi.mocked(setPuzzleFamilyStatus).mockReset();
-		vi.mocked(setPuzzleFamilyStatus).mockResolvedValue(undefined);
+		// Reset setPuzzleStatus to its factory default (resolves undefined).
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockResolvedValue(undefined);
 	});
 
 	it('keeps DO status ready and does NOT mark-failed when the D1 ready mirror throws', async () => {
-		const workflowFamilyId = familyId;
+		const fourPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2
+		};
+		const puzzleId = fourPieceMetadata.id;
 
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
@@ -801,8 +767,7 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			familyId: familyId,
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(fourPieceMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -811,7 +776,7 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -823,9 +788,9 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		// and run mark-failed, overwriting 'ready' with 'failed'. The split
 		// must keep the DO 'ready' and merely log the D1 failure.
 		const step = createMockStep();
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		vi.mocked(setPuzzleFamilyStatus).mockReset();
-		vi.mocked(setPuzzleFamilyStatus).mockRejectedValue(new Error('D1 down'));
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockRejectedValue(new Error('D1 down'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -834,18 +799,10 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 
 		// The D1 ready mirror callback ran once and rejected; the outer
 		// wrapper catch logged and swallowed it, best-effort.
-		expect(setPuzzleFamilyStatus).toHaveBeenCalledTimes(1);
-		expect(setPuzzleFamilyStatus).toHaveBeenCalledWith(
-			expect.anything(),
-			workflowFamilyId,
-			'ready'
-		);
+		expect(setPuzzleStatus).toHaveBeenCalledTimes(1);
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
 		// mark-failed must NOT have run — no 'failed' status written anywhere.
-		expect(setPuzzleFamilyStatus).not.toHaveBeenCalledWith(
-			expect.anything(),
-			workflowFamilyId,
-			'failed'
-		);
+		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
 
 		// The last DO updateMetadata must be 'ready', not 'failed'.
 		const calls = stub.fetch.mock.calls;
@@ -854,7 +811,7 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 
 		// The D1 mirror is an explicitly bounded durable step.
 		expect(step.do).toHaveBeenCalledWith(
-			'mirror-family-ready-status-to-d1',
+			'mirror-ready-status-to-d1',
 			{
 				retries: {
 					limit: 3,
@@ -867,7 +824,7 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 
 		// The D1 mirror failure was logged with its site.
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('D1 mirror mirror-family-ready-status-to-d1 failed'),
+			expect.stringContaining('D1 mirror mirror-ready-status-to-d1 failed'),
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
@@ -905,9 +862,9 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 	it('logs CRITICAL and rethrows when all mark-failed retries fail', async () => {
 		vi.useFakeTimers();
 		try {
-			const workflowFamilyId = familyId;
-			const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-			vi.mocked(setPuzzleFamilyStatus).mockClear();
+			const puzzleId = sampleMetadata.id;
+			const { setPuzzleStatus } = await import('@perseus/shared');
+			vi.mocked(setPuzzleStatus).mockClear();
 
 			// DO always returns 500 → updateMetadata throws on every attempt
 			const alwaysFailingDO = {
@@ -925,7 +882,7 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 			const env = {
 				// null bucket triggers "image not found" → enters catch → triggers mark-failed
 				PUZZLES_BUCKET: { get: vi.fn(async () => null), put: vi.fn(async () => {}) },
-				PUZZLE_METADATA: createFamilyMockKv(),
+				PUZZLE_METADATA: createMockKv(sampleMetadata),
 				PUZZLE_METADATA_DO: alwaysFailingDO as unknown as DurableObjectNamespace,
 				PUZZLE_WORKFLOW: {} as Workflow
 			} as unknown as Env;
@@ -934,7 +891,7 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 			workflow.setEnv(env);
 
 			const event: WorkflowEvent<WorkflowParams> = {
-				payload: { familyId },
+				payload: { puzzleId },
 				timestamp: new Date(),
 				instanceId: 'test-retry-instance'
 			};
@@ -943,7 +900,7 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 
 			// Set up the rejection handler before advancing timers to avoid unhandled rejection.
 			const assertionPromise = expect(workflow.run(event, createMockStep())).rejects.toThrow(
-				`Original image not found for family ${workflowFamilyId}`
+				`Original image not found for puzzle ${puzzleId}`
 			);
 
 			// Advance timers to flush the exponential-backoff sleeps (100 ms + 200 ms)
@@ -952,12 +909,12 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 
 			// No terminal D1 mirror is allowed when the authoritative DO status is
 			// unreconciled after mark-failed retry exhaustion.
-			expect(setPuzzleFamilyStatus).not.toHaveBeenCalled();
+			expect(setPuzzleStatus).not.toHaveBeenCalled();
 
 			// CRITICAL error must have been logged after all retries failed.
 			// The log call uses a single string argument (no second arg).
 			expect(consoleSpy).toHaveBeenCalledWith(
-				expect.stringContaining(`CRITICAL: Failed to mark family ${workflowFamilyId} as failed`)
+				expect.stringContaining(`CRITICAL: Failed to mark puzzle ${puzzleId} as failed`)
 			);
 
 			consoleSpy.mockRestore();
@@ -976,9 +933,9 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 	});
 
 	it('reconciles D1 to ready and skips CRITICAL when the DO refuses ready → failed (409)', async () => {
-		const workflowFamilyId = familyId;
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		vi.mocked(setPuzzleFamilyStatus).mockClear();
+		const puzzleId = sampleMetadata.id;
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockClear();
 
 		// DO returns 409 for a failed-status update (simulating the DO's
 		// ready → failed refusal after finalize already committed 'ready'),
@@ -987,7 +944,7 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 			if (body.updates?.status === 'failed') {
 				return new Response(
 					JSON.stringify({
-						message: `Puzzle ${familyId} is already ready; refusing transition to failed`
+						message: `Puzzle ${puzzleId} is already ready; refusing transition to failed`
 					}),
 					{ status: 409 }
 				);
@@ -998,7 +955,7 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 		// null bucket → "image not found" in decode-validate → catch → mark-failed
 		const env = {
 			PUZZLES_BUCKET: { get: vi.fn(async () => null), put: vi.fn(async () => {}) },
-			PUZZLE_METADATA: createFamilyMockKv(),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -1007,7 +964,7 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-already-ready'
 		};
@@ -1017,23 +974,15 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 
 		const step = createMockStep();
 		await expect(workflow.run(event, step)).rejects.toThrow(
-			`Original image not found for family ${workflowFamilyId}`
+			`Original image not found for puzzle ${puzzleId}`
 		);
 
 		// mark-failed hit the 409 already-ready path: it must reconcile D1 to
 		// 'ready' (the puzzle's true terminal state), never 'failed'.
-		expect(setPuzzleFamilyStatus).toHaveBeenCalledWith(
-			expect.anything(),
-			workflowFamilyId,
-			'ready'
-		);
-		expect(setPuzzleFamilyStatus).not.toHaveBeenCalledWith(
-			expect.anything(),
-			workflowFamilyId,
-			'failed'
-		);
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
+		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
 		expect(step.do).toHaveBeenCalledWith(
-			'reconcile-family-already-ready-status-to-d1',
+			'reconcile-already-ready-status-to-d1',
 			{
 				retries: {
 					limit: 3,
@@ -1068,9 +1017,15 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('completes all three 1:1 difficulty variants and marks family ready', async () => {
-		const aspectRatio: PuzzleAspectRatio = '1:1';
-		const easyCount = getDifficultyPieceCount(aspectRatio, 'easy');
+	it('completes successfully for a 2x2 (4-piece) puzzle exercising edge helpers', async () => {
+		const fourPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2
+		};
+		const puzzleId = fourPieceMetadata.id;
+
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -1079,7 +1034,7 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			PUZZLE_METADATA: createFamilyMockKv({ aspectRatio }),
+			PUZZLE_METADATA: createMockKv(fourPieceMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -1088,7 +1043,100 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		// Final DO call should mark puzzle as ready
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// Piece uploads: row updates each send cols (2) pieces; 2 rows * 2 cols = 4 total
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+		expect(allPieces).toHaveLength(fourPieceMetadata.pieceCount);
+	});
+
+	it('completes successfully for a 3x3 (9-piece) puzzle covering non-border edge types', async () => {
+		const ninePieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3
+		};
+		const puzzleId = ninePieceMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(ninePieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		// Final DO call should mark puzzle as ready
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// Piece uploads: row updates each send cols (3) pieces; 3 rows * 3 cols = 9 total
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+		expect(allPieces).toHaveLength(ninePieceMetadata.pieceCount);
+	});
+
+	it('completes for a 2x3 (6-piece) non-square puzzle exercising getGridDimensions', async () => {
+		// 6 pieces: getGridDimensions(6) → rows=2, cols=3 (non-square path)
+		const sixPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 6,
+			gridCols: 3,
+			gridRows: 2
+		};
+		const puzzleId = sixPieceMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(sixPieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
@@ -1097,24 +1145,36 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 
 		const calls = stub.fetch.mock.calls;
 		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
-		expect(lastBody.puzzleId).toBe(familyId);
 		expect(lastBody.updates.status).toBe('ready');
 
+		// All 6 pieces should be generated across 2 rows × 3 cols
 		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
 			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
 			return b.updates?.pieces ?? [];
 		});
-		expect(allPieces).toHaveLength(totalPiecesForAspectRatio(aspectRatio));
+		expect(allPieces).toHaveLength(sixPieceMetadata.pieceCount);
 
-		const easyPieces = allPieces.filter(
-			(p: { puzzleId?: string }) => p.puzzleId === variantIds.easy
-		);
-		expect(easyPieces).toHaveLength(easyCount);
+		// Each row should emit exactly 3 pieces (cols=3)
+		const batchSizes = calls
+			.map((c: [string, RequestInit?]) => {
+				const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+				return (b.updates?.pieces as unknown[] | undefined) ?? [];
+			})
+			.filter((pieces: unknown[]) => pieces.length > 0)
+			.map((pieces: unknown[]) => pieces.length);
+		expect(batchSizes).toEqual([3, 3]);
 	});
 
-	it('generates portrait 3:4 grids for all difficulties', async () => {
-		const aspectRatio: PuzzleAspectRatio = '3:4';
-		const portraitCount = getDifficultyPieceCount(aspectRatio, 'normal');
+	it('uses aspect-ratio metadata to generate portrait grids', async () => {
+		const portraitMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 48,
+			gridCols: 6,
+			gridRows: 8,
+			aspectRatio: '3:4'
+		};
+		const puzzleId = portraitMetadata.id;
+
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -1123,7 +1183,7 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			PUZZLE_METADATA: createFamilyMockKv({ aspectRatio }),
+			PUZZLE_METADATA: createMockKv(portraitMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -1132,23 +1192,39 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
 
 		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
 
-		const normalPieces = stub.fetch.mock.calls
-			.flatMap((c: [string, RequestInit?]) => {
+		const batchSizes = stub.fetch.mock.calls
+			.map((c: [string, RequestInit?]) => {
 				const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
-				return (b.updates?.pieces as Array<{ puzzleId?: string }> | undefined) ?? [];
+				return (b.updates?.pieces as unknown[] | undefined) ?? [];
 			})
-			.filter((p) => p.puzzleId === variantIds.normal);
-		expect(normalPieces).toHaveLength(portraitCount);
+			.filter((pieces: unknown[]) => pieces.length > 0)
+			.map((pieces: unknown[]) => pieces.length);
+		const allPieces = stub.fetch.mock.calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+
+		expect(batchSizes).toEqual([6, 6, 6, 6, 6, 6, 6, 6]);
+		expect(allPieces).toHaveLength(48);
 	});
 
-	it('marks family failed when family metadata is missing from KV', async () => {
+	it('completes for a 1x7 (7-piece) puzzle where getGridDimensions falls back to 1 row', async () => {
+		// 7 is prime: getGridDimensions(7) → rows=1, cols=7
+		const sevenPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 7,
+			gridCols: 7,
+			gridRows: 1
+		};
+		const puzzleId = sevenPieceMetadata.id;
+
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -1157,7 +1233,7 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		});
 		const env = {
 			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			PUZZLE_METADATA: { get: vi.fn(async () => null) },
+			PUZZLE_METADATA: createMockKv(sevenPieceMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
@@ -1166,227 +1242,46 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
 			instanceId: 'test-instance'
 		};
 
-		await expect(workflow.run(event, createMockStep())).rejects.toThrow('not found');
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
 
-		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
-		expect(body.puzzleId).toBe(familyId);
-		expect(body.updates.status).toBe('failed');
-	});
-});
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
 
-describe('Family workflow checkpoint names', () => {
-	const familyId = '550e8400-e29b-41d4-a716-446655440000';
-	const variantIds = {
-		easy: '550e8400-e29b-41d4-a716-446655440001',
-		normal: '550e8400-e29b-41d4-a716-446655440002',
-		hard: '550e8400-e29b-41d4-a716-446655440003'
-	};
-
-	const familyMetadata = {
-		id: familyId,
-		name: 'Test Family',
-		aspectRatio: '4:3' as const,
-		createdAt: 1700000000000,
-		status: 'processing' as const,
-		variants: variantIds
-	};
-
-	function createFamilyKv() {
-		const variantStore: Record<string, PuzzleMetadata> = {};
-		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
-			const variantId = variantIds[difficulty];
-			variantStore[variantId] = {
-				id: variantId,
-				familyId,
-				difficulty,
-				name: 'Test Family',
-				aspectRatio: '4:3',
-				pieceCount: difficulty === 'easy' ? 12 : difficulty === 'normal' ? 48 : 108,
-				gridCols: difficulty === 'easy' ? 4 : difficulty === 'normal' ? 8 : 12,
-				gridRows: difficulty === 'easy' ? 3 : difficulty === 'normal' ? 6 : 9,
-				imageWidth: 0,
-				imageHeight: 0,
-				createdAt: 1700000000000,
-				status: 'processing',
-				version: 0,
-				pieces: [],
-				progress: {
-					totalPieces: difficulty === 'easy' ? 12 : difficulty === 'normal' ? 48 : 108,
-					generatedPieces: 0,
-					updatedAt: 1700000000000
-				}
-			};
-		}
-		return {
-			get: vi.fn(async (key: string, type?: string) => {
-				if (key === `family:${familyId}`) {
-					const value = JSON.stringify(familyMetadata);
-					return type === 'json' ? JSON.parse(value) : value;
-				}
-				if (key.startsWith('puzzle:')) {
-					const id = key.slice('puzzle:'.length);
-					const meta = variantStore[id];
-					if (!meta) return null;
-					return type === 'json' ? meta : JSON.stringify(meta);
-				}
-				return null;
-			}),
-			put: vi.fn(async () => undefined)
-		};
-	}
-
-	afterEach(() => {
-		mockWidth = 100;
-		mockHeight = 100;
-		photonInstances = [];
-		vi.restoreAllMocks();
-	});
-
-	it('uses difficulty-qualified checkpoint names for three variants', async () => {
-		const { namespace } = createMockDurableObjectNamespace(() => {
-			return new Response(JSON.stringify({ success: true }), {
-				status: 200,
-				headers: { 'Content-Type': 'application/json' }
-			});
+		// All 7 pieces should be generated in a single row
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
 		});
-		const env = {
-			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
-			PUZZLE_METADATA: createFamilyKv(),
-			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
-			PUZZLE_WORKFLOW: {} as Workflow,
-			DB: {} as D1Database
-		} as unknown as Env;
+		expect(allPieces).toHaveLength(sevenPieceMetadata.pieceCount);
 
-		const stepNames: string[] = [];
-		const step = {
-			do: vi.fn(async (name: string, configOrFn: unknown, maybeFn?: unknown) => {
-				stepNames.push(name);
-				const fn =
-					typeof configOrFn === 'function'
-						? (configOrFn as () => Promise<unknown>)
-						: (maybeFn as () => Promise<unknown>);
-				return await fn();
-			}),
-			sleep: vi.fn(async () => undefined),
-			sleepUntil: vi.fn(async () => undefined),
-			waitForEvent: vi.fn(async () => ({
-				payload: {},
-				timestamp: new Date(),
-				type: 'event'
-			}))
-		} as WorkflowStep;
-
-		const workflow = new TestWorkflow();
-		workflow.setEnv(env);
-
-		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
-			timestamp: new Date(),
-			instanceId: 'test-family-instance'
-		};
-
-		await workflow.run(event, step);
-
-		expect(stepNames).toContain('generate-easy-row-0');
-		expect(stepNames).toContain('finalize-easy');
-		expect(stepNames).toContain('generate-normal-row-0');
-		expect(stepNames).toContain('finalize-normal');
-		expect(stepNames).toContain('generate-hard-row-0');
-		expect(stepNames).toContain('finalize-hard');
-		expect(stepNames).toContain('finalize-family');
-
-		const rowNames = stepNames.filter(
-			(name) => name.startsWith('generate-') && name.includes('-row-')
-		);
-		const uniqueRowNames = new Set(rowNames);
-		expect(uniqueRowNames.size).toBe(rowNames.length);
-	});
-});
-
-describe('Family workflow status rollup when one difficulty fails', () => {
-	const familyId = '550e8400-e29b-41d4-a716-446655440000';
-	const variantIds = {
-		easy: '550e8400-e29b-41d4-a716-446655440001',
-		normal: '550e8400-e29b-41d4-a716-446655440002',
-		hard: '550e8400-e29b-41d4-a716-446655440003'
-	};
-
-	const familyMetadata = {
-		id: familyId,
-		name: 'Test Family',
-		aspectRatio: '1:1' as const,
-		createdAt: 1700000000000,
-		status: 'processing' as const,
-		variants: variantIds
-	};
-
-	function createFamilyKv() {
-		const variantStore: Record<string, PuzzleMetadata> = {};
-		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
-			const variantId = variantIds[difficulty];
-			const pieceCount = getDifficultyPieceCount('1:1', difficulty);
-			const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, '1:1');
-			variantStore[variantId] = {
-				id: variantId,
-				familyId,
-				difficulty,
-				name: 'Test Family',
-				aspectRatio: '1:1',
-				pieceCount,
-				gridCols: cols,
-				gridRows: rows,
-				imageWidth: 0,
-				imageHeight: 0,
-				createdAt: 1700000000000,
-				status: 'processing',
-				version: 0,
-				pieces: [],
-				progress: {
-					totalPieces: pieceCount,
-					generatedPieces: 0,
-					updatedAt: 1700000000000
-				}
-			};
-		}
-		return {
-			get: vi.fn(async (key: string, type?: string) => {
-				if (key === `family:${familyId}`) {
-					const value = JSON.stringify(familyMetadata);
-					return type === 'json' ? JSON.parse(value) : value;
-				}
-				if (key.startsWith('puzzle:')) {
-					const id = key.slice('puzzle:'.length);
-					const meta = variantStore[id];
-					if (!meta) return null;
-					return type === 'json' ? meta : JSON.stringify(meta);
-				}
-				return null;
-			}),
-			put: vi.fn(async () => undefined)
-		};
-	}
-
-	afterEach(() => {
-		mockWidth = 100;
-		mockHeight = 100;
-		photonInstances = [];
-		vi.restoreAllMocks();
+		// The single row should emit all 7 pieces in one batch
+		const batchSizes = calls
+			.map((c: [string, RequestInit?]) => {
+				const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+				return (b.updates?.pieces as unknown[] | undefined) ?? [];
+			})
+			.filter((pieces: unknown[]) => pieces.length > 0)
+			.map((pieces: unknown[]) => pieces.length);
+		expect(batchSizes).toEqual([7]);
 	});
 
-	it('continues sibling difficulties, keeps their assets, and marks family failed', async () => {
-		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
-		vi.mocked(setPuzzleFamilyStatus).mockClear();
-
-		const putKeys: string[] = [];
-		const bucket = createMockBucket(new ArrayBuffer(8));
-		bucket.put = vi.fn(async (...args: unknown[]) => {
-			putKeys.push(String(args[0]));
-		});
+	it('throws and marks puzzle failed when metadata has invalid aspectRatio/grid combination', async () => {
+		// Metadata with aspectRatio '4:3' but pieceCount=7 which is invalid for 4:3
+		// The cross-validation in validatePuzzleMetadata now catches this at load time
+		const corruptMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 7,
+			gridCols: 7,
+			gridRows: 1,
+			aspectRatio: '4:3'
+		};
+		const puzzleId = corruptMetadata.id;
 
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
@@ -1394,84 +1289,26 @@ describe('Family workflow status rollup when one difficulty fails', () => {
 				headers: { 'Content-Type': 'application/json' }
 			});
 		});
-
 		const env = {
-			PUZZLES_BUCKET: bucket,
-			PUZZLE_METADATA: createFamilyKv(),
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(corruptMetadata),
 			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
-			PUZZLE_WORKFLOW: {} as Workflow,
-			DB: {} as D1Database
+			PUZZLE_WORKFLOW: {} as Workflow
 		} as unknown as Env;
-
-		const stepNames: string[] = [];
-		const step = {
-			do: vi.fn(async (name: string, configOrFn: unknown, maybeFn?: unknown) => {
-				stepNames.push(name);
-				if (name === 'generate-easy-row-0') {
-					throw new Error('easy generation failed');
-				}
-				const fn =
-					typeof configOrFn === 'function'
-						? (configOrFn as () => Promise<unknown>)
-						: (maybeFn as () => Promise<unknown>);
-				return await fn();
-			}),
-			sleep: vi.fn(async () => undefined),
-			sleepUntil: vi.fn(async () => undefined),
-			waitForEvent: vi.fn(async () => ({
-				payload: {},
-				timestamp: new Date(),
-				type: 'event'
-			}))
-		} as WorkflowStep;
 
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
 		const event: WorkflowEvent<WorkflowParams> = {
-			payload: { familyId },
+			payload: { puzzleId },
 			timestamp: new Date(),
-			instanceId: 'test-family-rollup'
+			instanceId: 'test-instance'
 		};
 
-		await expect(workflow.run(event, step)).resolves.toBeUndefined();
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow('Corrupt puzzle metadata');
 
-		expect(stepNames).toContain('mark-easy-failed');
-		expect(stepNames).toContain('generate-normal-row-0');
-		expect(stepNames).toContain('finalize-normal');
-		expect(stepNames).toContain('generate-hard-row-0');
-		expect(stepNames).toContain('finalize-hard');
-		expect(stepNames).toContain('finalize-family');
-		expect(stepNames).not.toContain('finalize-easy');
-
-		const familyFinalizeBody = JSON.parse(
-			(stub.fetch.mock.calls.find((c: [string, RequestInit?]) => {
-				const body = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
-				return body.puzzleId === familyId && body.updates?.status === 'failed';
-			})?.[1]?.body as string | undefined) ?? '{}'
-		);
-		expect(familyFinalizeBody.updates.status).toBe('failed');
-
-		const normalPiecePuts = putKeys.filter(
-			(key) => key.includes(`/pieces/`) && key.includes(variantIds.normal)
-		);
-		const hardPiecePuts = putKeys.filter(
-			(key) => key.includes(`/pieces/`) && key.includes(variantIds.hard)
-		);
-		expect(normalPiecePuts.length).toBeGreaterThan(0);
-		expect(hardPiecePuts.length).toBeGreaterThan(0);
-
-		expect(setPuzzleFamilyStatus).toHaveBeenCalledWith(expect.anything(), familyId, 'failed');
-		expect(step.do).toHaveBeenCalledWith(
-			'mirror-family-failed-status-to-d1',
-			{
-				retries: {
-					limit: 3,
-					delay: '10 seconds',
-					backoff: 'exponential'
-				}
-			},
-			expect.any(Function)
-		);
+		// Should have been marked as failed
+		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
+		expect(body.updates.status).toBe('failed');
 	});
 });

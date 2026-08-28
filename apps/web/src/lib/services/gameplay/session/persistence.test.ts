@@ -176,43 +176,17 @@ describe('createSessionStorageAdapter', () => {
 		const adapter = createSessionStorageAdapter({ storage });
 
 		expect(adapter.loadSession('pz1', context)).toEqual({ status: 'missing' });
-		expect(storage.getItem('puzzle-progress-pz1')).toBe(
-			'{"puzzleId":"pz1","placedPieces":[],"lastUpdated":10}'
-		);
-	});
-
-	it('ignores legacy server keys without v2 prefix during enumeration', () => {
-		const active = { ...validSnapshot(), puzzleId: 'legacy' };
-		const storage = memoryStorage({
-			'puzzle-progress-legacy': JSON.stringify(active)
-		});
-
-		expect(listResumableSessionCandidateIds(storage)).toEqual([]);
-	});
-
-	it('enumerates v2 server variant keys and quick puzzle keys', () => {
-		const serverActive = { ...validSnapshot(), puzzleId: 'variant-1' };
-		const quickActive = { ...validSnapshot(), puzzleId: 'q-quick', source: 'local' as const };
-		const storage = memoryStorage({
-			'puzzle-progress-v2-variant-1': JSON.stringify(serverActive),
-			'puzzle-progress-q-quick': JSON.stringify(quickActive),
-			'puzzle-progress-legacy': JSON.stringify({ ...validSnapshot(), puzzleId: 'legacy' })
-		});
-
-		expect(listResumableSessionCandidateIds(storage)).toEqual(['variant-1', 'q-quick']);
+		expect(storage.getItem('puzzle-progress-pz1')).toBeNull();
 	});
 
 	it('clears a different schema version and reports missing', () => {
 		const store: Record<string, string> = {};
 		const storage = memoryStorage(store);
-		storage.setItem(
-			'puzzle-progress-v2-pz1',
-			JSON.stringify({ schemaVersion: 2, puzzleId: 'pz1' })
-		);
+		storage.setItem('puzzle-progress-pz1', JSON.stringify({ schemaVersion: 2, puzzleId: 'pz1' }));
 		const adapter = createSessionStorageAdapter({ storage });
 
 		expect(adapter.loadSession('pz1', context)).toEqual({ status: 'missing' });
-		expect(storage.getItem('puzzle-progress-v2-pz1')).toBeNull();
+		expect(storage.getItem('puzzle-progress-pz1')).toBeNull();
 	});
 
 	it('round-trips a snapshot through storage and reports loaded', () => {
@@ -225,7 +199,7 @@ describe('createSessionStorageAdapter', () => {
 
 		const result = adapter.loadSession('pz1', context);
 		expect(result.status).toBe('loaded');
-		expect(store['puzzle-progress-v2-pz1']).toBeDefined();
+		expect(store['puzzle-progress-pz1']).toBeDefined();
 	});
 
 	it('reports missing when no key exists', () => {
@@ -238,7 +212,7 @@ describe('createSessionStorageAdapter', () => {
 		const adapter = createSessionStorageAdapter({ storage: memoryStorage(store) });
 		adapter.saveSession('pz1', serializeSession(makeState(), 1)!);
 		adapter.clearSession('pz1');
-		expect(store['puzzle-progress-v2-pz1']).toBeUndefined();
+		expect(store['puzzle-progress-pz1']).toBeUndefined();
 	});
 
 	it('reports write errors through onError without throwing', () => {
@@ -328,11 +302,11 @@ describe('listResumableSessionCandidateIds', () => {
 		};
 		const sealed = { ...validSnapshot(), puzzleId: 'sealed', sealedCompletion: seal() };
 		const storage = memoryStorage({
-			'puzzle-progress-v2-pz1': JSON.stringify(active),
-			'puzzle-progress-v2-paused': JSON.stringify(paused),
-			'puzzle-progress-v2-complete': JSON.stringify(completed),
-			'puzzle-progress-v2-idle': JSON.stringify(noActivity),
-			'puzzle-progress-v2-sealed': JSON.stringify(sealed)
+			'puzzle-progress-pz1': JSON.stringify(active),
+			'puzzle-progress-paused': JSON.stringify(paused),
+			'puzzle-progress-complete': JSON.stringify(completed),
+			'puzzle-progress-idle': JSON.stringify(noActivity),
+			'puzzle-progress-sealed': JSON.stringify(sealed)
 		});
 
 		expect(listResumableSessionCandidateIds(storage)).toEqual(['pz1', 'paused']);
@@ -340,14 +314,14 @@ describe('listResumableSessionCandidateIds', () => {
 
 	it('ignores malformed, old-schema, mismatched, empty, and unrelated keys', () => {
 		const storage = memoryStorage({
-			'puzzle-progress-v2-bad-json': '{',
-			'puzzle-progress-v2-old': JSON.stringify({
+			'puzzle-progress-bad-json': '{',
+			'puzzle-progress-old': JSON.stringify({
 				...validSnapshot(),
 				puzzleId: 'old',
 				schemaVersion: 999
 			}),
-			'puzzle-progress-v2-key-id': JSON.stringify({ ...validSnapshot(), puzzleId: 'other-id' }),
-			'puzzle-progress-v2-': JSON.stringify(validSnapshot()),
+			'puzzle-progress-key-id': JSON.stringify({ ...validSnapshot(), puzzleId: 'other-id' }),
+			'puzzle-progress-': JSON.stringify(validSnapshot()),
 			'unrelated-setting': '1'
 		});
 
@@ -379,18 +353,15 @@ describe('listResumableSessionCandidateIds', () => {
 		//     Array.isArray guard),
 		// alongside a valid resumable entry that must still surface.
 		const store = new Map<string, string>([
-			[
-				'puzzle-progress-v2-resumable',
-				JSON.stringify({ ...validSnapshot(), puzzleId: 'resumable' })
-			],
-			['puzzle-progress-v2-vanished', 'will-be-null']
+			['puzzle-progress-resumable', JSON.stringify({ ...validSnapshot(), puzzleId: 'resumable' })],
+			['puzzle-progress-vanished', 'will-be-null']
 		]);
 		const storage: Storage = {
 			get length() {
 				return store.size + 1; // report one extra slot to force a null key() read
 			},
 			key: (i: number) => Array.from(store.keys())[i] ?? null,
-			getItem: (k: string) => (k === 'puzzle-progress-v2-vanished' ? null : (store.get(k) ?? null)),
+			getItem: (k: string) => (k === 'puzzle-progress-vanished' ? null : (store.get(k) ?? null)),
 			setItem: (k: string, v: string) => {
 				store.set(k, v);
 			},
@@ -402,7 +373,7 @@ describe('listResumableSessionCandidateIds', () => {
 
 		// Overwrite the vanished slot's parsed shape with a JSON array to
 		// exercise the Array.isArray guard on a non-null value.
-		store.set('puzzle-progress-v2-array', JSON.stringify([1, 2, 3]));
+		store.set('puzzle-progress-array', JSON.stringify([1, 2, 3]));
 
 		expect(listResumableSessionCandidateIds(storage)).toEqual(['resumable']);
 	});

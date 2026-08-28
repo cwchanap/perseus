@@ -182,9 +182,7 @@ describe('getMetadata', () => {
 	}
 
 	const validMetadata = {
-		id: '123e4567-e89b-42d3-a456-426614174000',
-		familyId: '223e4567-e89b-42d3-a456-426614174001',
-		difficulty: 'easy',
+		id: 'puzzle-1',
 		name: 'Test Puzzle',
 		pieceCount: 9,
 		gridCols: 3,
@@ -210,16 +208,16 @@ describe('getMetadata', () => {
 
 	it('returns metadata when KV returns valid data', async () => {
 		const kv = makeKV(validMetadata);
-		const result = await getMetadata(kv, '123e4567-e89b-42d3-a456-426614174000');
+		const result = await getMetadata(kv, 'puzzle-1');
 		expect(result).not.toBeNull();
-		expect(result?.id).toBe('123e4567-e89b-42d3-a456-426614174000');
+		expect(result?.id).toBe('puzzle-1');
 		expect(result?.name).toBe('Test Puzzle');
 	});
 
 	it('uses correct KV key format (puzzle:{id})', async () => {
 		const kv = makeKV(validMetadata);
-		await getMetadata(kv, '123e4567-e89b-42d3-a456-426614174099');
-		expect(kv.get).toHaveBeenCalledWith('puzzle:123e4567-e89b-42d3-a456-426614174099', 'json');
+		await getMetadata(kv, 'my-puzzle-123');
+		expect(kv.get).toHaveBeenCalledWith('puzzle:my-puzzle-123', 'json');
 	});
 
 	it('throws when KV returns corrupt data (fails validation)', async () => {

@@ -8,25 +8,21 @@ import {
 } from './downloadManifest';
 
 const IDS = [2, 7, 11, 19];
-const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174000';
-const VARIANT_ID = '223e4567-e89b-42d3-a456-426614174001';
 
 function makePiece(id: number, index: number): PuzzlePiece {
 	return {
 		id,
-		puzzleId: VARIANT_ID,
+		puzzleId: 'p1',
 		correctX: index % 2,
 		correctY: Math.floor(index / 2),
 		edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' },
-		imagePath: `pieces/${VARIANT_ID}/${id}.png`
+		imagePath: `pieces/p1/${id}.png`
 	};
 }
 
 function readyPuzzleWithIds(ids: number[]): ReadyPuzzle {
 	return {
-		id: VARIANT_ID,
-		familyId: FAMILY_ID,
-		difficulty: 'normal',
+		id: 'p1',
 		name: 'Test Puzzle',
 		category: 'Nature',
 		pieceCount: ids.length,
@@ -89,7 +85,7 @@ describe('downloadManifest', () => {
 			downloadedAt: 1234
 		});
 		expect(sessionSpecFromManifest(manifest)).toEqual({
-			puzzleId: VARIANT_ID,
+			puzzleId: 'p1',
 			source: 'api',
 			pieceCount: 4,
 			gridCols: 2,

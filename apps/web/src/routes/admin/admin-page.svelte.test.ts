@@ -22,7 +22,6 @@ vi.mock('$lib/services/api', () => {
 		addPlayerAllowlistEntry: vi.fn(),
 		removePlayerAllowlistEntry: vi.fn(),
 		getReferenceImageUrl: vi.fn((puzzleId: string) => `/api/puzzles/${puzzleId}/reference`),
-		getFamilyThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
 		getThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
 		ApiError: MockApiError
 	};

@@ -1,30 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
-	return {
-		...actual,
-		commitIdempotencyKey: vi.fn(),
-		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
-		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
-		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
-		deletePuzzleAssets: vi.fn(),
-		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
-		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
-		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
-		failIdempotencyKey: vi.fn(),
-		getPuzzle: vi.fn(),
-		getFamily: vi.fn(),
-		listFamilies: vi.fn(),
-		enrichFamilySummary: vi.fn(),
-		originalImageExists: vi.fn(),
-		puzzleExists: vi.fn(),
-		releaseIdempotencyKey: vi.fn(),
-		reserveIdempotencyKey: vi.fn(),
-		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
-	};
-});
+vi.mock('../../services/storage.worker', () => ({
+	commitIdempotencyKey: vi.fn(),
+	createPuzzleMetadata: vi.fn(),
+	deletePuzzleAssets: vi.fn(),
+	deletePuzzleMetadata: vi.fn(),
+	deleteOriginalImage: vi.fn(),
+	failIdempotencyKey: vi.fn(),
+	getPuzzle: vi.fn(),
+	listPuzzles: vi.fn(),
+	originalImageExists: vi.fn(),
+	puzzleExists: vi.fn(),
+	releaseIdempotencyKey: vi.fn(),
+	reserveIdempotencyKey: vi.fn(),
+	uploadOriginalImage: vi.fn()
+}));
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -47,16 +38,16 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleFamilyOwnership: vi.fn(),
+		insertPuzzleOwnership: vi.fn(),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
 
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
-import { insertPuzzleFamilyOwnership } from '@perseus/shared';
+import { insertPuzzleOwnership } from '@perseus/shared';
 
 const PNG_HEADER = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -80,8 +71,9 @@ function createEnv() {
 function createRequest(idempotencyKey: string): Request {
 	const formData = new FormData();
 	formData.append('name', 'Cleanup Puzzle');
+	formData.append('pieceCount', '225');
 	formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'puzzle.png');
-	return new Request('http://localhost/puzzle-families', {
+	return new Request('http://localhost/puzzles', {
 		method: 'POST',
 		headers: {
 			cookie: 'session=valid.token',
@@ -96,7 +88,7 @@ describe('Admin Worker final cleanup coverage', () => {
 		vi.clearAllMocks();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			familyId: 'new-puzzle',
+			puzzleId: 'new-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
@@ -104,11 +96,11 @@ describe('Admin Worker final cleanup coverage', () => {
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		vi.mocked(storage.releaseIdempotencyKey).mockResolvedValue(undefined);
 		vi.mocked(storage.failIdempotencyKey).mockResolvedValue(undefined);
-		vi.mocked(insertPuzzleFamilyOwnership as any).mockResolvedValue(undefined);
+		vi.mocked(insertPuzzleOwnership as any).mockResolvedValue(undefined);
 	});
 
 	it('keeps puzzle creation successful when the best-effort D1 insert rejects', async () => {
-		vi.mocked(insertPuzzleFamilyOwnership as any).mockRejectedValue(new Error('D1 unavailable'));
+		vi.mocked(insertPuzzleOwnership as any).mockRejectedValue(new Error('D1 unavailable'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const response = await admin.fetch(createRequest('d1-key'), createEnv() as any);
