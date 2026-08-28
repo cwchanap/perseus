@@ -626,6 +626,7 @@ describe('cleanupLegacyPuzzles', () => {
 	const wranglerCalls: string[][] = [];
 	const logs: string[] = [];
 	const originalLog = console.log;
+	const originalFetch = globalThis.fetch;
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), 'perseus-cleanup-'));
@@ -638,6 +639,7 @@ describe('cleanupLegacyPuzzles', () => {
 
 	afterEach(() => {
 		console.log = originalLog;
+		globalThis.fetch = originalFetch;
 		rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -659,7 +661,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -686,7 +687,6 @@ describe('cleanupLegacyPuzzles', () => {
 		).rejects.toThrow(/not ready/i);
 
 		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('refuses cleanup when manifest legacyIds lack ready imported families', async () => {
@@ -707,7 +707,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -734,7 +733,6 @@ describe('cleanupLegacyPuzzles', () => {
 		).rejects.toThrow(/missing imported family/i);
 
 		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('deletes legacy KV and R2 objects with bucket/key delete argv after verify succeeds', async () => {
@@ -755,7 +753,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -791,7 +788,6 @@ describe('cleanupLegacyPuzzles', () => {
 		expect(
 			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${PUZZLE_A}/pieces/0.png`)
 		).toBe(true);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('treats R2 not-found delete errors as success', async () => {
@@ -812,7 +808,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -843,7 +838,6 @@ describe('cleanupLegacyPuzzles', () => {
 				runWrangler
 			})
 		).resolves.toBeUndefined();
-		globalThis.fetch = originalFetch;
 	});
 
 	it('does not delete leftover puzzle: keys that are imported family variant ids', async () => {
@@ -864,7 +858,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(JSON.stringify({ families: [readyFamilyResponse(FAMILY_A, 'Alpha')] }), {
@@ -902,7 +895,6 @@ describe('cleanupLegacyPuzzles', () => {
 			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${VARIANT_EASY}/original`)
 		).toBe(false);
 		expect(wranglerCalls.some((args) => args.includes(`puzzle:${PUZZLE_A}`))).toBe(true);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('does not delete leftover puzzle: keys whose KV metadata includes familyId', async () => {
@@ -924,7 +916,6 @@ describe('cleanupLegacyPuzzles', () => {
 		);
 
 		const orphanVariant = '44444444-4444-4444-8444-444444444444';
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(JSON.stringify({ families: [readyFamilyResponse(FAMILY_A, 'Alpha')] }), {
@@ -972,7 +963,6 @@ describe('cleanupLegacyPuzzles', () => {
 		expect(
 			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${orphanVariant}/original`)
 		).toBe(false);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('fails closed when a leftover puzzle: key lacks a usable pieceCount', async () => {
@@ -993,7 +983,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -1036,7 +1025,6 @@ describe('cleanupLegacyPuzzles', () => {
 		);
 
 		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('deletes leftover puzzle: KV keys not covered by the manifest', async () => {
@@ -1057,7 +1045,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -1099,7 +1086,6 @@ describe('cleanupLegacyPuzzles', () => {
 		expect(
 			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${PUZZLE_C}/original`)
 		).toBe(true);
-		globalThis.fetch = originalFetch;
 	});
 
 	it('prints delete plan on --dry-run without invoking wrangler mutations', async () => {
@@ -1120,7 +1106,6 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		);
 
-		const originalFetch = globalThis.fetch;
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
@@ -1152,6 +1137,5 @@ describe('cleanupLegacyPuzzles', () => {
 		expect(wranglerCalls.some((args) => args.includes('list'))).toBe(true);
 		expect(logs.some((line) => line.includes('dry-run'))).toBe(true);
 		expect(logs.some((line) => line.includes(`puzzle:${PUZZLE_A}`))).toBe(true);
-		globalThis.fetch = originalFetch;
 	});
 });

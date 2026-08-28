@@ -791,8 +791,8 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		// The cleanup record must NOT be deleted on KV failure — the reaper
 		// needs it to retry KV (and R2/DO) cleanup on its next run.
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		// D1 ownership cleanup must not run either — the reaper handles it
-		// after KV succeeds.
+		// R2 asset cleanup still runs ahead of the KV metadata delete — the
+		// reaper retries the failed KV delete from the retained cleanup record.
 		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalled();
 	});
 
@@ -921,9 +921,6 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		expect(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		).toBeLessThan(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]);
-		expect(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]).toBeLessThan(
-			vi.mocked(storage.deleteCleanupRecord).mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER
-		);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });

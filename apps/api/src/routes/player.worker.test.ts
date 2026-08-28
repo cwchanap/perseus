@@ -1532,7 +1532,7 @@ describe('player lists (Worker)', () => {
 		});
 	});
 
-	it('GET stats forwards limit and v2 cursor query params', async () => {
+	it('GET stats forwards limit and v3 cursor query params', async () => {
 		const { listPlayerStats } = await import('@perseus/shared');
 		await buildApp().request(
 			'/api/player/stats?limit=10&cursor=v3%7C1%7C%7Cfam-variant%7Cnormal',

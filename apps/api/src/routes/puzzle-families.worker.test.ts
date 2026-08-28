@@ -608,17 +608,7 @@ describe('Puzzle Family Routes', () => {
 		});
 
 		it('creates a family with three variant UUIDs and no pieceCount', async () => {
-			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
-				sessionHash: 'session-hash',
-				user: {
-					id: 'player-1',
-					email: 'player@example.com',
-					createdAt: 1000,
-					lastLoginAt: 2000
-				},
-				createdAt: 2000,
-				expiresAt: Date.now() + 1000
-			});
+			mockSignedInSession();
 			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
 			vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 			vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
@@ -650,17 +640,7 @@ describe('Puzzle Family Routes', () => {
 		});
 
 		it('rejects pieceCount in the form', async () => {
-			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
-				sessionHash: 'session-hash',
-				user: {
-					id: 'player-1',
-					email: 'player@example.com',
-					createdAt: 1000,
-					lastLoginAt: 2000
-				},
-				createdAt: 2000,
-				expiresAt: Date.now() + 1000
-			});
+			mockSignedInSession();
 
 			const formData = new FormData();
 			formData.append('name', 'Player Family');
