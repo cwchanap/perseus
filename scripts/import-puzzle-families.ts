@@ -13,6 +13,7 @@ import {
 import { resolveAccessToken, probeAccessToken, probeServiceToken } from './startup/token';
 import {
 	applyDotenvOverrides,
+	assertHttpsCredentialServer,
 	FatalError,
 	FETCH_TIMEOUT_MS,
 	isLocalServer,
@@ -66,6 +67,7 @@ function readManifest(migrationDir: string): LegacyExportManifest {
 }
 
 async function resolveAccess(options: ImportOptions): Promise<Record<string, string>> {
+	assertHttpsCredentialServer(options.server);
 	if (options.skipAccess || isLocalServer(options.server)) return accessHeaders(options);
 	if (!hasAccessCredentials(options)) {
 		throw new FatalError('Cloudflare Access credentials are required for production import.');

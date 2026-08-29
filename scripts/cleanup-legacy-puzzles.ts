@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import {
 	applyDotenvOverrides,
+	assertHttpsCredentialServer,
 	FatalError,
 	FETCH_TIMEOUT_MS,
 	isLocalServer,
@@ -26,6 +27,8 @@ import {
 	type ImportResults,
 	type ImportedFamily
 } from './import-puzzle-families';
+
+export { assertHttpsCredentialServer } from './startup/types';
 
 export type CleanupOptions = AccessCredentials & {
 	server: string;
@@ -420,19 +423,6 @@ function readArg(args: string[], name: string): string | undefined {
 	const value = args[index + 1];
 	if (!value || value.startsWith('--')) return undefined;
 	return value;
-}
-
-/**
- * Access credentials are sent as headers on every request — refuse to send
- * them over anything but HTTPS to a remote host (local dev servers excepted)
- * so a mistyped --server/PERSEUS_SERVER cannot leak a service token.
- */
-export function assertHttpsCredentialServer(server: string): void {
-	if (!server.startsWith('https:') && !isLocalServer(server)) {
-		throw new FatalError(
-			`Refusing to send Cloudflare Access credentials to non-HTTPS server: ${server}`
-		);
-	}
 }
 
 async function parseCliOptions(): Promise<CleanupOptions> {

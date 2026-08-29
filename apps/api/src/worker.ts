@@ -136,6 +136,7 @@ app.route('/api/player', player);
 import {
 	reapStuckPuzzles,
 	reapCleanupRecords,
+	reapLegacyCleanupRecords,
 	reapOrphanedReservations,
 	reapOrphanedAvatars
 } from './services/reaper';
@@ -238,6 +239,24 @@ export default {
 					}
 				} catch (err) {
 					console.error('Reaper cleanup: scheduled run failed:', err);
+				}
+				// Drain legacy cleanup records (pre-family-scoped shape) that
+				// isValidCleanupRecord silently skips. These records' R2 assets
+				// and idempotency state would never be cleaned up without this
+				// drain path.
+				try {
+					const legacyResult = await reapLegacyCleanupRecords(env);
+					if (legacyResult.scanned > 0) {
+						console.log(
+							`Reaper legacy cleanup: scanned=${legacyResult.scanned} ` +
+								`reaped=${legacyResult.reaped} errors=${legacyResult.errors}`
+						);
+						if (legacyResult.details.length > 0) {
+							console.log('Reaper legacy cleanup details:', JSON.stringify(legacyResult.details));
+						}
+					}
+				} catch (err) {
+					console.error('Reaper legacy cleanup: scheduled run failed:', err);
 				}
 				// Reap puzzles whose idempotency key was reclaimed by a retry
 				// (ownership-mismatch reconciliation). Closes the gap where a

@@ -31,6 +31,9 @@ import {
 	getFamily,
 	listFamilies,
 	listCleanupRecords,
+	listLegacyCleanupRecords,
+	deleteLegacyPuzzleAssets,
+	deleteCleanupRecord,
 	releaseIdempotencyKey,
 	buildCleanupRecordFromFamily
 } from './storage.worker';
@@ -488,6 +491,92 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 		'cleanup-records',
 		(cursor + batch.length) % records.length
 	);
+
+	return result;
+}
+
+/**
+ * Drain legacy cleanup records (pre-family-scoped shape: { puzzleId,
+ * pieceCount, idempotencyKey?, createdAt }). These records are silently
+ * rejected by isValidCleanupRecord and would never be cleaned up without
+ * this drain path. For each legacy record, delete its R2 assets (using
+ * the old puzzles/{id}/ key prefix), release its idempotency key if
+ * present, and delete the KV cleanup record. Any failure retains the
+ * record for a later reaper pass.
+ */
+export async function reapLegacyCleanupRecords(env: Env): Promise<ReapResult> {
+	const result: ReapResult = {
+		scanned: 0,
+		candidates: 0,
+		reaped: 0,
+		errors: 0,
+		details: []
+	};
+
+	const records = await listLegacyCleanupRecords(env.PUZZLE_METADATA);
+	result.scanned = records.length;
+	result.candidates = records.length;
+
+	if (records.length === 0) {
+		return result;
+	}
+
+	for (const record of records) {
+		const puzzleId = record.puzzleId;
+		try {
+			const r2Result = await deleteLegacyPuzzleAssets(
+				env.PUZZLES_BUCKET,
+				puzzleId,
+				record.pieceCount
+			);
+			if (!r2Result.success) {
+				console.error(
+					`Reaper legacy cleanup: R2 asset deletion failed for ${puzzleId}:`,
+					r2Result.failedKeys
+				);
+				result.errors++;
+				result.details.push({
+					puzzleId,
+					action: 'legacy-cleanup-r2-failed',
+					error: `failed keys: ${r2Result.failedKeys.join(', ')}`
+				});
+				continue;
+			}
+
+			if (record.idempotencyKey) {
+				try {
+					await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, puzzleId);
+				} catch (releaseErr) {
+					console.error(
+						`Reaper legacy cleanup: idempotency release failed for ${puzzleId}:`,
+						releaseErr
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId,
+						action: 'legacy-cleanup-release-failed',
+						error: String(releaseErr)
+					});
+					continue;
+				}
+			}
+
+			await deleteCleanupRecord(env.PUZZLE_METADATA, puzzleId);
+			result.reaped++;
+			result.details.push({
+				puzzleId,
+				action: 'legacy-cleanup-reaped'
+			});
+		} catch (err) {
+			console.error(`Reaper legacy cleanup: unexpected error for ${puzzleId}:`, err);
+			result.errors++;
+			result.details.push({
+				puzzleId,
+				action: 'legacy-cleanup-error',
+				error: String(err)
+			});
+		}
+	}
 
 	return result;
 }
