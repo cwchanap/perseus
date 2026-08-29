@@ -1245,6 +1245,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+			// The family record is kept as the recovery anchor when a variant
+			// delete fails — deleting it would strand the orphaned variant KV
+			// record (family/reaper scans are family-scoped).
+			expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		});
 
 		it('fails reservation (not release) when R2 image cleanup fails after missing workflow binding', async () => {
@@ -1376,6 +1380,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+			// The family record is kept as the recovery anchor when a variant
+			// delete fails — deleting it would strand the orphaned variant KV
+			// record (family/reaper scans are family-scoped).
+			expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		});
 
 		it('should return 409 when key is reserved but metadata is missing', async () => {
@@ -2414,6 +2422,10 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 		const body = (await res.json()) as any;
 		expect(body.message).toBe('Failed to create puzzle metadata');
 		// Variant deletion failure alone must fail (not release) the reservation.
+		// The family record is kept as the recovery anchor — deleting it would
+		// strand the orphaned variant KV record (family/reaper scans are
+		// family-scoped).
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA_DO,
 			'abc123def456',

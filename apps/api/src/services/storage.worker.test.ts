@@ -1366,6 +1366,19 @@ describe('legacy cleanup records', () => {
 		expect(records[0].puzzleId).toBe(good.puzzleId);
 	});
 
+	it('listLegacyCleanupRecords rejects invalid pieceCount values (-1, 1.5, MAX_PIECES + 1)', async () => {
+		const kv = createMockKV();
+		const good = makeLegacyRecord('f1e4567-e89b-42d3-a456-426614174005');
+		kv._store.set(`cleanup:${good.puzzleId}`, JSON.stringify(good));
+		kv._store.set('cleanup:neg', JSON.stringify(makeLegacyRecord('neg', { pieceCount: -1 })));
+		kv._store.set('cleanup:frac', JSON.stringify(makeLegacyRecord('frac', { pieceCount: 1.5 })));
+		kv._store.set('cleanup:over', JSON.stringify(makeLegacyRecord('over', { pieceCount: 251 })));
+
+		const records = await listLegacyCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(1);
+		expect(records[0].puzzleId).toBe(good.puzzleId);
+	});
+
 	it('deleteLegacyPuzzleAssets deletes original, thumbnail, and piece keys', async () => {
 		const bucket = {
 			delete: vi.fn(async () => undefined)

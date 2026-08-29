@@ -22,7 +22,8 @@ import {
 	PUZZLE_CATEGORIES,
 	PUZZLE_DIFFICULTIES,
 	getDifficultyPieceCount,
-	getGridDimensionsForAspectRatio
+	getGridDimensionsForAspectRatio,
+	MAX_PIECES
 } from '@perseus/types';
 
 // Re-export types so consumers don't need to import from @perseus/types directly
@@ -1186,7 +1187,19 @@ function isValidLegacyCleanupRecord(data: unknown): data is LegacyCleanupRecord 
 	if (!data || typeof data !== 'object') return false;
 	const record = data as Record<string, unknown>;
 	if (typeof record.puzzleId !== 'string' || record.puzzleId.length === 0) return false;
-	if (typeof record.pieceCount !== 'number' || !Number.isFinite(record.pieceCount)) return false;
+	// Require a positive safe integer no greater than MAX_PIECES. A negative or
+	// fractional pieceCount makes the piece-key loop no-op or delete the wrong
+	// count while the reaper still removes the cleanup record (orphaned pieces),
+	// and an unbounded value lets deleteLegacyPuzzleAssets construct an
+	// arbitrarily large key array. Number.isInteger also rejects NaN/Infinity.
+	if (
+		typeof record.pieceCount !== 'number' ||
+		!Number.isInteger(record.pieceCount) ||
+		record.pieceCount <= 0 ||
+		record.pieceCount > MAX_PIECES
+	) {
+		return false;
+	}
 	if (typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt)) return false;
 	if (record.idempotencyKey !== undefined && typeof record.idempotencyKey !== 'string') {
 		return false;

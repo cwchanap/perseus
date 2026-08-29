@@ -1459,13 +1459,22 @@ admin.post('/puzzle-families', async (c) => {
 					);
 					if (!variantCleanup.success) metadataCleanup = variantCleanup;
 				}
-				const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
-				if (!familyCleanup.success) {
-					console.error(
-						'Failed to cleanup puzzle family metadata after metadata creation failure:',
-						familyCleanup.error
-					);
-					metadataCleanup = familyCleanup;
+				// Only remove the family record when every variant delete
+				// succeeded. A failed variant delete leaves an orphaned variant
+				// KV record that is unreachable once the family record is gone
+				// (family/reaper scans are family-scoped). Keeping the family
+				// record preserves the recovery anchor so a retry reclaims
+				// through the DO's serialized reservation path instead of
+				// minting a replacement family alongside the orphan.
+				if (metadataCleanup.success) {
+					const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+					if (!familyCleanup.success) {
+						console.error(
+							'Failed to cleanup puzzle family metadata after metadata creation failure:',
+							familyCleanup.error
+						);
+						metadataCleanup = familyCleanup;
+					}
 				}
 			}
 			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
@@ -1536,19 +1545,27 @@ admin.post('/puzzle-families', async (c) => {
 					metadataCleanup = variantCleanup;
 				}
 			}
-			const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
-			if (!familyCleanup.success) {
-				// Metadata cleanup failed — the processing metadata remains in
-				// KV as an orphan. Fail (not release) the reservation so a
-				// retry reclaims through the DO's serialized path instead of
-				// releasing the key and minting a replacement alongside the
-				// orphaned puzzle. The orphan is explicit for operator
-				// force-delete.
-				console.error(
-					'Failed to cleanup puzzle metadata after missing workflow binding:',
-					familyCleanup.error
-				);
-				metadataCleanup = familyCleanup;
+			// Only remove the family record when every variant delete succeeded.
+			// A failed variant delete leaves an orphaned variant KV record that
+			// is unreachable once the family record is gone (family/reaper scans
+			// are family-scoped). Keeping the family record preserves the
+			// recovery anchor so a retry reclaims through the DO's serialized
+			// path instead of minting a replacement family alongside the orphan.
+			if (metadataCleanup.success) {
+				const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+				if (!familyCleanup.success) {
+					// Metadata cleanup failed — the processing metadata remains in
+					// KV as an orphan. Fail (not release) the reservation so a
+					// retry reclaims through the DO's serialized path instead of
+					// releasing the key and minting a replacement alongside the
+					// orphaned puzzle. The orphan is explicit for operator
+					// force-delete.
+					console.error(
+						'Failed to cleanup puzzle metadata after missing workflow binding:',
+						familyCleanup.error
+					);
+					metadataCleanup = familyCleanup;
+				}
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
@@ -1698,13 +1715,21 @@ admin.post('/puzzle-families', async (c) => {
 					metadataCleanup = variantCleanup;
 				}
 			}
-			const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
-			if (!familyCleanup.success) {
-				console.error(
-					'Failed to cleanup puzzle family metadata after workflow trigger failure:',
-					familyCleanup.error
-				);
-				metadataCleanup = familyCleanup;
+			// Only remove the family record when every variant delete succeeded.
+			// A failed variant delete leaves an orphaned variant KV record that is
+			// unreachable once the family record is gone (family/reaper scans are
+			// family-scoped). Keeping the family record preserves the recovery
+			// anchor so a retry reclaims through the DO's serialized path instead
+			// of minting a replacement family alongside the orphan.
+			if (metadataCleanup.success) {
+				const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+				if (!familyCleanup.success) {
+					console.error(
+						'Failed to cleanup puzzle family metadata after workflow trigger failure:',
+						familyCleanup.error
+					);
+					metadataCleanup = familyCleanup;
+				}
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
