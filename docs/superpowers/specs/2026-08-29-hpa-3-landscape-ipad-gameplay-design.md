@@ -116,14 +116,7 @@ The board owns the flexible majority column. The tray is a fixed practical right
 
 Starting a downloaded variant constructs a fresh `PuzzleSession` in `setup` and opens a concrete setup sheet. It does **not** auto-dispatch `start`.
 
-The setup sheet exposes only:
-
-- Timed / Relaxed;
-- Rotation Off / On;
-- Start;
-- Back to Library.
-
-Start dispatches `configure_setup`, then `start`, then persists immediately.
+The setup sheet exposes only Timed/Relaxed, Rotation Off/On, Start, and Back to Library. Start dispatches `configure_setup`, then `start`, then persists immediately.
 
 Remove the HPA-1 all-zero `createRotations` override. Rotation-enabled runs use the existing game-core default generator.
 
@@ -146,27 +139,11 @@ Pause dispatches `pause`, persists, and opens a concrete Pause sheet. Resume dis
 
 ### Background / foreground
 
-Backgrounding is not explicit Pause.
-
-Suspend ordering is load-bearing:
-
-1. `session.setDocumentHidden(true)` so the engine checkpoints/stops the clock;
-2. serialize/save the now-current state;
-3. leave sheet state unchanged.
-
-Foreground calls `setDocumentHidden(false)`. It does not force Pause UI. A session explicitly paused before backgrounding remains paused.
+Backgrounding is not explicit Pause. Suspend ordering is load-bearing: first `session.setDocumentHidden(true)` so the engine checkpoints/stops the clock, then serialize/save the current state, leaving sheet state unchanged. Foreground calls `setDocumentHidden(false)` without forcing Pause UI.
 
 ### Restart
 
-Restart is a fresh run:
-
-- confirm when meaningful activity exists;
-- dispatch `restart`;
-- persist the setup-state replacement immediately;
-- reopen setup seeded from prior mode/rotation choices;
-- next Start dispatches `configure_setup + start`.
-
-Restart gets a fresh shuffled tray order and resets viewport to Fit. Existing engine filter-reset behavior remains authoritative.
+Restart confirms when meaningful activity exists, dispatches `restart`, persists setup state, reopens setup seeded from prior mode/rotation, and the next Start dispatches `configure_setup + start`. Restart gets a fresh shuffled tray order and resets viewport to Fit.
 
 ### Discard
 
@@ -174,334 +151,121 @@ Discard confirms, calls existing `SessionStorageAdapter.clearSession(puzzleId)`,
 
 ## Small tested session policy seam
 
-Do not add Svelte component testing infrastructure just for HPA-3. Instead, move only the persistence/lifecycle decisions that are easy to regress into `apps/mobile/app/gameplay/gameplaySessionPolicy.ts` with normal Vitest coverage.
+Do not add Svelte component testing infrastructure just for HPA-3. Move only the persistence/lifecycle decisions that are easy to regress into `apps/mobile/app/gameplay/gameplaySessionPolicy.ts` with normal Vitest coverage.
 
-The file is not a controller or store. It holds four deterministic helpers over tiny interfaces:
-
-```ts
-entrySheetFor(restored): 'setup' | 'pause' | null
-suspendSession(session, save): void
-commitViewport(session, viewport, save): PuzzleSessionOutcome
-discardProgress(storage, puzzleId): boolean
-```
-
-Tests use fakes to pin:
-
-- fresh -> Setup;
-- active restored -> no sheet and **no dispatch**;
-- paused restored -> Pause;
-- suspend calls hidden=true before save;
-- viewport persists only after `viewport_changed`;
-- invalid viewport does not save;
-- discard returns the storage result.
-
-`Gameplay.svelte` remains wiring. Ephemeral hint/feedback presentation stays component-local; do not build a reducer/framework around it.
+The file is not a controller or store. It contains only four deterministic helpers: `entrySheetFor`, `suspendSession`, `commitViewport`, and `discardProgress`. Tests use fakes to pin fresh/active/paused entry policy, hide-before-save suspend ordering, viewport-save gating, and discard result. `Gameplay.svelte` remains wiring; ephemeral hint/feedback presentation stays component-local.
 
 ## Persisted viewport seam
 
 The V1 schema already contains optional `PersistedViewport { zoom, panX, panY }`; the codec already round-trips it and rejects non-finite numbers or `zoom <= 0`.
 
-Add one engine action:
-
-```ts
-{ type: 'set_viewport'; viewport: PersistedViewport | null }
-```
-
-with outcomes:
-
-```ts
-{ type: 'viewport_changed'; viewport: PersistedViewport | null }
-{ type: 'viewport_noop'; reason: 'invalid_viewport' }
-```
-
-The transition mirrors the codec numeric predicate, clones the value, notifies subscribers, and never marks gameplay activity, result eligibility, or undo/redo history.
-
-`null` means Fit/default and serializes without the optional field.
+Add one engine action `{ type: 'set_viewport'; viewport: PersistedViewport | null }` with `viewport_changed` and `viewport_noop` outcomes. It mirrors the codec numeric predicate, clones the value, notifies subscribers, and never marks gameplay activity, result eligibility, or undo/redo history. `null` means Fit/default.
 
 ### Shared persisted units
 
-Task 1 updates the `PersistedViewport` type comment so the shared boundary is unambiguous for future consumers:
+Task 1 documents the shared units on `PersistedViewport`:
 
 - `zoom` = multiplier over fit-to-viewport cell scale (`1` = Fit);
-- `panX`/`panY` = offsets in **fit-cell units**, not pixels;
+- `panX`/`panY` = offsets in fit-cell units, not pixels;
 - positive pan moves the board right/down;
-- app-side UI may clamp the usable range, but persisted units are portable.
+- app UI may clamp its usable range, but persisted units are portable.
 
 The web’s current live viewport uses different non-persisted CSS-pixel/absolute-scale values. HPA-3 does not reuse or change that helper.
 
-Mobile UI clamps zoom to `1..4`. At Fit, pan normalizes to zero and persistence uses `null`. Pan is clamped so the board cannot be moved completely out of view; a transformed axis that still fits remains centered.
+Mobile UI clamps zoom to `1..4`. At Fit, pan normalizes to zero and persistence uses `null`. Pan is clamped so the board cannot be moved completely out of view; an axis that still fits remains centered.
 
 ## One board geometry source
 
-`boardViewport.ts` is the only module allowed to compute fit geometry or canonical cell hit-testing.
+`boardViewport.ts` is the only module allowed to compute fit geometry or canonical cell hit-testing. It owns layout DIPs -> backing pixels, screen-DIP -> backing coordinates, `createBoardTransform`, explicit `calculateFitZoom(..., 1)`, fit/zoom/pan clamp, `BoardTransform.cellAt`, two-pointer focal transform, and double-tap Fit suppression.
 
-It owns:
-
-- layout DIPs -> Canvas backing pixels;
-- screen-DIP -> Canvas backing coordinate conversion;
-- `createBoardTransform()`;
-- explicit `calculateFitZoom(..., 1)` use;
-- fit/zoom/pan clamp;
-- `BoardTransform.cellAt()`;
-- two-pointer focal transform;
-- double-tap Fit suppression helper.
-
-`boardViewModel.ts` becomes a draw projection over a supplied `BoardTransform`. It must not call `calculateFitZoom()` and must not own a second `cellAt()` formula.
-
-A discriminating unit test pins the production fit formula:
-
-- 2×2 board in an 800×600 Canvas -> `fitCellSize === 300`, `boardX === 100`.
-
-That assertion fails under the old default `0.9` formula and prevents draw/hit geometry from silently diverging.
+`boardViewModel.ts` becomes a draw projection over a supplied `BoardTransform`; it must not call `calculateFitZoom()` or own a second `cellAt()` formula. A discriminating unit test pins 2×2 in 800×600 to `fitCellSize === 300` and `boardX === 100`.
 
 ## Canvas sizing and first paint
 
 The current fixed `700×800` surface and letterboxing conversion are removed, but the native plugin assumption is proven **before** the tray rewrite.
 
-The production sequence is:
+Production sequence: wait for a non-zero `layoutChanged`, read rendered DIPs, derive backing pixels from density, assign backing `width/height`, recreate transform/view model, then schedule first draw on the next JS turn. This replaces the current arbitrary 100 ms delay while preserving its intent that `loaded` alone is too early.
 
-1. listen for `layoutChanged`;
-2. read non-zero rendered size in DIPs;
-3. derive backing pixels from actual density;
-4. assign Canvas backing `width/height`;
-5. create the transform/view model from that backing size;
-6. schedule the first draw on the next JS turn after the first non-zero layout event.
-
-This replaces the current arbitrary 100 ms first-paint delay while preserving its real intent: `loaded` alone is too early for reliable drawing.
-
-If changing Canvas backing width/height changes NativeScript layout dimensions rather than only backing resolution, stop at the surface gate and revise the Canvas sizing strategy before external tray/gesture work.
+If changing backing dimensions feeds back into NativeScript layout instead of only backing resolution, stop at the surface gate and revise before external tray/gesture work.
 
 ## Board gestures and transient viewport
 
 Final Canvas gesture ownership:
 
-- `touch` with exactly two pointers -> combined zoom + centroid pan;
-- `tap` -> board placement when a piece is selected;
-- `doubleTap` -> Fit when the current sequence was not a placement sequence;
+- exactly two touch pointers -> combined zoom + centroid pan;
+- tap -> board placement when selected;
+- doubleTap -> Fit when not suppressed by a placement sequence;
 - one-finger Canvas movement -> no pan and no piece drag.
 
-The HPA-1 `on:pan`, `pointFromPan`, `pieceAt`, and in-Canvas unplaced-piece path are deleted when the external tray lands.
+The HPA-1 `on:pan`, `pointFromPan`, `pieceAt`, and in-Canvas unplaced path are deleted when the external tray lands.
 
-Two-pointer math always derives the current transform from one gesture-start baseline. Pinch and pan are not applied as separate incremental mutations.
+Two-pointer math derives from one gesture-start baseline. `PuzzleCanvas.svelte` holds `transientViewport: PersistedViewport | null | undefined`; rendering uses transient when defined and session viewport otherwise. Transient changes redraw every frame without persisting; gesture end commits once through `gameplaySessionPolicy.commitViewport()`.
 
-`PuzzleCanvas.svelte` holds a transient viewport during the gesture:
-
-```ts
-let transientViewport: PersistedViewport | null | undefined;
-```
-
-`undefined` means no active gesture; `null` is a valid transient Fit value. Rendering uses:
-
-```text
-transientViewport !== undefined
-  ? transientViewport
-  : sessionState.viewport
-```
-
-Changing `transientViewport` triggers redraw every frame without writing session state. Gesture end commits once through `gameplaySessionPolicy.commitViewport()`.
-
-### Tap vs double-tap
-
-A placement tap records a short suppression window so a following native `doubleTap` callback cannot perform `place -> Fit` after the placement clears selection. A selected-piece sequence remains placement-oriented; More -> Fit Board is always available as the deterministic escape hatch.
-
-Do not delay every placement tap waiting to discover whether a second tap arrives.
+A placement tap records a short suppression window so a later native `doubleTap` callback cannot perform `place -> Fit` after placement clears selection. More -> Fit Board is always available; do not delay every placement tap.
 
 ## External tray and cross-view drag
 
-Unplaced pieces live only in `PuzzleTray.svelte` after the surface gate.
-
-Tap placement:
-
-1. tap tray piece -> `select_piece`;
-2. tap board cell -> `attempt_placement`.
-
-Cross-view dragging uses the narrow callback protocol already planned. `Gameplay.svelte` owns one full-bleed drag overlay spanning both columns, positioned in screen DIPs. The tray never attempts to draw outside its own clipped column; Canvas never owns the in-flight tray piece.
+Unplaced pieces live only in `PuzzleTray.svelte` after the surface gate. `Gameplay.svelte` owns one full-bleed drag overlay spanning board and tray. Tray never draws outside its clipped column; Canvas never owns the in-flight tray piece.
 
 ### Scroll vs drag rule
 
-The tray must remain usable with 100–108-piece Hard variants.
+The tray must remain usable with 100–108-piece Hard variants. Use NativeScript’s high-level `longPress` as the drag arm: ordinary movement before recognition belongs to ScrollView; longPress began arms drag and disables scrolling; armed touch move updates overlay; up/cancel drops/snaps back and restores scrolling.
 
-Use NativeScript’s existing **long-press gesture as the drag arm**:
+Do not add a custom duration or generic gesture arbiter unless the installed runtime proves the high-level recognizer cannot coexist with ScrollView. Task 3B is an explicit native stop gate for this assumption.
 
-- ordinary vertical movement before long-press recognition belongs to the ScrollView;
-- `longPress` began arms the piece drag and disables tray scrolling;
-- while armed, touch move updates the full-bleed overlay;
-- touch up/cancel performs drop/snap-back and re-enables scrolling.
-
-Do not add a custom duration or generic gesture arbiter unless the installed NativeScript/iOS behavior proves the high-level recognizer cannot coexist with ScrollView. This is an explicit Task 3B native stop gate.
-
-Drop semantics:
-
-- outside board -> clear overlay, no gameplay dispatch;
-- wrong slot/non-upright -> same `attempt_placement`, reject feedback, snap back;
-- accepted -> tray projection removes the piece, board renders canonical placement.
-
-Drag coordinates are never persisted.
+Drop outside board is a no-op; wrong slot/non-upright uses the normal engine rejection path; accepted drop places canonically. Drag coordinates are never persisted.
 
 ## Tray behavior and order
 
-Expose only:
+Expose remaining count, All/Corners/Edges/Center, Shuffle, selected highlight, and selected-piece Rotate when enabled. Use `matchesInventoryFilter()` for visible projection.
 
-- remaining count;
-- All / Corners / Edges / Center;
-- Shuffle;
-- selected highlight;
-- selected-piece Rotate when rotation is enabled.
+Keep all-unplaced IDs separate from visible-unplaced IDs. Reorder/Shuffle always receives a complete permutation of all unplaced IDs even when a non-All filter is active; this has an explicit regression test.
 
-Use `matchesInventoryFilter()` from game-core for visible projection.
-
-Keep two distinct concepts:
-
-- **all unplaced IDs** -> source for reorder/shuffle;
-- **visible unplaced IDs** -> filtered rendering only.
-
-Shuffle under Corners/Edges/Center must still dispatch a complete permutation of **all** unplaced IDs; passing the filtered subset would correctly no-op in the engine and is explicitly unit-tested.
-
-Do not expose `activeTray`, membership, names, rename/remove, multi-select, or clustering.
-
-Hints continue to use the existing `hint_target` event. Mobile keeps target/piece highlight ephemeral; the engine remains responsible for resetting the filter to All.
+Do not expose active tray, membership, names, rename/remove, multi-select, or clustering. Hint target/piece highlight stays ephemeral; engine remains responsible for resetting filter to All.
 
 ## Toolbar, reference and feedback
 
-Visible controls: Library, puzzle/difficulty, timer, Undo, Redo, Hint, Reference, More.
+Visible controls: Library, puzzle/difficulty, timer, Undo, Redo, Hint, Reference, More. More expands Fit Board, Rotation On/Off, Pause, Restart, Discard. Reference expands Hold to Peek, Toggle, Ghost using only the downloaded reference asset; there is no network fallback.
 
-More expands exactly: Fit Board, Rotation On/Off, Pause, Restart, Discard.
-
-Reference expands: Hold to Peek, Toggle, Ghost. Use only the downloaded reference asset; there is no network fallback.
-
-Placement feedback stays ephemeral:
-
-- accepted -> brief target-cell success flash;
-- rejected -> brief target-cell reject flash;
-- hint target -> persistent outline until consumed/replaced.
-
-No animation framework or sound system is added.
+Placement feedback stays ephemeral: accepted success flash, rejected failure flash, and separate persistent hint outline. No animation framework or sound system is added.
 
 ## Completion
 
-Completion is local-only in HPA-3.
+Completion is local-only in HPA-3. On `completion_sealed`, persist the sealed session immediately and show a concrete native sheet with puzzle/difficulty, Timed/Relaxed, elapsed time when applicable, hints, incorrect attempts, rotation enabled/used, and Back to Library.
 
-On `completion_sealed`:
-
-1. persist the sealed session immediately;
-2. show a concrete native completion sheet projected from `SealedCompletion` + downloaded variant metadata.
-
-Show puzzle name/difficulty, Timed/Relaxed, elapsed time when applicable, hints, incorrect attempts, rotation enabled/used, and Back to Library.
-
-Do not add completion API calls, auth, outbox, achievements, leaderboards, or another local completion database. HPA-4 owns account-bound completion submission.
-
-Downloaded row copy reuses `getDifficultyLabel()` exactly, matching Gallery casing such as `Easy · 16 PIECES`.
+Do not add completion API calls, auth, outbox, achievements, leaderboards, or another local completion database. HPA-4 owns account-bound submission. Downloaded row copy reuses `getDifficultyLabel()` exactly, matching Gallery casing such as `Easy · 16 PIECES`.
 
 ## Testing strategy
 
-### Game-core
-
-Tests pin:
-
-- valid viewport store/clone;
-- `zoom <= 0` and non-finite rejection;
-- Fit clearing;
-- no activity/history/result-class mutation;
-- serializer/loader round trip;
-- shared persisted units documented on the type.
-
-### Mobile pure tests
-
-Vitest covers:
-
-- layout-DIP/backing-pixel conversion;
-- screen-DIP -> Canvas conversion;
-- discriminating no-padding fit geometry;
-- zoom/pan/inverse cell transform;
-- two-pointer focal/centroid math;
-- double-tap suppression;
-- draw projection uses supplied transform;
-- fresh/restart/button shuffle from one helper;
-- filtered visible projection vs complete unplaced reorder input;
-- `gameplaySessionPolicy` entry/suspend/viewport/discard behavior and call ordering.
-
-No Svelte component-test framework is added.
+Game-core tests pin viewport validation/history/activity/round-trip and the shared unit comment. Mobile Vitest pins layout/backing conversion, screen→Canvas conversion, discriminating fit geometry, zoom/pan/inverse transform, two-pointer math, double-tap suppression, draw projection over supplied transform, shuffle policy, filtered-vs-all unplaced projection, and `gameplaySessionPolicy` call ordering. No Svelte component-test framework is added.
 
 ### Native gates
 
-#### Surface gate (Task 3A)
+**Task 3A surface gate:** prove Canvas layout/backing sizing, first post-layout paint, existing tap/drag hit testing, and relayout before changing interaction ownership.
 
-Before external tray work:
-
-- Canvas fills current board column on the iPad simulator;
-- backing dimensions follow rendered DIPs × density;
-- first post-layout paint succeeds without the old 100 ms delay;
-- existing in-Canvas tap/drag still hit the expected cells at device density;
-- relayout recreates geometry without stale coordinates.
-
-#### Tray gate (Task 3B)
-
-Use a downloaded Hard variant (100–108 pieces) to prove the behavior Easy cannot exercise:
-
-- tray actually scrolls;
-- ordinary scroll does not start drag;
-- long-press drag can start without scrolling;
-- overlay stays visible across tray -> board;
-- outside drop is no-op;
-- valid board drop reaches the correct canonical cell.
-
-If long-press + ScrollView cannot be made reliable with the installed high-level NativeScript gestures, stop this task and choose the smallest local iOS-compatible alternative. Do not introduce a generic gesture subsystem.
+**Task 3B tray gate:** use a downloaded Hard variant to prove real tray scrolling, ordinary scroll vs long-press drag separation, cross-column overlay visibility, outside drop, and valid drop. If longPress+ScrollView is unreliable, stop and choose the smallest local alternative.
 
 ### Final offline acceptance
 
-Avoid a pointless manual 100-piece solve. Download both:
-
-- one Hard variant for the scroll/zoom/drag stress path;
-- one Easy variant for the complete offline journey.
-
-After downloads, stop the API/network dependency.
-
-Hard stress path verifies tray scrolling, long-press drag, pinch, two-finger pan, Fit and transform-aware placement.
-
-Easy full journey verifies setup, shuffled start, tap/drag placement, rotation, filters/shuffle, Hint, all references, undo/redo, pause/resume, viewport restore, background timing, offline completion sheet, and protected completed progress.
+Download one Hard variant for scroll/zoom/drag stress and one Easy variant for the complete offline journey. Hard verifies the dense interaction path but does **not** require a 100–108-piece manual solve. Easy verifies setup, shuffled start, tap/drag, rotation, filters/shuffle, Hint, references, undo/redo, pause/resume, viewport restore, background timing, offline completion, and protected completed progress.
 
 If reliable multi-touch automation is unavailable, record explicit manual evidence rather than adding a fragile native E2E framework.
 
 ## Risks and stop conditions
 
-1. **Canvas backing-size semantics** — prove in Task 3A before tray/gesture rewrite.
-2. **DIP vs backing-pixel coordinates** — one tested `screenPointToCanvas()` conversion only.
-3. **First-paint readiness** — first non-zero `layoutChanged` + next-turn draw replaces fixed 100 ms delay; native gate proves it.
-4. **ScrollView vs piece drag recognizers** — long-press arm is the intended rule; Hard tray gate proves it before proceeding.
-5. **Tap vs double-tap recognizers** — placement sequence suppresses Fit; no delayed placement.
-6. **Cross-column clipping** — full-bleed Gameplay overlay owns in-flight piece.
-7. **Transient gesture redraw** — transient viewport participates in reactive draw but persists only once at gesture end.
-8. **Shared viewport units** — units are documented on the shared type before the first writer ships.
+1. Canvas backing-size semantics — prove in Task 3A.
+2. DIP vs backing-pixel coordinates — one tested conversion only.
+3. First-paint readiness — first non-zero layout + next-turn draw.
+4. ScrollView vs piece drag recognizers — Hard tray gate proves long-press arm.
+5. Tap vs double-tap recognizers — placement sequence suppresses Fit.
+6. Cross-column clipping — full-bleed Gameplay overlay.
+7. Transient gesture redraw — render transient, persist once on end.
+8. Shared viewport units — document before first writer ships.
 
 ## Scope fence
 
-HPA-3 does **not** include:
-
-- portrait/live orientation switching (HPA-46);
-- phone UI;
-- Android release/polish;
-- draggable tray sizing;
-- named/staging/manual tray organization;
-- local-photo puzzle creation;
-- Google login, cloud session sync, completion outbox/server retry, achievements, leaderboards, or account UI (HPA-4);
-- backend/API/D1/Workflow/infrastructure changes;
-- new download/session schema version;
-- a second gameplay controller/store;
-- web viewport-helper sharing;
-- generic toolbar/dialog/gesture/responsive-layout frameworks;
-- broad native E2E infrastructure.
+HPA-3 excludes portrait/live orientation switching (HPA-46), phone UI, Android release polish, draggable tray sizing, named/staging/manual tray organization, local-photo creation, auth/cloud sync/completion outbox/progression (HPA-4), backend/API/D1/Workflow/infrastructure changes, new schema versions, a second controller/store, web viewport sharing, generic UI/gesture frameworks, and broad native E2E infrastructure.
 
 ## Acceptance mapping
 
-HPA-3 is complete when:
-
-- iPad gameplay is landscape-only for this slice, with a dynamic Canvas majority column and persistent usable right tray;
-- one geometry module owns fit, transform and cell hit-testing;
-- Hard tray stress proves scrolling, drag arming, cross-column overlay and zoom/pan behavior;
-- tap placement and cross-view drag share the same `attempt_placement` path;
-- Timed/Relaxed, rotation, undo/redo, hints, reference modes, filters/shuffle, pause/resume, restart/discard and completion are driven through `PuzzleSession`;
-- the load-bearing entry/suspend/viewport/discard decisions are covered by pure unit tests rather than only a manual checklist;
-- backgrounding stops elapsed time without forcing Pause UI;
-- viewport restores from the existing V1 optional field using documented portable units;
-- one downloaded Easy variant can be completed entirely offline through the production landscape UI;
-- no manual tray grouping, backend/auth work, schema migration, second controller, or generic native framework is added.
+HPA-3 is complete when landscape iPad gameplay uses a dynamic Canvas + usable right tray; one geometry module owns fit/transform/cell mapping; Hard stress proves scroll/drag/zoom behavior; placement routes through one `attempt_placement`; gameplay parity remains `PuzzleSession`-driven; load-bearing entry/suspend/viewport/discard policy is unit-tested; backgrounding stops elapsed time without forcing Pause; viewport restores in documented portable units; one Easy variant completes entirely offline; and no HPA-46/HPA-4/backend/schema/framework scope leaks in.
