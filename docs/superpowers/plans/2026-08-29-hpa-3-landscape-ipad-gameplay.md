@@ -565,7 +565,7 @@ Do not remove the all-zero `createRotations` override yet; Task 5 removes it wit
 ```svelte
 <scrollView bind:this={trayScroll} isScrollEnabled={!dragArmed}>
   <stackLayout>
-    <!-- render piece views from visible piece IDs -->
+    <!-- piece views from visible piece IDs -->
   </stackLayout>
 </scrollView>
 ```
@@ -623,7 +623,7 @@ BoardViewModel final interface is draw projection only.
 
 - [ ] **Step 6: Compose landscape layout and lock iPad orientation**
 
-Use one layered page GridLayout with board/tray `columns="*,320"` and the drag overlay above both. No resizable divider.
+Use one layered page GridLayout with board/tray `columns="*,320"` and drag overlay above both. No resizable divider.
 
 Set `UISupportedInterfaceOrientations~ipad` to landscape left/right only and run:
 
