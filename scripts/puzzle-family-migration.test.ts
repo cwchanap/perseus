@@ -343,6 +343,32 @@ describe('exportLegacyPuzzles', () => {
 		expect(manifest.puzzles[0]?.aspectRatio).toBe('1:1');
 		expect(manifest.puzzles[0]?.category).toBeUndefined();
 	});
+
+	it('rejects a non-HTTPS remote server before probing credentials', async () => {
+		let probed = false;
+		globalThis.fetch = mock(async () => {
+			probed = true;
+			return new Response('', { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async () => ({
+			exitCode: 0,
+			stdout: '[]',
+			stderr: ''
+		});
+
+		await expect(
+			exportLegacyPuzzles({
+				server: 'http://evil.example.com',
+				outputDir: dir,
+				skipAccess: false,
+				cfAccessToken: 'jwt.secret',
+				fetchFn: globalThis.fetch,
+				runWrangler
+			})
+		).rejects.toThrow(/non-HTTPS/);
+		expect(probed).toBe(false);
+	});
 });
 
 describe('importPuzzleFamilies', () => {

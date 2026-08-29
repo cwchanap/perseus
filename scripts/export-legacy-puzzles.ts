@@ -14,6 +14,7 @@ import { accessHeaders, hasAccessCredentials } from './startup/upload';
 import { resolveAccessToken, probeAccessToken, probeServiceToken } from './startup/token';
 import {
 	applyDotenvOverrides,
+	assertHttpsCredentialServer,
 	FatalError,
 	FETCH_TIMEOUT_MS,
 	isLocalServer,
@@ -262,6 +263,7 @@ async function downloadOriginal(
 }
 
 async function resolveAccess(options: ExportOptions): Promise<Record<string, string>> {
+	assertHttpsCredentialServer(options.server);
 	if (options.skipAccess || isLocalServer(options.server)) return accessHeaders(options);
 	if (!hasAccessCredentials(options)) {
 		throw new FatalError('Cloudflare Access credentials are required for production export.');
@@ -368,6 +370,7 @@ Exports ready legacy puzzles from production into ${MIGRATION_DIR}/.
 		dotenv.PERSEUS_SERVER ??
 		'https://perseus.cwchanap.dev'
 	).replace(/\/+$/, '');
+	assertHttpsCredentialServer(server);
 	const outputDir = readArg(args, '--output') ?? join(root, MIGRATION_DIR);
 	const skipAccess = args.includes('--skip-access') || isLocalServer(server);
 
