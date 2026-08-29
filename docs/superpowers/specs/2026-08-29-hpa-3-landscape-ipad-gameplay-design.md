@@ -1,57 +1,39 @@
 # HPA-3 Landscape iPad Gameplay Design
 
-**Date:** 2026-08-29
-**Linear:** HPA-3 — [Perseus Mobile] Reach production landscape iPad gameplay parity
+**Date:** 2026-08-29  
+**Linear:** HPA-3 — [Perseus Mobile] Reach production landscape iPad gameplay parity  
 **Depends on:** HPA-2 (Done)
 
 ## Goal
 
-Turn the proven NativeScript offline vertical slice into the real landscape-first iPad puzzle experience without creating a second gameplay architecture.
+Turn the proven NativeScript offline vertical slice into the production landscape-first iPad puzzle experience without creating a second gameplay architecture.
 
-The mobile app should use the existing `@perseus/game-core` `PuzzleSession` for every gameplay rule, keep downloaded sessions fully local/offline, and add only the native rendering, touch interaction, and concrete tablet UI that HPA-3 needs.
+HPA-3 keeps `@perseus/game-core` `PuzzleSession` as the only gameplay controller, keeps downloaded sessions fully local/offline, and adds only the native rendering, coordinate/gesture handling, and concrete tablet UI needed for the shipped landscape loop.
 
-## Current baseline
+## Verified baseline
 
-HPA-1 and HPA-2 are complete. Current `main` already has:
+Current `main` after PR #73 already has:
 
-- one pure shared `@perseus/game-core` with `PuzzleSession`, history, hints, rotation, inventory filters, session codec, and file/browser storage adapters;
-- one NativeScript app composition root in `apps/mobile/app/App.svelte`;
-- explicit variant downloads with manifest-last finalization and a filesystem-derived Downloaded library;
+- one pure `@perseus/game-core` with `PuzzleSession`, lifecycle/time, placement, history, hints, rotation, inventory filtering, persistence codec, and storage-adapter semantics;
+- one NativeScript composition root in `apps/mobile/app/App.svelte`;
+- explicit variant downloads and a filesystem-derived Downloaded library;
 - variant-scoped session files keyed by `ReadyPuzzle.id`;
-- a working Canvas vertical slice with tap-piece/tap-cell placement and one-finger piece dragging;
-- lifecycle checkpointing on NativeScript suspend/resume;
-- the puzzle-family + Easy/Normal/Hard catalog model from PR #73.
+- a working HPA-1 Canvas slice with tap/drag placement;
+- puzzle-family + Easy/Normal/Hard catalog data already carried by `ReadyPuzzle` and `DownloadManifestV1`.
 
-The production gap is intentionally concentrated in `apps/mobile/app/gameplay`: the current `Gameplay.svelte` still auto-starts a run and presents debug labels, while `PuzzleCanvas.svelte` still renders a temporary in-canvas piece strip with a fixed fit-only viewport.
+The mobile gameplay code is intentionally still prototype-level:
 
-PR #73 changes the catalog identity but does not require a new HPA-3 persistence model. `DownloadManifestV1` already embeds the current `ReadyPuzzle`, including `familyId` and `difficulty`. Gameplay remains a concrete **variant** session keyed by `manifest.puzzle.id`; family and difficulty are display/catalog metadata.
+- `Gameplay.svelte` immediately dispatches `start`/`resume` and uses sorted piece IDs plus an all-zero rotation override;
+- `PuzzleCanvas.svelte` has a fixed `700 × 800` backing surface, an in-canvas temporary piece strip, and an `on:pan` handler that owns piece dragging;
+- `toCanvasPoint()` compensates for the fixed backing surface being letterboxed inside the rendered view.
+
+Those seams are the target of HPA-3. No backend or persistence migration is required.
 
 ## Delivery decision
 
-Use one implementation PR for HPA-3. The planning branch created for this design becomes that implementation PR; do not create a second implementation PR.
+Use one HPA-3 PR. The planning branch is the implementation branch; implementation continues on the same PR with task-sized commits. Do not split HPA-3 across multiple PRs.
 
-### Recommended approach: concrete mobile feature components around `PuzzleSession`
-
-Keep `Gameplay.svelte` as the composition/orchestration root and split only concrete product surfaces that have distinct responsibilities:
-
-- `PuzzleCanvas.svelte` — board rendering, viewport transform, board gestures, coordinate conversion, reference rendering, and board feedback;
-- `PuzzleTray.svelte` — the persistent right-side unplaced-piece tray, selection, cross-view drag events, filters, shuffle, and selected-piece Rotate action;
-- `GameplayToolbar.svelte` — visible actions plus one concrete More row and one concrete Reference row;
-- concrete setup/pause/discard/completion sheet components;
-- a small pure `boardViewport.ts` for transform/clamp math;
-- one small `PuzzleSession` action for persisting the viewport through the already-existing `viewport` field.
-
-This reuses the engine and persistence boundaries already proven by HPA-1/HPA-2 while keeping native interaction concerns mobile-local.
-
-### Rejected: keep all production behavior in `Gameplay.svelte` and `PuzzleCanvas.svelte`
-
-This would initially create fewer files, but it would mix session lifecycle, menus/sheets, filters, cross-view drag ownership, Canvas gesture arbitration, transforms, reference drawing, and completion presentation in two already-growing files. The short-term file-count saving would make HPA-46 portrait work harder and testing less focused.
-
-### Rejected: add a mobile gameplay controller/store or generic gesture/dialog framework
-
-`PuzzleSession` is already the canonical gameplay controller. A second controller or Redux-style store would duplicate ownership and synchronization. Generic toolbar, dialog, gesture, or responsive-layout abstractions have no second mobile caller today and are explicitly outside HPA-3.
-
-## Architecture and ownership
+## Ownership
 
 ```text
 App.svelte
@@ -60,7 +42,7 @@ App.svelte
         v
 Gameplay.svelte
   session construction + dispatch orchestration
-  ephemeral UI state + persistence checkpoints
+  persistence boundaries + ephemeral UI/drag state
       /        |          \
      v         v           v
 Toolbar      Tray        Canvas
@@ -73,126 +55,103 @@ controls     pieces      board/render/gestures
        session file adapter
 ```
 
-Ownership rules:
-
 | Concern | Owner |
 | --- | --- |
-| Placement validity, mode, timer, rotation, undo/redo, hint selection, reference mode, inventory filter/order, completion seal | `PuzzleSession` |
-| Session serialization and validation | existing game-core codec |
-| Download/package/session identity | concrete variant `puzzle.id` |
-| Family/difficulty identity | existing `ReadyPuzzle` metadata; presentation only in HPA-3 |
-| Viewport persisted value | `PuzzleSession.state.viewport` through one new action |
-| Viewport fit/clamp/coordinate math | mobile `boardViewport.ts` |
-| Gesture ownership and Canvas drawing | `PuzzleCanvas.svelte` |
-| Cross-view tray drag | `PuzzleTray.svelte` + `Gameplay.svelte` coordinator |
-| Dialog/sheet visibility and transient hint/rejection feedback | route-local state in `Gameplay.svelte` |
+| Placement validity, lifecycle/mode/time, rotation, history, hints, reference mode, filter/order, completion seal | `PuzzleSession` |
+| Session serialization/validation | existing game-core codec |
+| Download/session identity | concrete variant `manifest.puzzle.id` |
+| Family/difficulty | current `ReadyPuzzle` metadata; presentation only |
+| Persisted viewport value | `PuzzleSession.state.viewport` through one new action |
+| Fit/zoom/pan/screen-coordinate math | mobile `boardViewport.ts` |
+| Board drawing + Canvas gesture ownership | `PuzzleCanvas.svelte` |
+| Persistent tray and piece touch | `PuzzleTray.svelte` |
+| Cross-column drag visualization + dispatch coordination | `Gameplay.svelte` |
+| Setup/pause/discard/completion presentation | concrete mobile sheets |
 
-No backend, D1, Workflow, API route, auth, completion outbox, download-manifest version, or new global store is needed.
+Do not import web Svelte components or `apps/web/src/lib/services/gameplay/viewport.ts`. The web viewport helper owns a different pixel-pan policy and is not persisted. Reuse only portable game-core helpers such as `calculateFitZoom()` and `matchesInventoryFilter()`.
 
-## Variant identity after puzzle families
+## Variant identity
 
-A downloaded Easy/Normal/Hard variant is still one complete gameplay package. HPA-3 therefore keeps these invariants:
+A downloaded Easy/Normal/Hard variant remains one complete gameplay package.
 
 - session key: `manifest.puzzle.id`;
-- asset paths: the existing installed variant paths;
-- session validation: `sessionSpecFromManifest(manifest)`;
-- display: puzzle family name plus `difficulty` and piece count;
-- no session field for mutable difficulty;
-- changing difficulty means leaving gameplay and opening/downloading another concrete variant.
+- asset paths: existing installed variant paths;
+- validation context: `sessionSpecFromManifest(manifest)`;
+- family ID and difficulty are display metadata only;
+- changing difficulty means leaving this concrete variant and opening/downloading another one.
 
-No migration is required for HPA-2 manifests or session files.
+No `DownloadManifestV1` or `PersistedPuzzleSessionV1` version bump is needed.
 
-## Landscape-only HPA-3 boundary
+## Landscape-only boundary
 
-HPA-3 ships a concrete landscape tablet layout and temporarily advertises only the two iPad landscape orientations in `Info.plist`.
+HPA-3 temporarily advertises only iPad landscape orientations in `UISupportedInterfaceOrientations~ipad`. The phone block remains unchanged.
 
-This is intentional pre-release scope control, not a reusable orientation policy. HPA-46 owns re-enabling portrait, adapting the layout, and preserving the same board/session state across orientation changes. iPhone optimization and Android release polish remain out of scope.
+HPA-46 owns portrait, orientation changes during an active run, and adaptive tablet layout. HPA-3 does not add a general responsive-layout framework or draggable tray divider.
 
-Landscape layout:
+The gameplay shell is concrete:
 
 ```text
 +------------------------------------------------------------------+
-| < LIBRARY | Puzzle · Difficulty | Timer | Undo Redo Hint Ref More |
+| Library | Puzzle · Difficulty | Timer | Undo Redo Hint Ref More  |
 +--------------------------------------------------+---------------+
-|                                                  | PIECES  n left |
-|                                                  | All Corn Edge |
-|                 PUZZLE BOARD                     | Center Shuffle |
-|                 native Canvas                    |               |
-|                                                  | piece grid    |
+|                                                  | PIECES n left |
+|                                                  | filters       |
+|                 PUZZLE BOARD                     |               |
+|                 native Canvas                    | piece grid    |
 |                                                  |               |
 |                                                  | Rotate        |
 +--------------------------------------------------+---------------+
 ```
 
-The Canvas gets the flexible majority column. The tray is a fixed practical right column (no draggable divider), large enough for touch targets and piece thumbnails.
+The board column is flexible and receives the majority of the screen. The right tray is a practical fixed width around 320 DIP.
 
-## Session entry and lifecycle
+## Canvas surface and coordinate contract
 
-### New run
+The production Canvas must fill the board column. HPA-3 removes the fixed `700 × 800` surface.
 
-Starting a downloaded puzzle creates a fresh `PuzzleSession` in `setup` and shows a concrete setup sheet instead of immediately dispatching `start`.
+On `loaded` and `layoutChanged`:
 
-The sheet exposes only:
+1. read the Canvas rendered size in DIPs with `getActualSize()`;
+2. derive the backing size from the rendered DIP size and display density;
+3. update the Canvas backing width/height only when they changed;
+4. rebuild `BoardViewModel` / `createBoardTransform()` from the current backing size.
 
-- **Timed** / **Relaxed**;
-- **Rotation Off** / **Rotation On**;
-- **Start**;
-- **Back to Library**.
+The Canvas view stays stretched to the board column. The backing dimensions follow the layout; layout does not follow a hard-coded backing surface.
 
-On Start:
+`boardViewport.ts` owns one pure screen-to-canvas conversion used by cross-view placement:
 
-1. dispatch `configure_setup` with the chosen mode and rotation flag;
-2. dispatch `start`;
-3. persist immediately.
+```ts
+interface CanvasSurfaceMetrics {
+  layoutWidthDip: number;
+  layoutHeightDip: number;
+  backingWidth: number;
+  backingHeight: number;
+}
 
-Do not add a separate mobile preference store in HPA-3. Restart can seed the sheet from the current run choices.
+function screenPointToCanvas(
+  screenX: number,
+  screenY: number,
+  originXDip: number,
+  originYDip: number,
+  metrics: CanvasSurfaceMetrics
+): { x: number; y: number } | null;
+```
 
-Fresh rotation-enabled sessions use the existing game-core production rotation generator. Remove the HPA-1 all-zero `createRotations` override.
+The helper subtracts the Canvas screen origin and scales by `backingWidth / layoutWidthDip` and `backingHeight / layoutHeightDip`. It rejects non-finite/zero dimensions and points outside the rendered Canvas.
 
-### Resume
+Once the Canvas fills its layout cell, the HPA-1 letterboxing compensation in `toCanvasPoint()` is deleted. Do not keep two screen-to-canvas formulas.
 
-The existing Downloaded classifier remains authoritative.
+## Board fit and persisted viewport
 
-- A resumable snapshot whose lifecycle is `active` restores active gameplay.
-- A resumable snapshot whose lifecycle is `paused` remains paused and opens the Pause sheet. It is **not** automatically resumed.
-- A sealed completed snapshot stays `protected` in Downloaded and does not expose Resume.
-- Invalid progress remains owned by the existing Downloaded recovery actions.
+The schema already contains optional:
 
-### Explicit Pause
-
-Pause dispatches `pause`, persists immediately, and opens a concrete Pause sheet. Resume dispatches `resume` and closes the sheet.
-
-The Pause sheet owns Resume, Restart, Back to Library, and Discard Progress. Restart/Discard use their explicit confirmations where destructive state exists.
-
-### Background / foreground
-
-Backgrounding is not the same as explicit Pause.
-
-On suspend:
-
-1. call `session.setDocumentHidden(true)` first so the shared clock checkpoints and stops;
-2. serialize and save the now-current state;
-3. leave the UI sheet state unchanged.
-
-On foreground, call `setDocumentHidden(false)`. Do not open the Pause sheet merely because the app was backgrounded. An explicitly paused session remains paused because the engine lifecycle is still `paused`.
-
-### Restart
-
-Restart is a new run, not an undo-all operation.
-
-- If the run has user activity, require confirmation.
-- Dispatch `restart`.
-- Re-open the setup sheet seeded with the prior mode/rotation choices.
-- The next Start runs `configure_setup` + `start` and persists immediately.
-- Fresh state resets viewport to Fit (`viewport === null`) and filter to All through existing engine semantics.
-
-### Discard
-
-Discard confirms, calls the existing `SessionStorageAdapter.clearSession(puzzleId)`, and returns to Library only after a successful clear. Failure remains on the sheet with a small inline error; no generic error framework is introduced.
-
-## Persisted viewport seam
-
-The schema already contains optional `PersistedViewport { zoom, panX, panY }`, and the codec already validates and round-trips it. HPA-3 should not bypass `PuzzleSession` by mutating serialized snapshots directly.
+```ts
+interface PersistedViewport {
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+```
 
 Add exactly one engine action:
 
@@ -200,71 +159,79 @@ Add exactly one engine action:
 { type: 'set_viewport'; viewport: PersistedViewport | null }
 ```
 
-and outcomes:
+with outcomes:
 
 ```ts
 { type: 'viewport_changed'; viewport: PersistedViewport | null }
 { type: 'viewport_noop'; reason: 'invalid_viewport' }
 ```
 
-The engine validates only that a non-null viewport contains finite numeric values, clones it, notifies subscribers, and does **not**:
+`doSetViewport()` must accept only the same numeric domain the codec already accepts:
 
-- mark `hasUserActivity`;
-- affect result class;
-- enter undo/redo history;
-- affect completion effects.
+- `zoom` is finite and **strictly greater than 0**;
+- `panX`/`panY` are finite;
+- `null` means Fit/default.
 
-`null` means Fit/default and therefore serializes without the optional viewport field.
+The engine does not enforce mobile's `1..4` UI policy. It only prevents state that would later make the existing V1 codec reject the whole save.
 
-### Mobile viewport semantics
+Viewport changes:
 
-Mobile owns the policy:
+- do not set `hasUserActivity`;
+- do not affect result class;
+- do not enter undo/redo history;
+- do not trigger completion effects.
 
-- `zoom` is a multiplier over the current fit-to-viewport scale;
-- allowed UI range is `1..4`;
-- `panX` / `panY` are board-cell units, not device pixels;
-- positive pan moves the board right/down;
-- at `zoom === 1`, pan is normalized to `0,0`;
-- at higher zoom, pan is clamped so the board cannot be dragged completely away from the viewport; an axis whose transformed board still fits remains centered.
+Mobile policy remains:
 
-Using board-cell units keeps the persisted value independent of display density and lets HPA-46 reuse it when viewport dimensions change. `boardViewport.ts` converts these values into Canvas pixels using the current fit cell size.
+- `zoom` is a multiplier over fit scale;
+- UI clamp is `1..4`;
+- persisted pan is in board-cell units;
+- `zoom === 1` normalizes to Fit / `viewport === null`;
+- oversized axes clamp so the board cannot be dragged completely away;
+- an axis whose transformed board still fits remains centered.
 
-## Board gestures and coordinate flow
+### Fit geometry
 
-The Canvas has one transform pipeline for drawing and hit testing:
+The production board uses:
 
-```text
-canonical grid/cell
-    -> fit board geometry
-    -> persisted zoom + pan
-    -> Canvas screen coordinate
+```ts
+calculateFitZoom(gridCols, gridRows, canvasWidth, canvasHeight, 1)
 ```
 
-Every pointer/gesture path uses the inverse transform before asking for a candidate board cell. Placement validity still dispatches exactly one `attempt_placement` action.
+The tray/chrome are already outside the board column, so the game-core helper's default `0.9` padding would add a second unnecessary inset. A 4×3 board in an 800×600 backing surface therefore has fit cell size 200 and origin 0,0.
 
-Gesture ownership:
+## Board gesture ownership
 
-- one-finger drag that begins on an unplaced tray piece = piece drag;
-- pinch = board zoom;
-- two-finger pan = board pan;
-- double-tap empty/board area = Fit (`set_viewport(null)`);
-- tap tray piece = select;
-- tap board cell with a selection = attempt placement.
+Task 3 removes the HPA-1 Canvas `on:pan`, `pointFromPan`, `pieceAt`, in-canvas unplaced records, and all Canvas-owned piece-drag state together.
 
-One-finger dragging on the Canvas never pans the board. This keeps piece placement and board navigation unambiguous.
+After that cutover the Canvas interaction surface is:
 
-Pinch zoom preserves the board point under the pinch center when possible, then clamps the result. Two-finger pan updates only the viewport. Viewport changes are persisted at gesture end, not on every movement frame.
+- board tap -> placement when a piece is selected;
+- two-pointer touch -> one combined viewport transform (pinch + centroid translation from one gesture baseline);
+- double-tap -> Fit when the tap sequence starts with **no selected piece**;
+- one-finger move on the Canvas -> no board pan.
 
-## External tray and cross-view dragging
+The selection rule gives deterministic tap-vs-double-tap precedence without delaying every placement:
 
-HPA-3 removes the temporary in-Canvas unplaced-piece strip. Unplaced pieces live only in `PuzzleTray.svelte`.
+- if a tap sequence starts with a selected piece, it is placement-only and cannot trigger Fit even if the platform also recognizes a double tap;
+- if it starts with no selected piece, the first tap has no placement action and a recognized double tap may Fit.
 
-Tap placement stays simple:
+A tiny local suppression flag/time window is acceptable to remember that a double-tap sequence began with selection. Do not add a generic gesture arbiter.
 
-1. tap tray piece -> `select_piece`;
-2. tap Canvas board cell -> `attempt_placement`.
+Two-pointer calculations use the gesture-start viewport/centroid/distance for every frame. Do not independently apply a pinch delta and a pan delta to already-mutated viewport state.
 
-Cross-view drag uses a narrow concrete callback protocol rather than a drag service:
+Viewport changes redraw transiently while fingers move and dispatch `set_viewport` only at gesture end/cancel. Fit dispatches `set_viewport(null)`.
+
+## External tray and cross-view drag
+
+Unplaced pieces live only in `PuzzleTray.svelte`.
+
+Tap placement:
+
+1. tray piece -> `select_piece`;
+2. Canvas cell -> one `attempt_placement`.
+
+Cross-view drag uses narrow callbacks in screen DIPs:
 
 ```ts
 onPieceDragStart(pieceId, screenX, screenY)
@@ -272,164 +239,224 @@ onPieceDragMove(pieceId, screenX, screenY)
 onPieceDragEnd(pieceId, screenX, screenY)
 ```
 
-`Gameplay.svelte` owns the ephemeral dragged piece/coordinates. On drag end it asks the Canvas for the board cell at those screen coordinates and dispatches the same `attempt_placement` action used by tap placement.
+`Gameplay.svelte` owns one full-bleed drag overlay spanning board + tray. The tray image itself never needs to render outside its column, so native clipping cannot hide the dragged piece.
 
-- release outside the board: snap back, no gameplay dispatch, no incorrect-attempt count;
-- engine rejection (`wrong_slot` / `non_upright`): snap back and show brief reject feedback;
-- accepted placement: remove from tray projection and draw in canonical board location.
+The overlay is presentation-only:
 
-Do not persist drag coordinates.
+- source: existing local `piecePaths[pieceId]`;
+- position: current screen-DIP drag point converted relative to the gameplay root;
+- no session state and no persisted drag coordinates;
+- `isUserInteractionEnabled=false` so it cannot steal touch events.
 
-## Tray behavior
+On drag end, `Gameplay.svelte` asks `PuzzleCanvas.cellAtScreenPoint()` for a canonical cell and dispatches the same `attempt_placement` path as tap placement.
 
-The right tray exposes only the proven simple organization model:
+- outside board -> remove overlay/snap back, no gameplay dispatch;
+- engine rejection -> remove overlay, brief reject feedback;
+- accepted -> remove overlay; tray projection drops the placed piece and Canvas draws the canonical placement.
 
-- remaining-piece count;
-- All / Corners / Edges / Center filters;
+## Tray order and organization
+
+Mobile adds one small local Fisher-Yates helper:
+
+```ts
+shuffleIds(ids, random = Math.random)
+```
+
+Use it for all three mobile tray-order entry points:
+
+1. fresh `initialTrayOrder`;
+2. `createTrayOrder()` used by restart;
+3. the user-visible Shuffle action.
+
+This avoids shipping sorted IDs as a mobile-only policy while still keeping shuffle out of game-core. Tests inject deterministic randomness.
+
+The tray exposes only:
+
+- All / Corners / Edges / Center;
 - Shuffle;
-- selected-piece highlight;
-- one selected-piece Rotate action when rotation mode is enabled.
+- remaining count;
+- selected/highlighted piece;
+- one selected-piece Rotate action when rotation is enabled.
 
-Filter dispatches the existing `update_tray_organization -> set_filter` action. Shuffle creates a Fisher-Yates order for the current unplaced IDs and dispatches the existing `reorder` update with `trayId: 'main'`.
+Filtering reuses `matchesInventoryFilter()` through a mobile pure projection helper. Filter/order changes dispatch the existing `update_tray_organization` contract. Do not expose active tray, membership, names, rename/remove, manual grouping, multi-select, or clustering.
 
-Mobile does not expose or deliberately mutate `activeTray`, manual membership, names, rename/remove, multi-select, or automatic clustering. The shared optional organization object remains tolerated because web already uses the same filter/reorder contract.
+A successful hint uses the existing `hint_target` event and the engine's existing automatic filter reset to All. Hint target/piece highlighting is ephemeral.
 
-A successful hint uses the existing game-core `hint_target` event. Mobile stores the target only as ephemeral presentation state, resets the filter to All through the engine's existing hint behavior, highlights the hinted tray piece and target cell, and clears that highlight when the hinted piece is successfully placed or another hint replaces it.
+## Session entry and lifecycle
 
-## Toolbar and reference behavior
+### New run
 
-Keep the frequent controls visible:
+A fresh session remains in `setup` and opens a concrete setup sheet. Do not auto-dispatch `start`.
 
-- Library;
-- Undo;
-- Redo;
-- Hint;
-- Reference;
-- More.
+The sheet exposes only Timed/Relaxed, Rotation Off/On, Start, and Library.
 
-Show puzzle name, difficulty and timer in the same top area without creating a generic responsive toolbar component.
+Start does:
 
-`More` expands one concrete row with exactly the lower-frequency HPA-3 actions:
+1. `configure_setup`;
+2. `start`;
+3. immediate persistence.
 
-- Fit Board;
-- Rotation On/Off (engine availability rules still apply);
-- Pause;
-- Restart;
-- Discard.
+Remove the HPA-1 all-zero `createRotations` override. Use the existing game-core default rotation generator. No mobile preference store is added.
 
-`Reference` expands one concrete reference row:
+### Restored run
 
-- **Hold to Peek** — touch down dispatches `set_reference_mode('hold')`, touch up/cancel dispatches `null`;
-- **Toggle** — tap toggles `'toggle'` / `null`;
-- **Ghost** — tap toggles `'ghost'` / `null`.
+Remove the current HPA-1 automatic `start`/`resume` dispatch entirely.
 
-The optional downloaded reference image is loaded by `PuzzleCanvas.svelte` when present.
+- active restored session: leave it active; **do not dispatch `start`, `resume`, or an initial `setDocumentHidden(false)`**;
+- paused restored session: leave it paused and open Pause;
+- completed/protected session remains handled by Downloaded and does not expose Resume.
 
-- ghost draws the reference behind puzzle pieces at low opacity;
-- hold/toggle draw the reference as a stronger board overlay while keeping the puzzle visible;
-- no reference asset means the Reference control is disabled/hidden with no network fallback.
+`PuzzleSession` construction already starts its clock when a restored state is active + timed + `timerStarted`. HPA-3 must not duplicate or reinterpret that engine contract.
 
-Reference mode is runtime-only exactly as the current game-core contract defines; counters/facts remain engine-owned.
+### Explicit Pause
 
-## Placement feedback
+Pause -> dispatch `pause`, persist, open Pause sheet. Resume -> dispatch `resume`, persist, close the sheet.
 
-Keep feedback concrete and short-lived:
+### Background / foreground
 
-- accepted placement: brief green target-cell flash;
-- rejected placement: brief red target-cell flash and selected/tray piece remains available;
-- non-upright rejection uses the same red feedback; the Rotate action remains the correction path;
-- hint target uses a distinct persistent outline until consumed/replaced.
+Background is not explicit Pause.
 
-No animation framework or sound system is introduced by HPA-3.
+Suspend order is load-bearing:
+
+1. `session.setDocumentHidden(true)`; `stopClock()` checkpoints/stops active timed play;
+2. serialize/save the now-current state without re-checkpointing;
+3. leave sheet state unchanged.
+
+Foreground calls `setDocumentHidden(false)` and changes no dialog state. The engine restarts the clock only when lifecycle/mode/timer state requires it. An explicitly paused session remains paused.
+
+### Restart / discard
+
+Restart dispatches the existing `restart`, persists the new setup state, and reopens Setup seeded from prior mode/rotation. Fresh/restart order comes from the same mobile `shuffleIds()` factory. Viewport resets to Fit and filter resets to All through fresh/restart engine semantics.
+
+Discard confirms, calls `SessionStorageAdapter.clearSession(puzzleId)`, and exits only after a successful clear. Failure remains inline on the concrete sheet.
+
+## Toolbar, reference, feedback
+
+Visible toolbar actions: Library, Undo, Redo, Hint, Reference, More. Show puzzle name, difficulty and timer in the same top area.
+
+More expands one concrete row: Fit Board, Rotation On/Off, Pause, Restart, Discard.
+
+Reference expands one concrete row: Hold to Peek, Toggle, Ghost. All modes dispatch existing `set_reference_mode`; no reference file means no active Reference affordance and no network fallback.
+
+Reference rendering stays Canvas-local:
+
+- Ghost behind pieces at low opacity;
+- Hold/Toggle as a stronger board-aligned overlay while pieces remain visible.
+
+Placement feedback stays ephemeral:
+
+- accepted -> brief green target flash;
+- rejected/non-upright -> brief red target flash;
+- hint target -> distinct persistent outline until consumed/replaced.
+
+No animation framework or sound system is added.
 
 ## Completion
 
-When the engine emits/seals completion, persist the completed session and show a concrete native completion sheet projected from `SealedCompletion` plus the downloaded variant metadata.
+Completion is local sealed-session state only in HPA-3.
 
-Show:
+On completion, persist immediately and show a concrete sheet from `SealedCompletion` plus variant metadata:
 
-- puzzle name and difficulty;
-- Timed / Relaxed result label;
+- puzzle name/difficulty;
+- Timed/Relaxed;
 - elapsed time when timed;
 - hints used;
 - incorrect attempts;
-- whether rotation was enabled/used;
+- rotation enabled/used;
 - Back to Library.
 
-Do not add cloud submission UI, achievements, leaderboard calls, completion outbox, authentication, or a second local completion database. The sealed session is already durable local completion state; Downloaded classifies it as `protected` and displays completed progress. Replaying requires the existing explicit Discard Progress action.
+Do not add auth, outbox, completion APIs, achievements, leaderboard queries, or another local completion database. HPA-4 owns account-bound submission.
 
-This deliberately leaves server submission/auth handling to HPA-4.
-
-## Error handling
-
-Keep errors at their owning surface:
-
-- piece/reference load failure -> gameplay inline error and Library exit affordance;
-- discard failure -> stay on discard sheet with inline message;
-- session launch becoming invalid -> existing “return to Downloaded” path;
-- missing reference asset -> simply no Reference controls;
-- gesture release outside board -> no-op/snap back;
-- invalid viewport action -> ignore the update and keep the last valid transform.
-
-No generic error/result framework is added.
+Downloaded reuses `getDifficultyLabel()` for copy such as `EASY · 16 PIECES`; the existing `none | resumable | protected | invalid` action matrix stays unchanged.
 
 ## Testing strategy
 
-### Game-core focused tests
+### Game-core
 
-Add deterministic tests that prove:
+Pin:
 
-- `set_viewport` clones and stores finite values;
-- Fit (`null`) clears the value;
-- viewport changes do not set user activity or alter undo/redo/result class;
-- viewport survives the existing serializer/loader round trip;
-- malformed non-finite values cannot enter state.
+- valid viewport clone/store;
+- `zoom: 0`, negative zoom, NaN/Infinity -> `viewport_noop` and unchanged state;
+- Fit/null clearing;
+- no user-activity/history/result-class side effects;
+- real serialize/load round trip with schema V1 unchanged.
 
-### Mobile pure tests
+### Mobile pure math
 
-Keep most new logic outside the simulator:
+`boardViewport.test.ts` owns the risky coordinate/gesture math:
 
-- fit transform from grid + viewport dimensions;
-- zoom clamping and pinch-center anchoring;
-- pan clamping and screen <-> board/cell inverse transform;
-- transform restoration from persisted viewport;
-- filtered unplaced-piece projection and deterministic shuffle helper behavior.
+- layout DIP size -> backing pixel size;
+- `screenPointToCanvas()` at multiple densities and origins;
+- explicit `paddingFactor=1` fit example (4×3 in 800×600 => 200, origin 0,0);
+- transformed Canvas point -> canonical cell;
+- zoom/pan normalization and clamp;
+- pinch-center anchoring;
+- centroid-only pan;
+- combined pinch + translation from one baseline;
+- transform restoration.
 
-Do not add a Svelte component test framework solely for HPA-3.
+`trayPieces.test.ts` pins immutable deterministic Fisher-Yates and filtered unplaced projection.
 
-### iPad smoke
+No new Svelte component-test framework is required.
 
-Use the existing NativeScript/iPad simulator path rather than introducing a broad native E2E framework.
+### iPad gates
 
-One representative Easy variant is enough. Download it while the API is available, then remove network/API dependency and verify the production landscape UI can:
+Task 3 must prove on the real established iPad simulator:
 
-1. start a Timed or Relaxed run through setup;
-2. tap-place and cross-view drag-place pieces;
-3. pinch zoom, two-finger pan, and Fit;
-4. persist/restore zoom and pan;
-5. rotate a selected piece, filter/shuffle, use Hint and all three reference modes;
-6. undo/redo;
-7. explicitly pause/resume;
-8. background/foreground without accruing hidden active time or opening an unwanted Pause sheet;
-9. finish the puzzle offline and see the completion sheet;
-10. return to Downloaded and see protected completed progress.
+- Canvas rendered DIP size fills the flexible board column;
+- backing size follows rendered layout rather than staying 700×800;
+- screen-to-cell conversion remains correct at device scale;
+- persistent tray works;
+- full-bleed drag overlay stays visible across the tray/board boundary;
+- tap and cross-view drag placement both work.
 
-If reliable multi-touch injection is unavailable in the current NativeScript simulator tooling, record pinch/two-finger-pan as explicit manual acceptance evidence rather than adding a fragile automation framework. All pure transform/gesture math remains automated.
+Task 4 then verifies pinch, two-finger pan, Fit, transformed placement, and the selection-aware tap/double-tap precedence.
+
+Final offline smoke downloads one representative Easy variant while the API is available, then removes network/API dependency and covers setup, placement, gestures, persisted viewport, rotation, filters/shuffle, hints/reference, undo/redo, pause/lifecycle, completion, and protected Downloaded state.
+
+If reliable multi-touch injection is unavailable, record pinch/two-finger-pan as explicit manual acceptance evidence rather than adding a fragile native E2E framework. Pure transform math remains automated.
+
+## Risks and stop conditions
+
+### Canvas layout/backing mismatch
+
+Risk: a flexible GridLayout can still contain a fixed backing surface, producing incorrect hit testing and wasted board area.
+
+Mitigation: Task 3 derives backing size from actual layout and has a real iPad gate. If changing the backing width/height changes layout size rather than just backing resolution in the installed Canvas version, stop and use that plugin version's supported backing-size path; do not retain the 700×800 surface or add a second letterboxing formula.
+
+### Coordinate-space drift
+
+Risk: tray screen DIPs, Canvas rendered DIPs and Canvas backing pixels can diverge.
+
+Mitigation: one tested `screenPointToCanvas()` is the only cross-view placement conversion. Both drawing/hit-testing then use the same `BoardTransform`.
+
+### Gesture recognizer conflict
+
+Risk: legacy `on:pan`, two-pointer touch, tap and double-tap can all claim overlapping input.
+
+Mitigation: delete Canvas pan with the in-canvas tray; two-pointer touch owns viewport navigation; selected-piece sequences own placement and suppress Fit; no-selection double taps own Fit.
+
+### Cross-column drag clipping
+
+Risk: a tray child cannot visibly travel outside its native column.
+
+Mitigation: a full-bleed root overlay paints the in-flight piece; tray/Canvas remain independent views.
 
 ## Scope fence
 
 HPA-3 does **not** include:
 
-- portrait layout or live orientation switching (HPA-46);
-- phone UI;
-- Android release/polish;
-- draggable tray sizing;
-- named/staging trays or persisted manual tray organization;
+- portrait/adaptive layout or live orientation switching (HPA-46);
+- phone optimization;
+- Android release polish;
+- draggable tray width;
+- named/staging/manual tray organization;
 - local-photo puzzle creation;
-- Google login, cloud session sync, completion outbox/server retry, achievements, leaderboards, or account UI (HPA-4);
-- backend/API/D1/Workflow/infrastructure changes;
-- new download manifest or session schema version;
-- a second gameplay controller/store;
+- Google login, cloud session sync, auth, completion outbox/server retry, achievements, leaderboards, or account UI (HPA-4);
+- API/D1/Workflow/infrastructure changes;
+- download/session schema migration;
+- web viewport helper sharing;
+- second gameplay controller/store;
 - generic toolbar/dialog/gesture/responsive-layout frameworks;
 - broad native E2E infrastructure.
 
@@ -437,11 +464,13 @@ HPA-3 does **not** include:
 
 HPA-3 is complete when:
 
-- the iPad app is landscape-only for this release slice, with the Canvas owning the majority column and a persistent usable right tray;
-- pinch, two-finger pan, Fit, tap placement and cross-view drag placement share one transform-aware placement path;
+- the iPad app is landscape-only for this slice;
+- Canvas fills the board column with layout-derived backing size and one tested screen-coordinate conversion;
+- a persistent right tray and visible full-bleed drag overlay support tap + cross-view drag placement;
+- Canvas pan is gone and pinch/two-finger pan/Fit do not conflict with placement;
+- fresh/restart tray order and user Shuffle use the same mobile Fisher-Yates helper;
 - Timed/Relaxed, rotation, undo/redo, hints, reference modes, filters/shuffle, pause/resume, restart/discard and completion are all driven through `PuzzleSession`;
-- no manual tray-grouping feature is exposed or persisted by mobile;
-- backgrounding stops active elapsed time without changing the explicit pause UI state;
-- viewport state restores from the existing V1 optional viewport field through the new narrow engine action;
-- a downloaded variant can be completed offline through the production landscape UI;
-- focused game-core/mobile tests plus one small iPad landscape smoke provide the gate.
+- backgrounding excludes hidden active time without changing explicit Pause presentation;
+- viewport restores through the existing V1 optional field and invalid zoom cannot poison a save;
+- one downloaded variant completes fully offline through the production landscape UI;
+- focused game-core/mobile tests plus a small iPad smoke provide the gate.
