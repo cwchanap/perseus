@@ -34,6 +34,7 @@ import {
 	listLegacyCleanupRecords,
 	deleteLegacyPuzzleAssets,
 	deleteCleanupRecord,
+	deleteMetadataDO,
 	releaseIdempotencyKey,
 	buildCleanupRecordFromFamily
 } from './storage.worker';
@@ -499,10 +500,13 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
  * Drain legacy cleanup records (pre-family-scoped shape: { puzzleId,
  * pieceCount, idempotencyKey?, createdAt }). These records are silently
  * rejected by isValidCleanupRecord and would never be cleaned up without
- * this drain path. For each legacy record, delete its R2 assets (using
- * the old puzzles/{id}/ key prefix), release its idempotency key if
- * present, and delete the KV cleanup record. Any failure retains the
- * record for a later reaper pass.
+ * this drain path. For each legacy record, confirm the workflow has
+ * stopped (a legacy record can exist because the old delete path failed
+ * to confirm liveness), tombstone the metadata DO, then delete its R2
+ * assets (using the old puzzles/{id}/ key prefix), release its
+ * idempotency key if present, and delete the KV cleanup record. Any
+ * failure — or an alive/unconfirmed workflow — retains the record for a
+ * later reaper pass.
  */
 export async function reapLegacyCleanupRecords(env: Env): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -524,6 +528,68 @@ export async function reapLegacyCleanupRecords(env: Env): Promise<ReapResult> {
 	for (const record of records) {
 		const puzzleId = record.puzzleId;
 		try {
+			// A legacy cleanup record can exist precisely because the old
+			// delete path chose deletion but failed to confirm the workflow
+			// stopped. If that workflow is still alive it can recreate
+			// pieces/metadata after we delete R2, and once the cleanup record
+			// is gone there is no durable retry path. Mirror reapCleanupRecords:
+			// probe workflow liveness and tombstone the metadata DO before
+			// touching R2/KV. Retain the record on any unconfirmed state so a
+			// later pass retries.
+			let workflowStatus: string;
+			try {
+				const instance = await env.PUZZLE_WORKFLOW.get(puzzleId);
+				workflowStatus = (await instance.status()).status;
+			} catch (wfErr) {
+				if (isWorkflowNotFoundError(wfErr)) {
+					workflowStatus = 'errored';
+				} else {
+					console.error(
+						`Reaper legacy cleanup: workflow status check failed for ${puzzleId}, skipping:`,
+						wfErr
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId,
+						action: 'legacy-cleanup-skip',
+						error: 'workflow status check failed'
+					});
+					continue;
+				}
+			}
+
+			if (workflowStatus === 'complete' || isDeadWorkflowStatus(workflowStatus)) {
+				// Workflow has stopped — proceed with cleanup below.
+			} else if (isAliveWorkflowStatus(workflowStatus)) {
+				// Workflow still running — retain the record for a later pass.
+				continue;
+			} else {
+				console.warn(
+					`Reaper legacy cleanup: workflow status '${workflowStatus}' for ${puzzleId} is not confirmed stopped, skipping`
+				);
+				continue;
+			}
+
+			// Tombstone the metadata DO before deleting R2 so an in-flight
+			// workflow cannot resurrect the puzzle in KV via the DO's KV sync.
+			// Retain the cleanup record if the tombstone fails so a later pass
+			// can retry the whole gated sequence.
+			try {
+				await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzleId);
+			} catch (doErr) {
+				console.error(
+					`Reaper legacy cleanup: DO tombstone failed for ${puzzleId}, skipping:`,
+					doErr
+				);
+				result.errors++;
+				result.details.push({
+					puzzleId,
+					action: 'legacy-cleanup-do-tombstone-failed',
+					error: String(doErr)
+				});
+				continue;
+			}
+
 			const r2Result = await deleteLegacyPuzzleAssets(
 				env.PUZZLES_BUCKET,
 				puzzleId,

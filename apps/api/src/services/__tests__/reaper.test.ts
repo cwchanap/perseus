@@ -1484,16 +1484,22 @@ describe('reapLegacyCleanupRecords', () => {
 		(storage.deleteLegacyPuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.deleteCleanupRecord as any).mockResolvedValue(undefined);
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 	});
 
 	function makeEnv() {
+		const notFoundError = new Error('instance.not_found');
+		(notFoundError as any).code = 'instance.not_found';
 		return {
 			PUZZLE_METADATA: makeKvMock(),
 			PUZZLES_BUCKET: {} as R2Bucket,
 			PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
 			PUZZLE_WORKFLOW: {
 				create: vi.fn(),
-				get: vi.fn()
+				// Default: workflow instance is gone (dead) — safe to reap.
+				get: vi.fn(() => {
+					throw notFoundError;
+				})
 			}
 		} as any;
 	}
@@ -1541,6 +1547,13 @@ describe('reapLegacyCleanupRecords', () => {
 		);
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'legacy-1');
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'legacy-2');
+		// The metadata DO is tombstoned for each legacy puzzle before R2 deletion
+		// so an in-flight workflow cannot resurrect it via the DO's KV sync.
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'legacy-1');
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'legacy-2');
+		const doOrder = (storage.deleteMetadataDO as any).mock.invocationCallOrder[0];
+		const r2Order = (storage.deleteLegacyPuzzleAssets as any).mock.invocationCallOrder[0];
+		expect(doOrder).toBeLessThan(r2Order);
 	});
 
 	it('retains record and counts error when R2 deletion fails', async () => {
@@ -1574,6 +1587,65 @@ describe('reapLegacyCleanupRecords', () => {
 		expect(result.errors).toBe(1);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(result.details[0].action).toBe('legacy-cleanup-release-failed');
+	});
+
+	it('retains record and skips all deletion when the legacy workflow is still alive', async () => {
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'legacy-5', pieceCount: 16, idempotencyKey: 'key-5', createdAt: 1700000000000 }
+		]);
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(async () => ({
+			status: vi.fn(async () => ({ status: 'running' }))
+		}));
+
+		const result = await reapLegacyCleanupRecords(env);
+
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(0);
+		// Nothing destructive runs while the workflow can still write R2/KV.
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deleteLegacyPuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('retains record when the workflow status check throws a non-not-found error', async () => {
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'legacy-6', pieceCount: 16, createdAt: 1700000000000 }
+		]);
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => {
+			throw new Error('workflow API unreachable');
+		});
+
+		const result = await reapLegacyCleanupRecords(env);
+
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details[0].action).toBe('legacy-cleanup-skip');
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deleteLegacyPuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('retains record when the DO tombstone fails before R2 deletion', async () => {
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'legacy-7', pieceCount: 16, idempotencyKey: 'key-7', createdAt: 1700000000000 }
+		]);
+		(storage.deleteMetadataDO as any).mockRejectedValue(new Error('DO unreachable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv();
+
+		const result = await reapLegacyCleanupRecords(env);
+
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details[0].action).toBe('legacy-cleanup-do-tombstone-failed');
+		// R2/idempotency/record must not run when the DO tombstone failed — the
+		// workflow could still resurrect the puzzle via the DO's KV sync.
+		expect(storage.deleteLegacyPuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });
 
