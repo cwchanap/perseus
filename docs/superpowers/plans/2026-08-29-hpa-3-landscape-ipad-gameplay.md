@@ -562,13 +562,7 @@ Do not remove the all-zero `createRotations` override yet; Task 5 removes it wit
 
 - [ ] **Step 3: Create a scrollable `PuzzleTray.svelte` with explicit drag arming**
 
-```svelte
-<scrollView bind:this={trayScroll} isScrollEnabled={!dragArmed}>
-  <stackLayout>
-    <!-- piece views from visible piece IDs -->
-  </stackLayout>
-</scrollView>
-```
+Bind `ScrollView.isScrollEnabled` to `!dragArmed`. Render piece views from `visibleUnplacedPieceIds(...)` inside one child layout.
 
 For each piece:
 
