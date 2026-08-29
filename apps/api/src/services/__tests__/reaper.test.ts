@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	reapStuckPuzzles,
 	reapCleanupRecords,
+	reapLegacyCleanupRecords,
 	reapOrphanedReservations,
 	reapOrphanedAvatars,
 	REAP_AFTER_MS,
@@ -33,6 +34,8 @@ vi.mock('../storage.worker', () => ({
 	getFamily: vi.fn(),
 	listFamilies: vi.fn(),
 	listCleanupRecords: vi.fn(async () => []),
+	listLegacyCleanupRecords: vi.fn(async () => []),
+	deleteLegacyPuzzleAssets: vi.fn(async () => ({ success: true, failedKeys: [] })),
 	releaseIdempotencyKey: vi.fn(),
 	getIdempotencyReservation: vi.fn(),
 	buildCleanupRecordFromFamily: vi.fn(
@@ -80,6 +83,8 @@ import {
 	getFamily,
 	listFamilies,
 	listCleanupRecords,
+	listLegacyCleanupRecords,
+	deleteLegacyPuzzleAssets,
 	releaseIdempotencyKey,
 	getIdempotencyReservation,
 	buildCleanupRecordFromFamily
@@ -98,6 +103,8 @@ const storage = {
 	getFamily,
 	listFamilies,
 	listCleanupRecords,
+	listLegacyCleanupRecords,
+	deleteLegacyPuzzleAssets,
 	releaseIdempotencyKey,
 	getIdempotencyReservation,
 	buildCleanupRecordFromFamily
@@ -1468,6 +1475,105 @@ describe('reapCleanupRecords', () => {
 		const detail = result.details.find((d) => d.action === 'cleanup-do-tombstone-failed');
 		expect(detail).toBeDefined();
 		expect(detail?.error).toContain('DO unreachable');
+	});
+});
+
+describe('reapLegacyCleanupRecords', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(storage.deleteLegacyPuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
+		(storage.deleteCleanupRecord as any).mockResolvedValue(undefined);
+	});
+
+	function makeEnv() {
+		return {
+			PUZZLE_METADATA: makeKvMock(),
+			PUZZLES_BUCKET: {} as R2Bucket,
+			PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {
+				create: vi.fn(),
+				get: vi.fn()
+			}
+		} as any;
+	}
+
+	it('returns empty result when no legacy records exist', async () => {
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue([]);
+		const result = await reapLegacyCleanupRecords(makeEnv());
+		expect(result.scanned).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(storage.deleteLegacyPuzzleAssets).not.toHaveBeenCalled();
+	});
+
+	it('drains legacy records: R2 assets, idempotency key, KV record', async () => {
+		const records = [
+			{ puzzleId: 'legacy-1', pieceCount: 16, idempotencyKey: 'key-1', createdAt: 1700000000000 },
+			{ puzzleId: 'legacy-2', pieceCount: 49, createdAt: 1700000000001 }
+		];
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue(records);
+		const env = makeEnv();
+
+		const result = await reapLegacyCleanupRecords(env);
+
+		expect(result.scanned).toBe(2);
+		expect(result.reaped).toBe(2);
+		expect(result.errors).toBe(0);
+		expect(storage.deleteLegacyPuzzleAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'legacy-1',
+			16
+		);
+		expect(storage.deleteLegacyPuzzleAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'legacy-2',
+			49
+		);
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'key-1',
+			'legacy-1'
+		);
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			undefined,
+			'legacy-2'
+		);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'legacy-1');
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'legacy-2');
+	});
+
+	it('retains record and counts error when R2 deletion fails', async () => {
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'legacy-3', pieceCount: 4, createdAt: 1700000000000 }
+		]);
+		(storage.deleteLegacyPuzzleAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['puzzles/legacy-3/original']
+		});
+		const env = makeEnv();
+
+		const result = await reapLegacyCleanupRecords(env);
+
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details[0].action).toBe('legacy-cleanup-r2-failed');
+	});
+
+	it('retains record when idempotency release fails', async () => {
+		(storage.listLegacyCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'legacy-4', pieceCount: 4, idempotencyKey: 'key-4', createdAt: 1700000000000 }
+		]);
+		(storage.releaseIdempotencyKey as any).mockRejectedValue(new Error('DO unreachable'));
+		const env = makeEnv();
+
+		const result = await reapLegacyCleanupRecords(env);
+
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details[0].action).toBe('legacy-cleanup-release-failed');
 	});
 });
 

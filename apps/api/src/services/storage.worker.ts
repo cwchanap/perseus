@@ -1164,3 +1164,88 @@ export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord
 export async function deleteCleanupRecord(kv: KVNamespace, familyId: string): Promise<void> {
 	await kv.delete(cleanupKey(familyId));
 }
+
+// --- Legacy cleanup records (pre-family-scoped shape) ---
+//
+// Before family-scoped cleanup (commit 688ae37b), CleanupRecord was
+// { puzzleId, pieceCount, idempotencyKey?, createdAt }. Records written
+// in that shape are silently rejected by isValidCleanupRecord, leaving
+// their KV key, R2 assets, and idempotency state unreapable. The legacy
+// drain path recognizes them and cleans up their R2 assets (using the
+// old puzzles/{id}/ key prefix) and idempotency key before deleting the
+// KV record.
+
+export interface LegacyCleanupRecord {
+	puzzleId: string;
+	pieceCount: number;
+	idempotencyKey?: string;
+	createdAt: number;
+}
+
+function isValidLegacyCleanupRecord(data: unknown): data is LegacyCleanupRecord {
+	if (!data || typeof data !== 'object') return false;
+	const record = data as Record<string, unknown>;
+	if (typeof record.puzzleId !== 'string' || record.puzzleId.length === 0) return false;
+	if (typeof record.pieceCount !== 'number' || !Number.isFinite(record.pieceCount)) return false;
+	if (typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt)) return false;
+	if (record.idempotencyKey !== undefined && typeof record.idempotencyKey !== 'string') {
+		return false;
+	}
+	// Reject records that match the current shape — those are handled by
+	// the normal cleanup path, not the legacy drain.
+	if (typeof record.familyId === 'string') return false;
+	return true;
+}
+
+export async function listLegacyCleanupRecords(kv: KVNamespace): Promise<LegacyCleanupRecord[]> {
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
+	while (true) {
+		const list = await kv.list({ prefix: 'cleanup:', cursor });
+		keys.push(...list.keys);
+		if (list.list_complete) break;
+		cursor = list.cursor;
+	}
+	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
+	const records: LegacyCleanupRecord[] = [];
+	for (let i = 0; i < fetched.length; i++) {
+		const data = fetched[i];
+		if (isValidLegacyCleanupRecord(data)) {
+			records.push(data);
+		}
+	}
+	return records;
+}
+
+/**
+ * Delete R2 assets for a legacy (pre-family-scoped) puzzle using the old
+ * puzzles/{id}/ key prefix. The current code uses families/{id}/ for
+ * originals and thumbnails, but legacy puzzles stored their assets under
+ * puzzles/{id}/.
+ */
+export async function deleteLegacyPuzzleAssets(
+	bucket: R2Bucket,
+	puzzleId: string,
+	pieceCount: number
+): Promise<{ success: boolean; failedKeys: string[] }> {
+	const keysToDelete: string[] = [
+		`puzzles/${puzzleId}/original`,
+		`puzzles/${puzzleId}/thumbnail.jpg`
+	];
+	for (let i = 0; i < pieceCount; i++) {
+		keysToDelete.push(`puzzles/${puzzleId}/pieces/${i}.png`);
+	}
+
+	const failedKeys: string[] = [];
+	const batchSize = 1000;
+	for (let i = 0; i < keysToDelete.length; i += batchSize) {
+		const batch = keysToDelete.slice(i, i + batchSize);
+		try {
+			await bucket.delete(batch);
+		} catch (error) {
+			console.error(`Failed to delete legacy R2 assets for ${puzzleId}:`, error);
+			failedKeys.push(...batch);
+		}
+	}
+	return { success: failedKeys.length === 0, failedKeys };
+}

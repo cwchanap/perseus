@@ -27,7 +27,9 @@ import {
 	invalidateGalleryIndex,
 	writeCleanupRecord,
 	listCleanupRecords,
+	listLegacyCleanupRecords,
 	deleteCleanupRecord,
+	deleteLegacyPuzzleAssets,
 	buildFamilyMetadata,
 	type PuzzleMetadata
 } from './storage.worker';
@@ -1325,6 +1327,77 @@ describe('cleanup records', () => {
 		await deleteCleanupRecord(kv as unknown as KVNamespace, record.familyId);
 		expect(kv.delete).toHaveBeenCalledWith(`cleanup:${record.familyId}`);
 		expect(kv._store.has(`cleanup:${record.familyId}`)).toBe(false);
+	});
+});
+
+describe('legacy cleanup records', () => {
+	function makeLegacyRecord(
+		puzzleId = 'l1e4567-e89b-42d3-a456-426614174000',
+		overrides: Partial<{ pieceCount: number; idempotencyKey: string; createdAt: number }> = {}
+	) {
+		return {
+			puzzleId,
+			pieceCount: overrides.pieceCount ?? 16,
+			createdAt: overrides.createdAt ?? 1700000000000,
+			...(overrides.idempotencyKey ? { idempotencyKey: overrides.idempotencyKey } : {})
+		};
+	}
+
+	it('listLegacyCleanupRecords returns only legacy-shape records', async () => {
+		const kv = createMockKV();
+		const legacy = makeLegacyRecord('a1e4567-e89b-42d3-a456-426614174000');
+		const current = makeCleanupRecord('b1e4567-e89b-42d3-a456-426614174001');
+		kv._store.set(`cleanup:${legacy.puzzleId}`, JSON.stringify(legacy));
+		kv._store.set(`cleanup:${current.familyId}`, JSON.stringify(current));
+
+		const records = await listLegacyCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(1);
+		expect(records[0].puzzleId).toBe(legacy.puzzleId);
+	});
+
+	it('listLegacyCleanupRecords skips malformed entries', async () => {
+		const kv = createMockKV();
+		const good = makeLegacyRecord('c1e4567-e89b-42d3-a456-426614174002');
+		kv._store.set(`cleanup:${good.puzzleId}`, JSON.stringify(good));
+		kv._store.set('cleanup:bad', JSON.stringify({ foo: 'bar' }));
+
+		const records = await listLegacyCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(1);
+		expect(records[0].puzzleId).toBe(good.puzzleId);
+	});
+
+	it('deleteLegacyPuzzleAssets deletes original, thumbnail, and piece keys', async () => {
+		const bucket = {
+			delete: vi.fn(async () => undefined)
+		} as unknown as R2Bucket;
+		const puzzleId = 'd1e4567-e89b-42d3-a456-426614174003';
+		const pieceCount = 4;
+
+		const result = await deleteLegacyPuzzleAssets(bucket, puzzleId, pieceCount);
+		expect(result.success).toBe(true);
+		expect(result.failedKeys).toEqual([]);
+		expect(bucket.delete).toHaveBeenCalledTimes(1);
+		expect(bucket.delete).toHaveBeenCalledWith([
+			`puzzles/${puzzleId}/original`,
+			`puzzles/${puzzleId}/thumbnail.jpg`,
+			`puzzles/${puzzleId}/pieces/0.png`,
+			`puzzles/${puzzleId}/pieces/1.png`,
+			`puzzles/${puzzleId}/pieces/2.png`,
+			`puzzles/${puzzleId}/pieces/3.png`
+		]);
+	});
+
+	it('deleteLegacyPuzzleAssets reports failed keys on R2 error', async () => {
+		const bucket = {
+			delete: vi.fn(async () => {
+				throw new Error('R2 error');
+			})
+		} as unknown as R2Bucket;
+		const puzzleId = 'e1e4567-e89b-42d3-a456-426614174004';
+
+		const result = await deleteLegacyPuzzleAssets(bucket, puzzleId, 2);
+		expect(result.success).toBe(false);
+		expect(result.failedKeys).toHaveLength(4);
 	});
 });
 

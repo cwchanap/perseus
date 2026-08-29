@@ -1444,13 +1444,10 @@ admin.post('/puzzle-families', async (c) => {
 			console.error('Failed to create puzzle metadata:', error);
 			let metadataCleanup: { success: boolean; error?: Error } = { success: true };
 			if (familyMetadataWritten) {
-				metadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
-				if (!metadataCleanup.success) {
-					console.error(
-						'Failed to cleanup puzzle family metadata after metadata creation failure:',
-						metadataCleanup.error
-					);
-				}
+				// Delete variant metadata before the family record so a failed
+				// variant delete leaves the family record intact — its existence
+				// fences recovery via the DO's serialized reservation path instead
+				// of minting a replacement family alongside orphaned variants.
 				// deletePuzzleMetadata logs its own failure; aggregate the result so a
 				// failed variant delete fails (not releases) the reservation below —
 				// a released key with orphaned variant metadata would mint a
@@ -1461,6 +1458,14 @@ admin.post('/puzzle-families', async (c) => {
 						variantIds[difficulty]
 					);
 					if (!variantCleanup.success) metadataCleanup = variantCleanup;
+				}
+				const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+				if (!familyCleanup.success) {
+					console.error(
+						'Failed to cleanup puzzle family metadata after metadata creation failure:',
+						familyCleanup.error
+					);
+					metadataCleanup = familyCleanup;
 				}
 			}
 			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
@@ -1508,28 +1513,13 @@ admin.post('/puzzle-families', async (c) => {
 
 		// Step 3: Trigger workflow for puzzle generation
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
-			const metadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
-			if (!metadataCleanup.success) {
-				// Metadata cleanup failed — the processing metadata remains in
-				// KV as an orphan. Fail (not release) the reservation so a
-				// retry reclaims through the DO's serialized path instead of
-				// releasing the key and minting a replacement alongside the
-				// orphaned puzzle. The orphan is explicit for operator
-				// force-delete.
-				console.error(
-					'Failed to cleanup puzzle metadata after missing workflow binding:',
-					metadataCleanup.error
-				);
-				await failReservation();
-				return c.json(
-					{
-						error: 'internal_error',
-						message:
-							'Puzzle may be stuck in processing; metadata cleanup failed after workflow misconfiguration'
-					},
-					500
-				);
-			}
+			// Delete variant metadata before the family record so a failed
+			// variant delete leaves the family record intact — its existence
+			// fences recovery via the DO's serialized reservation path instead
+			// of minting a replacement alongside orphaned variants. Aggregate
+			// failures so R2 and ownership cleanup always run instead of
+			// leaving them unreachable behind an early return.
+			let metadataCleanup: { success: boolean; error?: Error } = { success: true };
 			// A failed variant delete leaves orphaned variant metadata in KV —
 			// fail (not release) the reservation so a retry reclaims through the
 			// DO's serialized path instead of minting a replacement alongside it.
@@ -1543,16 +1533,22 @@ admin.post('/puzzle-families', async (c) => {
 						`Failed to cleanup variant metadata (${difficulty}) after missing workflow binding:`,
 						variantCleanup.error
 					);
-					await failReservation();
-					return c.json(
-						{
-							error: 'internal_error',
-							message:
-								'Puzzle may be stuck in processing; variant metadata cleanup failed after workflow misconfiguration'
-						},
-						500
-					);
+					metadataCleanup = variantCleanup;
 				}
+			}
+			const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+			if (!familyCleanup.success) {
+				// Metadata cleanup failed — the processing metadata remains in
+				// KV as an orphan. Fail (not release) the reservation so a
+				// retry reclaims through the DO's serialized path instead of
+				// releasing the key and minting a replacement alongside the
+				// orphaned puzzle. The orphan is explicit for operator
+				// force-delete.
+				console.error(
+					'Failed to cleanup puzzle metadata after missing workflow binding:',
+					familyCleanup.error
+				);
+				metadataCleanup = familyCleanup;
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
@@ -1564,15 +1560,6 @@ admin.post('/puzzle-families', async (c) => {
 					'Failed to cleanup original image after missing workflow binding:',
 					imageCleanup.error
 				);
-				await failReservation();
-				return c.json(
-					{
-						error: 'internal_error',
-						message:
-							'Puzzle may be stuck in processing; image cleanup failed after workflow misconfiguration'
-					},
-					500
-				);
 			}
 			await withDbBestEffort(
 				c.env,
@@ -1580,6 +1567,17 @@ admin.post('/puzzle-families', async (c) => {
 				`Failed to init DB for ownership cleanup of puzzle ${id}:`,
 				(db) => deletePuzzleFamilyOwnership(db, familyId)
 			);
+			if (!metadataCleanup.success || !imageCleanup.success) {
+				await failReservation();
+				return c.json(
+					{
+						error: 'internal_error',
+						message:
+							'Puzzle may be stuck in processing; metadata or image cleanup failed after workflow misconfiguration'
+					},
+					500
+				);
+			}
 			await releaseReservation();
 			return c.json(
 				{
@@ -1679,23 +1677,11 @@ admin.post('/puzzle-families', async (c) => {
 			}
 
 			// liveness === 'dead' — workflow was not created. Clean up and
-			// release as before.
-			const metadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
-			if (!metadataCleanup.success) {
-				console.error(
-					'Failed to cleanup puzzle family metadata after workflow trigger failure:',
-					metadataCleanup.error
-				);
-				await failReservation();
-				return c.json(
-					{
-						error: 'internal_error',
-						message:
-							'Puzzle may be stuck in processing; metadata cleanup failed after workflow trigger failure'
-					},
-					500
-				);
-			}
+			// release as before. Delete variant metadata before the family record
+			// so a failed variant delete leaves the family record intact. Aggregate
+			// failures so R2 and ownership cleanup always run instead of leaving
+			// them unreachable behind an early return.
+			let metadataCleanup: { success: boolean; error?: Error } = { success: true };
 			// A failed variant delete leaves orphaned variant metadata in KV —
 			// fail (not release) the reservation so a retry reclaims through the
 			// DO's serialized path instead of minting a replacement alongside it.
@@ -1709,31 +1695,22 @@ admin.post('/puzzle-families', async (c) => {
 						`Failed to cleanup variant metadata (${difficulty}) after workflow trigger failure:`,
 						variantCleanup.error
 					);
-					await failReservation();
-					return c.json(
-						{
-							error: 'internal_error',
-							message:
-								'Puzzle may be stuck in processing; variant metadata cleanup failed after workflow trigger failure'
-						},
-						500
-					);
+					metadataCleanup = variantCleanup;
 				}
+			}
+			const familyCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+			if (!familyCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle family metadata after workflow trigger failure:',
+					familyCleanup.error
+				);
+				metadataCleanup = familyCleanup;
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
 				console.error(
 					'Failed to cleanup original image after workflow trigger failure:',
 					imageCleanup.error
-				);
-				await failReservation();
-				return c.json(
-					{
-						error: 'internal_error',
-						message:
-							'Puzzle may be stuck in processing; image cleanup failed after workflow trigger failure'
-					},
-					500
 				);
 			}
 			await withDbBestEffort(
@@ -1742,6 +1719,17 @@ admin.post('/puzzle-families', async (c) => {
 				`Failed to init DB for ownership cleanup of puzzle ${id}:`,
 				(db) => deletePuzzleFamilyOwnership(db, familyId)
 			);
+			if (!metadataCleanup.success || !imageCleanup.success) {
+				await failReservation();
+				return c.json(
+					{
+						error: 'internal_error',
+						message:
+							'Puzzle may be stuck in processing; metadata or image cleanup failed after workflow trigger failure'
+					},
+					500
+				);
+			}
 			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}

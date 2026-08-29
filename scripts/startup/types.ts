@@ -130,6 +130,19 @@ export function isLocalServer(server: string): boolean {
 	}
 }
 
+/**
+ * Access credentials are sent as headers on every request — refuse to send
+ * them over anything but HTTPS to a remote host (local dev servers excepted)
+ * so a mistyped --server/PERSEUS_SERVER cannot leak a service token.
+ */
+export function assertHttpsCredentialServer(server: string): void {
+	if (!server.startsWith('https:') && !isLocalServer(server)) {
+		throw new FatalError(
+			`Refusing to send Cloudflare Access credentials to non-HTTPS server: ${server}`
+		);
+	}
+}
+
 /** Derive the cloudflared token cache basename from hostname + AUD. */
 export function tokenBasenameFor(server: string, aud: string): string {
 	const hostname = (() => {

@@ -1188,12 +1188,15 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true
 			});
-			// One-shot failure: the route fails the reservation and returns on
-			// the first variant failure, so exactly one value is consumed.
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-				success: false,
-				error: new Error('KV variant delete failed')
-			});
+			// First variant delete fails; remaining variants succeed. The route
+			// aggregates the failure and continues to R2/ownership cleanup
+			// instead of returning early on the first variant failure.
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					success: false,
+					error: new Error('KV variant delete failed')
+				})
+				.mockResolvedValue({ success: true });
 			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true
 			});
@@ -1234,14 +1237,14 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(res.status).toBe(500);
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('internal_error');
-			expect(body.message).toMatch(/variant metadata cleanup failed/i);
+			expect(body.message).toMatch(/metadata or image cleanup failed/i);
 			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA_DO,
 				'abc123def456',
 				'reserved-uuid'
 			);
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
-			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 		});
 
 		it('fails reservation (not release) when R2 image cleanup fails after missing workflow binding', async () => {
@@ -1322,11 +1325,17 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true
 			});
-			// One-shot failure: the route fails the reservation and returns on
-			// the first variant failure, so exactly one value is consumed.
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-				success: false,
-				error: new Error('KV variant delete failed')
+			// First variant delete fails; remaining variants succeed. The route
+			// aggregates the failure and continues to R2/ownership cleanup
+			// instead of returning early on the first variant failure.
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					success: false,
+					error: new Error('KV variant delete failed')
+				})
+				.mockResolvedValue({ success: true });
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
 			});
 			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -1357,16 +1366,16 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(res.status).toBe(500);
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('internal_error');
-			expect(body.message).toMatch(/variant metadata cleanup failed/i);
-			// Reservation FAILED (not released); image cleanup never runs because
-			// the variant branch returns first.
+			expect(body.message).toMatch(/metadata or image cleanup failed/i);
+			// Reservation FAILED (not released); R2 cleanup still runs because
+			// the route aggregates failures instead of returning early.
 			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA_DO,
 				'abc123def456',
 				'reserved-uuid'
 			);
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
-			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 		});
 
 		it('should return 409 when key is reserved but metadata is missing', async () => {
