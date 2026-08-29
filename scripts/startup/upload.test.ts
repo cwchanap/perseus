@@ -511,6 +511,22 @@ describe('idempotencyKey', () => {
 		const key = idempotencyKey('Sunset');
 		expect(key).toBe('Sunset\u0000');
 	});
+
+	it('appends legacyId discriminator when provided', () => {
+		const key = idempotencyKey('Sunset', '1:1', 'legacy-42');
+		expect(key).toBe('Sunset\u00001:1\u0000legacy-42');
+	});
+
+	it('omits the legacyId segment when not provided (seed-upload compatibility)', () => {
+		expect(idempotencyKey('Sunset', '1:1')).toBe('Sunset\u00001:1');
+		expect(idempotencyKey('Sunset', '1:1', undefined)).toBe('Sunset\u00001:1');
+	});
+
+	it('produces distinct keys for same name+aspectRatio but different legacyIds', () => {
+		const a = idempotencyKey('Sunset', '1:1', 'legacy-1');
+		const b = idempotencyKey('Sunset', '1:1', 'legacy-2');
+		expect(a).not.toBe(b);
+	});
 });
 
 describe('idempotencyKeyHeader', () => {

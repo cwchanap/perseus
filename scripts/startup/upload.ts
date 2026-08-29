@@ -83,9 +83,18 @@ export async function readError(response: Response, usingServiceToken = false): 
  * alone is fragile because the API does not enforce unique names — a manually
  * uploaded family sharing a seed entry's name (but with a different aspect
  * ratio) would wrongly cause the seed entry to be skipped.
+ *
+ * The optional `legacyId` discriminator is used by the legacy import flow,
+ * where the legacy catalog also does not enforce unique names: two distinct
+ * old puzzles can share the same `name + aspectRatio`. Without `legacyId` they
+ * would generate the same Idempotency-Key, so the second import would reuse the
+ * first's replacement family (and overwrite its restored owner) instead of
+ * creating its own. The seed-upload path never passes `legacyId`, so its keys
+ * remain compatible with `fetchExistingKeys` (which reconstructs keys from
+ * `family.name + family.aspectRatio` alone).
  */
-export function idempotencyKey(name: string, aspectRatio?: string): string {
-	return `${name.trim()}\u0000${aspectRatio ?? ''}`;
+export function idempotencyKey(name: string, aspectRatio?: string, legacyId?: string): string {
+	return `${name.trim()}\u0000${aspectRatio ?? ''}${legacyId ? `\u0000${legacyId}` : ''}`;
 }
 
 /**

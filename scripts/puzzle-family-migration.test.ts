@@ -417,6 +417,76 @@ describe('importPuzzleFamilies', () => {
 		expect(results.every((r) => r.status === 'ready')).toBe(true);
 	});
 
+	it('does not coalesce distinct legacy puzzles that share name + aspectRatio', async () => {
+		// Two legacy entries with identical name + aspectRatio but different
+		// legacyIds. The legacy catalog does not enforce unique names, so this
+		// is a legitimate input. The import must create two distinct families
+		// (distinct Idempotency-Key headers), not reuse one replacement.
+		const manifest = makeManifest(dir, 1);
+		manifest.puzzles.push({
+			legacyId: PUZZLE_B,
+			name: 'Alpha',
+			category: 'Nature' as PuzzleCategory,
+			aspectRatio: '1:1' as const,
+			ownerId: OWNER_B,
+			pieceCount: 100,
+			originalFile: `originals/${PUZZLE_B}.png`,
+			contentType: 'image/png',
+			byteLength: makePng().byteLength
+		});
+		writeFileSync(join(dir, MANIFEST_FILE), JSON.stringify(manifest, null, 2));
+		mkdirSync(join(dir, 'originals'), { recursive: true });
+		writeFileSync(join(dir, `originals/${PUZZLE_B}.png`), makePng());
+
+		const postedKeys: string[] = [];
+		let created = 0;
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+				const headerKey = (init.headers as Record<string, string>)['Idempotency-Key'];
+				postedKeys.push(headerKey);
+				created += 1;
+				return new Response(
+					JSON.stringify({ id: created === 1 ? FAMILY_A : FAMILY_B, status: 'ready' }),
+					{ status: 201 }
+				);
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+				return new Response(
+					JSON.stringify({
+						families: [
+							{ id: FAMILY_A, name: 'Alpha', status: 'ready' },
+							{ id: FAMILY_B, name: 'Alpha', status: 'ready' }
+						]
+					}),
+					{ status: 200 }
+				);
+			}
+			throw new Error(`unexpected fetch ${url} ${init?.method ?? 'GET'}`);
+		}) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async () => ({
+			exitCode: 0,
+			stdout: JSON.stringify([{ results: [], success: true, meta: { changes: 1 } }]),
+			stderr: ''
+		});
+
+		const results = await importPuzzleFamilies({
+			server: SERVER,
+			migrationDir: dir,
+			skipAccess: true,
+			fetchFn: globalThis.fetch,
+			runWrangler,
+			sleepFn: async () => {}
+		});
+
+		// Distinct legacyIds produced distinct idempotency keys → no coalescing.
+		expect(postedKeys).toHaveLength(2);
+		expect(postedKeys[0]).not.toBe(postedKeys[1]);
+		expect(results.map((r) => r.familyId).sort()).toEqual([FAMILY_A, FAMILY_B].sort());
+		expect(results.map((r) => r.legacyId).sort()).toEqual([PUZZLE_A, PUZZLE_B].sort());
+	});
+
 	it('omits category from FormData when manifest entry has no category', async () => {
 		const manifest = makeManifest(dir, 1);
 		delete (manifest.puzzles[0] as { category?: PuzzleCategory }).category;

@@ -203,7 +203,11 @@ export async function importPuzzleFamilies(options: ImportOptions): Promise<Impo
 			new File([image], basename(entry.originalFile), { type: entry.contentType })
 		);
 
-		const dedupKey = idempotencyKey(entry.name, entry.aspectRatio);
+		// Include legacyId in the dedup key so two distinct legacy puzzles that
+		// share the same name + aspectRatio (the legacy catalog does not enforce
+		// unique names) do not coalesce onto one replacement family. Retries of
+		// the same legacy entry remain idempotent because legacyId is stable.
+		const dedupKey = idempotencyKey(entry.name, entry.aspectRatio, entry.legacyId);
 		const response = await uploadWithRetry(options.server, headers, formData, entry.name, dedupKey);
 		if (!response.ok) {
 			const detail = await readError(response, !!(options.cfClientId && options.cfClientSecret));
