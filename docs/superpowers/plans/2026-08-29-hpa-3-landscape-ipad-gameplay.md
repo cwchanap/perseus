@@ -19,66 +19,65 @@
 - Mobile must not expose or deliberately mutate named/staging tray membership, active tray selection, tray names, rename/remove, multi-select, or clustering.
 - No mobile controller/global store, generic toolbar/dialog/gesture framework, or broad native E2E framework.
 - HPA-3 is iPad landscape only. HPA-46 owns portrait and live orientation changes.
-- Package-local mobile TypeScript is the authoritative command: `cd apps/mobile && bunx tsc --noEmit`; do not use the known root `bunx tsc --project apps/mobile/tsconfig.json --noEmit` TypeScript-7 path.
+- Package-local mobile TypeScript is authoritative: `cd apps/mobile && bunx tsc --noEmit`. Do not use the known root TypeScript-7 path for this package.
 
----
-
-## File structure
+## Planned file ownership
 
 ### Shared game core
 
-- `packages/game-core/src/session/types.ts` — add the narrow viewport action/outcomes.
-- `packages/game-core/src/session/session.ts` — validate/clone/apply viewport changes without gameplay side effects.
-- `packages/game-core/src/session/session.test.ts` — pin action semantics and real serialize/load restoration.
+- `packages/game-core/src/session/types.ts` — narrow viewport action/outcomes.
+- `packages/game-core/src/session/session.ts` — validate/clone/apply viewport changes.
+- `packages/game-core/src/session/session.test.ts` — action semantics and real serialize/load round trip.
 
-The existing `packages/game-core/src/session/codec.ts` already serializes, validates, and restores optional viewport state. Do not revise the codec or bump `CURRENT_SESSION_SCHEMA_VERSION` unless a failing test proves the existing path insufficient.
+The existing codec already serializes and validates optional `PersistedViewport`; do not edit it or bump `CURRENT_SESSION_SCHEMA_VERSION` unless Task 1 proves that assumption false.
 
-### Mobile pure gameplay helpers
+### Mobile pure helpers
 
-- `apps/mobile/app/gameplay/boardViewport.ts` — fit geometry, normalized zoom/pan, transform/inverse-transform, pinch and pan math.
-- `apps/mobile/app/gameplay/boardViewport.test.ts` — deterministic transform tests.
-- `apps/mobile/app/gameplay/trayPieces.ts` — filtered unplaced-piece projection and Fisher-Yates shuffle helper.
-- `apps/mobile/app/gameplay/trayPieces.test.ts` — deterministic projection/shuffle tests.
-- `apps/mobile/app/gameplay/boardViewModel.ts` — board-only render records and hit testing using the viewport transform.
-- `apps/mobile/app/gameplay/boardViewModel.test.ts` — transformed canonical-cell regression tests.
+- `apps/mobile/app/gameplay/boardViewport.ts` + `.test.ts` — fit geometry, zoom/pan normalization, forward/inverse transform, two-pointer transform.
+- `apps/mobile/app/gameplay/trayPieces.ts` + `.test.ts` — filtered unplaced-piece projection and Fisher-Yates shuffle.
+- `apps/mobile/app/gameplay/boardViewModel.ts` + `.test.ts` — board-only render records and transformed hit testing.
 
-### Mobile Svelte Native product surfaces
+### Mobile product components
 
-- `apps/mobile/app/gameplay/Gameplay.svelte` — session lifecycle/composition, persistence checkpoints, ephemeral drag/hint/feedback/sheet state, and all engine dispatches.
-- `apps/mobile/app/gameplay/PuzzleCanvas.svelte` — board/reference drawing, transformed board hit testing, two-finger viewport gesture, double-tap Fit, board feedback.
-- `apps/mobile/app/gameplay/PuzzleTray.svelte` — persistent right tray, piece tap/drag, filters, shuffle, selected Rotate.
-- `apps/mobile/app/gameplay/GameplayToolbar.svelte` — Library/Undo/Redo/Hint/Reference/More and concrete expanded action rows.
-- `apps/mobile/app/gameplay/MissionSetupSheet.svelte` — Timed/Relaxed + Rotation + Start.
-- `apps/mobile/app/gameplay/PauseSheet.svelte` — Resume/Restart/Library/Discard.
-- `apps/mobile/app/gameplay/DiscardSheet.svelte` — destructive progress confirmation and inline clear failure.
-- `apps/mobile/app/gameplay/CompletionSheet.svelte` — local completion summary projected from `SealedCompletion`.
-- `apps/mobile/app/app.css` — concrete landscape toolbar/tray/sheet styling.
-- `apps/mobile/App_Resources/iOS/Info.plist` — advertise iPad landscape orientations only for HPA-3.
-- `apps/mobile/app/library/Downloaded.svelte` — show variant difficulty beside piece count so saved/completed progress is unambiguous after PR #73.
+- `Gameplay.svelte` — session construction, dispatch orchestration, persistence boundaries, ephemeral drag/hint/feedback/sheet state.
+- `PuzzleCanvas.svelte` — board/reference drawing, transformed hit testing, two-finger viewport gesture, double-tap Fit.
+- `PuzzleTray.svelte` — persistent right tray, piece tap/drag, filters, shuffle, selected Rotate.
+- `GameplayToolbar.svelte` — Library/Undo/Redo/Hint/Reference/More and concrete expanded rows.
+- `MissionSetupSheet.svelte`, `PauseSheet.svelte`, `DiscardSheet.svelte`, `CompletionSheet.svelte` — concrete session surfaces only.
+- `apps/mobile/app/app.css` — landscape presentation.
+- `apps/mobile/App_Resources/iOS/Info.plist` — iPad landscape-only orientation for HPA-3.
+- `apps/mobile/app/library/Downloaded.svelte` — difficulty-aware saved/completed row copy.
 
 ---
 
-### Task 1: Give `PuzzleSession` a narrow persisted viewport action
+### Task 1: Give `PuzzleSession` one persisted viewport action
 
 **Files:**
 - Modify: `packages/game-core/src/session/types.ts`
 - Modify: `packages/game-core/src/session/session.ts`
 - Modify: `packages/game-core/src/session/session.test.ts`
 
-**Interfaces:**
-- Consumes: existing `PersistedViewport`, `PuzzleSessionAction`, `PuzzleSessionOutcome`, serializer/loader.
-- Produces: `set_viewport` dispatch with `viewport_changed | viewport_noop`, available to mobile through the existing `@perseus/game-core` wildcard export.
-
-- [ ] **Step 1: Add failing action-semantic tests**
-
-Append focused tests beside other display/persistence actions in `session.test.ts`:
+**Contract:**
 
 ```ts
-it('stores viewport without turning view navigation into gameplay activity or history', () => {
+// PuzzleSessionAction
+| { type: 'set_viewport'; viewport: PersistedViewport | null }
+
+// PuzzleSessionOutcome
+| { type: 'viewport_changed'; viewport: PersistedViewport | null }
+| { type: 'viewport_noop'; reason: 'invalid_viewport' }
+```
+
+- [ ] **Step 1: Add failing engine tests**
+
+Add tests beside the existing session state/persistence tests:
+
+```ts
+it('stores viewport without making view navigation gameplay activity or history', () => {
   const session = createPuzzleSession(makeOptions());
   session.dispatch({ type: 'start' });
-
   const before = session.getState();
+
   const outcome = session.dispatch({
     type: 'set_viewport',
     viewport: { zoom: 2, panX: 1.25, panY: -0.5 }
@@ -117,30 +116,18 @@ it('clears viewport for Fit and rejects non-finite values', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails on the missing action**
-
-Run:
+- [ ] **Step 2: Run the focused test red**
 
 ```bash
-bun run --cwd packages/game-core test:unit -- src/session/session.test.ts
+cd packages/game-core
+bunx vitest run src/session/session.test.ts
 ```
 
-Expected: TypeScript/test failure because `set_viewport` and the two new outcomes are not in the contract.
+Expected: compile/test failure because the action/outcomes do not exist.
 
-- [ ] **Step 3: Add the contract and minimal engine transition**
+- [ ] **Step 3: Implement the minimal transition**
 
-In `types.ts`, extend the action/outcome unions exactly:
-
-```ts
-| { type: 'set_viewport'; viewport: PersistedViewport | null }
-```
-
-```ts
-| { type: 'viewport_changed'; viewport: PersistedViewport | null }
-| { type: 'viewport_noop'; reason: 'invalid_viewport' }
-```
-
-In `session.ts`, route `set_viewport` through one helper:
+Add the contract in `types.ts`, dispatch it in `session.ts`, and use exactly one helper:
 
 ```ts
 function doSetViewport(viewport: PersistedViewport | null): PuzzleSessionOutcome {
@@ -164,15 +151,16 @@ function doSetViewport(viewport: PersistedViewport | null): PuzzleSessionOutcome
 
 Do not call `ensureTimerStarted()`, `pushHistory()`, or set `hasUserActivity`.
 
-- [ ] **Step 4: Pin the existing codec round trip through the real engine state**
-
-Add a round-trip assertion using the existing `serializeSession`, `loadPersistedSession`, and `contextFromMetadata` helpers:
+- [ ] **Step 4: Pin the existing codec through a real engine-produced snapshot**
 
 ```ts
 const metadata = makeMetadata();
 const session = createPuzzleSession(makeOptions({ metadata }));
 session.dispatch({ type: 'start' });
-session.dispatch({ type: 'set_viewport', viewport: { zoom: 1.75, panX: 0.5, panY: -1 } });
+session.dispatch({
+  type: 'set_viewport',
+  viewport: { zoom: 1.75, panX: 0.5, panY: -1 }
+});
 
 const snapshot = serializeSession(session.getState(), 1234);
 expect(snapshot?.viewport).toEqual({ zoom: 1.75, panX: 0.5, panY: -1 });
@@ -182,17 +170,15 @@ expect(loadPersistedSession(JSON.stringify(snapshot), contextFromMetadata(metada
 });
 ```
 
-- [ ] **Step 5: Run the game-core gate**
-
-Run:
+- [ ] **Step 5: Run the full game-core gate**
 
 ```bash
 bun run --cwd packages/game-core test:unit
 ```
 
-Expected: PASS with the existing schema version unchanged.
+Expected: PASS with schema V1 unchanged.
 
-- [ ] **Step 6: Commit the shared seam**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/game-core/src/session/types.ts packages/game-core/src/session/session.ts packages/game-core/src/session/session.test.ts
@@ -201,17 +187,13 @@ git commit -m "feat(game-core): persist puzzle viewport changes"
 
 ---
 
-### Task 2: Add pure viewport transform math
+### Task 2: Add pure board viewport math
 
 **Files:**
 - Create: `apps/mobile/app/gameplay/boardViewport.ts`
 - Create: `apps/mobile/app/gameplay/boardViewport.test.ts`
 
-**Interfaces:**
-- Consumes: `PersistedViewport`, grid dimensions, Canvas backing dimensions.
-- Produces: one normalized transform used by `BoardViewModel` and `PuzzleCanvas` in later tasks.
-
-Define this mobile-local surface:
+**Surface:**
 
 ```ts
 export interface BoardViewportInput {
@@ -232,90 +214,88 @@ export interface BoardTransform {
   cellAt(canvasX: number, canvasY: number): { x: number; y: number } | null;
 }
 
+export interface TwoPointerTransformInput {
+  startViewport: PersistedViewport | null;
+  startFocusX: number;
+  startFocusY: number;
+  currentFocusX: number;
+  currentFocusY: number;
+  scale: number;
+}
+
 export function createBoardTransform(input: BoardViewportInput): BoardTransform;
-export function zoomViewportAt(
-  input: BoardViewportInput,
-  focusX: number,
-  focusY: number,
-  scaleFromGestureStart: number,
-  startViewport: PersistedViewport | null
-): PersistedViewport | null;
-export function panViewportBy(
-  input: BoardViewportInput,
-  deltaCanvasX: number,
-  deltaCanvasY: number,
-  startViewport: PersistedViewport | null
+export function transformViewportForTwoPointers(
+  board: BoardViewportInput,
+  gesture: TwoPointerTransformInput
 ): PersistedViewport | null;
 ```
 
-- [ ] **Step 1: Write failing transform tests**
+- [ ] **Step 1: Write tests first**
 
-Cover fit, restored viewport, inverse hit testing, zoom bounds, pinch anchoring, and pan clamp. Use numeric examples rather than snapshots:
+Cover these numeric cases:
+
+1. Fit uses `calculateFitZoom()` and centers the board.
+2. `cellAt()` maps transformed Canvas points back to canonical cells.
+3. `zoom < 1` normalizes to Fit; `zoom > 4` clamps to 4.
+4. Fit normalizes pan to `0,0`/`null`.
+5. A pure two-finger translation changes pan without zoom.
+6. A pure pinch changes zoom while keeping the pinch-center board point stable before clamp.
+7. Combined translation + pinch applies from one gesture baseline, not incrementally twice.
+8. Pan clamp keeps a board axis centered when the transformed board still fits and prevents dragging an oversized axis completely away.
+
+Example fit assertion:
 
 ```ts
-it('uses Fit as zoom 1 with centered board and canonical inverse hit testing', () => {
-  const transform = createBoardTransform({
-    canvasWidth: 800,
-    canvasHeight: 600,
-    gridCols: 4,
-    gridRows: 3,
-    viewport: null
-  });
-
-  expect(transform.cellSize).toBe(200);
-  expect(transform.boardX).toBe(0);
-  expect(transform.boardY).toBe(0);
-  expect(transform.cellAt(399, 199)).toEqual({ x: 1, y: 0 });
+const transform = createBoardTransform({
+  canvasWidth: 800,
+  canvasHeight: 600,
+  gridCols: 4,
+  gridRows: 3,
+  viewport: null
 });
 
-it('clamps zoom to 1..4 and normalizes Fit pan to zero', () => {
-  expect(
-    createBoardTransform({
-      canvasWidth: 800,
-      canvasHeight: 600,
-      gridCols: 4,
-      gridRows: 3,
-      viewport: { zoom: 0.25, panX: 20, panY: 20 }
-    }).viewport
-  ).toBeNull();
-});
+expect(transform.cellSize).toBe(200);
+expect(transform.boardX).toBe(0);
+expect(transform.boardY).toBe(0);
+expect(transform.cellAt(399, 199)).toEqual({ x: 1, y: 0 });
 ```
 
-Use a second case with a portrait-ish board inside a wide Canvas to prove the fitting axis remains centered and a zoomed board can pan only on the oversized axis.
-
-- [ ] **Step 2: Run the new test and verify it fails because the module does not exist**
+- [ ] **Step 2: Run red**
 
 ```bash
-bun run --cwd apps/mobile test:unit -- app/gameplay/boardViewport.test.ts
+cd apps/mobile
+bunx vitest run app/gameplay/boardViewport.test.ts
 ```
 
-Expected: FAIL resolving `./boardViewport`.
+Expected: FAIL resolving the new module.
 
-- [ ] **Step 3: Implement the smallest transform module**
+- [ ] **Step 3: Implement the transform**
 
-Use `calculateFitZoom()` from game-core for the base fit cell size. Persist `panX/panY` in **cell units** and convert to backing pixels only inside the transform:
+Use the game-core fit helper and keep persisted pan in **board-cell units**:
 
 ```ts
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
-const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, viewport?.zoom ?? 1));
 const fitCellSize = calculateFitZoom(gridCols, gridRows, canvasWidth, canvasHeight);
+const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, viewport?.zoom ?? 1));
 const cellSize = fitCellSize * zoom;
 const panPixelsX = (viewport?.panX ?? 0) * fitCellSize;
 const panPixelsY = (viewport?.panY ?? 0) * fitCellSize;
 ```
 
-Normalize `zoom <= 1` to `null`. Clamp each pan axis using the transformed board extent and viewport center; do not allow blank space past both opposing board edges. Return a fresh viewport object after pinch/pan calculations.
+A normalized zoom of 1 returns `viewport: null`. All returned non-null viewport values are fresh finite objects.
 
-- [ ] **Step 4: Run the pure mobile tests**
+For two-pointer motion, compute zoom and centroid translation from the gesture-start viewport/geometry every frame. Do not apply a pinch delta and a pan delta independently to already-mutated state.
+
+- [ ] **Step 4: Run green**
 
 ```bash
-bun run --cwd apps/mobile test:unit -- app/gameplay/boardViewport.test.ts
+cd apps/mobile
+bunx vitest run app/gameplay/boardViewport.test.ts
+bunx tsc --noEmit
 ```
 
-Expected: PASS.
-
-- [ ] **Step 5: Commit the pure transform**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add apps/mobile/app/gameplay/boardViewport.ts apps/mobile/app/gameplay/boardViewport.test.ts
@@ -324,7 +304,7 @@ git commit -m "feat(mobile): add board viewport transform math"
 
 ---
 
-### Task 3: Replace the temporary Canvas tray with the landscape shell and right tray
+### Task 3: Move unplaced pieces into the production landscape tray
 
 **Files:**
 - Modify: `apps/mobile/App_Resources/iOS/Info.plist`
@@ -335,13 +315,11 @@ git commit -m "feat(mobile): add board viewport transform math"
 - Modify: `apps/mobile/app/gameplay/boardViewModel.test.ts`
 - Modify: `apps/mobile/app/app.css`
 
-**Interfaces:**
-- Consumes: `BoardTransform`, current `PuzzleSessionState`, existing installed piece paths.
-- Produces: landscape board + persistent tray, tap placement and cross-view drag placement. No viewport gestures yet; Fit remains the transform default until Task 4.
+**Result:** Fit-only board plus a persistent right tray, with tap placement and cross-view drag placement. Task 4 adds viewport gestures after this path is green.
 
-- [ ] **Step 1: Update the `BoardViewModel` test to describe a board-only renderer**
+- [ ] **Step 1: Make the `BoardViewModel` test describe a board-only renderer**
 
-Replace the old fitted-only assertion with transformed board records and remove expectations that unplaced pieces have Canvas tray coordinates:
+Extend options with `viewport`, route board geometry through `createBoardTransform()`, and prove unplaced pieces no longer produce Canvas draw records:
 
 ```ts
 const vm = createBoardViewModel({
@@ -356,21 +334,20 @@ expect(vm.cellAt(250, 150)).toEqual({ x: 0, y: 0 });
 expect(vm.state(state).drawRecords.every((record) => record.placed)).toBe(true);
 ```
 
-Add one `viewport: { zoom: 2, panX: 0.5, panY: 0 }` case that proves `cellAt` uses the transformed geometry.
+Add one zoomed viewport case to prove `cellAt()` follows transformed board geometry.
 
-- [ ] **Step 2: Run the focused test and verify the current API/temporary tray fails it**
+- [ ] **Step 2: Run red**
 
 ```bash
-bun run --cwd apps/mobile test:unit -- app/gameplay/boardViewModel.test.ts
+cd apps/mobile
+bunx vitest run app/gameplay/boardViewModel.test.ts
 ```
 
-Expected: FAIL because `viewport` is not consumed and unplaced Canvas records still exist.
+Expected: current temporary tray/fit-only model fails.
 
-- [ ] **Step 3: Refactor `BoardViewModel` to board-only geometry**
+- [ ] **Step 3: Refactor `BoardViewModel`**
 
-Use `createBoardTransform()` for `cellAt` and placed-piece draw records. Delete the in-Canvas horizontal tray layout and `pieceAt()` entirely.
-
-Keep the existing jigsaw overdraw factor for placed piece PNGs:
+Delete the horizontal tray record generation and `pieceAt()`. Keep placed-piece jigsaw overdraw using transformed `cellSize`:
 
 ```ts
 x: transform.boardX + piece.x * transform.cellSize - transform.cellSize * 0.2,
@@ -379,11 +356,9 @@ width: transform.cellSize * 1.4,
 height: transform.cellSize * 1.4
 ```
 
-- [ ] **Step 4: Create a concrete right-side `PuzzleTray.svelte`**
+- [ ] **Step 4: Create `PuzzleTray.svelte` with only the placement essentials**
 
-The first version needs only remaining pieces, selected highlight, tap selection, and screen-coordinate drag callbacks. Use NativeScript `TouchGestureEventData` pointer coordinates plus `getLocationOnScreen()`; keep coordinates in NativeScript DIPs until the Canvas boundary.
-
-Expose:
+First slice props:
 
 ```ts
 export let pieceIds: readonly number[];
@@ -395,47 +370,49 @@ export let onPieceDragMove: (pieceId: number, screenX: number, screenY: number) 
 export let onPieceDragEnd: (pieceId: number, screenX: number, screenY: number) => void;
 ```
 
-Do not add filter/shuffle/rotate controls yet; Task 6 adds them after placement is green.
+Use `TouchGestureEventData.getActivePointers()`/`getAllPointers()` and the touched view's `getLocationOnScreen()` to emit screen coordinates in NativeScript DIPs. A tap still calls `onSelectPiece`. Piece touch owns piece dragging; do not turn Canvas one-finger motion into board pan.
 
-- [ ] **Step 5: Make `PuzzleCanvas.svelte` board-only and expose screen-to-cell conversion**
+Keep the tray vertically scrollable. During an active piece drag, temporarily disable tray scrolling; restore it on up/cancel. No drag service is introduced.
 
-Delete Canvas selection/piece-drag ownership. Keep board taps for selected-piece placement.
+- [ ] **Step 5: Make `PuzzleCanvas.svelte` board-only and expose one screen-to-cell method**
 
-Export one component method used only by `Gameplay.svelte`:
+Delete Canvas ownership of unplaced-piece selection/pan. Keep board tap placement.
 
 ```ts
 export function cellAtScreenPoint(screenX: number, screenY: number): BoardCell | null {
   const origin = canvas?.getLocationOnScreen?.();
   if (!origin || !viewModel) return null;
-  const localDipX = screenX - origin.x;
-  const localDipY = screenY - origin.y;
   const scale = Screen.mainScreen.scale || 1;
-  return viewModel.cellAt(localDipX * scale, localDipY * scale);
+  return viewModel.cellAt((screenX - origin.x) * scale, (screenY - origin.y) * scale);
 }
 ```
 
-Keep the existing Canvas tap conversion on the same backing-pixel convention so tap and cross-view drag end in the same `cellAt` path.
+This is the only cross-view coordinate boundary. Tray stays in DIPs; Canvas converts once to its backing-pixel space.
 
 - [ ] **Step 6: Compose the landscape shell in `Gameplay.svelte`**
 
-Use a simple GridLayout with a flexible board column and a fixed practical tray column; start with `320` DIPs for the tray rather than a resizing system:
+Use a flexible board plus a simple `320` DIP tray. Wrap components in native GridLayout children so row/column properties belong to real NativeScript views:
 
 ```svelte
 <gridLayout columns="*,320" rows="auto,*" class="gameplay-page">
   <gridLayout row="1" col="0" class="gameplay-board-column">
     <PuzzleCanvas bind:this={puzzleCanvas} ... />
   </gridLayout>
-  <PuzzleTray row="1" col="1" ... />
+  <gridLayout row="1" col="1" class="gameplay-tray-column">
+    <PuzzleTray ... />
+  </gridLayout>
 </gridLayout>
 ```
 
-`Gameplay.svelte` derives unplaced IDs from `sessionState.trayOrder - placedPieces`, coordinates ephemeral drag state, calls `puzzleCanvas.cellAtScreenPoint()` on drag end, and dispatches the existing `attemptPlacement()` helper.
+`Gameplay.svelte` derives unplaced IDs from `trayOrder - placedPieces`. On drag end:
 
-Release outside the board returns without dispatching; wrong/non-upright cells use the engine rejection path.
+1. ask `puzzleCanvas.cellAtScreenPoint(screenX, screenY)`;
+2. if null, clear ephemeral drag and return without dispatch;
+3. otherwise call the same `attemptPlacement(pieceId, cell)` used by tap placement.
 
-- [ ] **Step 7: Lock iPad to landscape for the HPA-3 slice**
+- [ ] **Step 7: Lock only iPad to landscape**
 
-Change only `UISupportedInterfaceOrientations~ipad` to:
+Change `UISupportedInterfaceOrientations~ipad` to:
 
 ```xml
 <array>
@@ -444,26 +421,31 @@ Change only `UISupportedInterfaceOrientations~ipad` to:
 </array>
 ```
 
-Leave the phone orientation block alone. HPA-46 will re-enable portrait.
+Leave the phone block unchanged. Validate syntax with:
 
-- [ ] **Step 8: Run mobile unit/type/style gates and a real landscape launch**
+```bash
+plutil -lint apps/mobile/App_Resources/iOS/Info.plist
+```
+
+- [ ] **Step 8: Run gates and real launch**
 
 ```bash
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
-bunx prettier --check apps/mobile/app apps/mobile/App_Resources/iOS/Info.plist
+cd ../.. && bunx prettier --check apps/mobile/app
+plutil -lint apps/mobile/App_Resources/iOS/Info.plist
 ```
 
-Then launch the already-used iPad simulator:
+Then launch the established iPad simulator:
 
 ```bash
 cd apps/mobile
 PERSEUS_MOBILE_API_BASE=http://localhost:4690 ns run ios --no-hmr
 ```
 
-Verify the board occupies the majority column, the tray is persistent on the right, tapping a tray piece then a cell works, dragging from tray to the board works, and releasing outside the board does not increment incorrect attempts.
+Verify: board majority column, persistent right tray, tap-piece/tap-cell works, drag tray->board works, release outside board does not increment incorrect attempts.
 
-- [ ] **Step 9: Commit the landscape placement slice**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add apps/mobile/App_Resources/iOS/Info.plist apps/mobile/app/gameplay apps/mobile/app/app.css
@@ -480,59 +462,38 @@ git commit -m "feat(mobile): add landscape board and puzzle tray"
 - Modify: `apps/mobile/app/gameplay/boardViewport.ts`
 - Modify: `apps/mobile/app/gameplay/boardViewport.test.ts`
 
-**Interfaces:**
-- Consumes: Task 1 `set_viewport`, Task 2 transform helpers, NativeScript `TouchGestureEventData.getActivePointers()`, `doubleTap`.
-- Produces: normalized persisted viewport and transform-aware placement.
+**NativeScript API:** use the installed gesture surface: `touch` exposes active pointers, and `doubleTap` is a built-in gesture. Treat a two-pointer touch as one combined transform so pinch and centroid pan cannot double-apply.
 
-- [ ] **Step 1: Extend pure tests for a combined two-pointer transform**
+- [ ] **Step 1: Finish pure two-pointer tests**
 
-Add a helper that applies both distance scaling and centroid translation from one gesture baseline:
+Pin tests for scale-only, centroid-only, combined motion, and clamps through `transformViewportForTwoPointers()`.
 
-```ts
-export interface TwoPointerTransformInput {
-  startViewport: PersistedViewport | null;
-  startFocusX: number;
-  startFocusY: number;
-  currentFocusX: number;
-  currentFocusY: number;
-  scale: number;
-}
-
-export function transformViewportForTwoPointers(
-  board: BoardViewportInput,
-  gesture: TwoPointerTransformInput
-): PersistedViewport | null;
-```
-
-Test scale-only, centroid-only, combined scale+move, and clamping. This is preferable to independently applying pinch and pan recognizers and double-counting the same two-finger motion.
-
-- [ ] **Step 2: Run the viewport tests red, implement the helper, run green**
+- [ ] **Step 2: Run tests red/green around any missing math**
 
 ```bash
-bun run --cwd apps/mobile test:unit -- app/gameplay/boardViewport.test.ts
+cd apps/mobile
+bunx vitest run app/gameplay/boardViewport.test.ts
 ```
 
-- [ ] **Step 3: Add the Canvas two-pointer gesture owner**
+- [ ] **Step 3: Add one two-pointer gesture owner in Canvas**
 
-Use NativeScript `touch` for two-pointer ownership and `doubleTap` for Fit. On the first event with two active pointers, capture:
+On the first `touch` event with exactly two active pointers, capture:
 
 - starting viewport;
-- pointer centroid in Canvas backing coordinates;
+- centroid in Canvas backing coordinates;
 - pointer distance.
 
-On move with two pointers, compute current centroid/distance and call `transformViewportForTwoPointers`. Update local drawing immediately without persisting every frame.
+On move with two pointers, calculate current centroid/distance and project a transient viewport from the start baseline. Redraw immediately but do not write the session on every frame.
 
-When the gesture ends/cancels below two active pointers, call one callback:
+When the gesture ends/cancels below two pointers, emit:
 
 ```ts
 export let onViewportCommit: (viewport: PersistedViewport | null) => void;
 ```
 
-Double-tap calls `onViewportCommit(null)` and redraws Fit.
+`doubleTap` emits `null` for Fit. One-pointer Canvas movement never pans the board.
 
-Ignore one-pointer Canvas moves for panning. Piece dragging is owned by `PuzzleTray`.
-
-- [ ] **Step 4: Dispatch and persist viewport only at gesture boundaries**
+- [ ] **Step 4: Dispatch viewport at the persistence boundary**
 
 In `Gameplay.svelte`:
 
@@ -544,20 +505,18 @@ function commitViewport(viewport: PersistedViewport | null): void {
 }
 ```
 
-Pass `sessionState.viewport` to the Canvas. Restored sessions therefore paint with the persisted transform immediately.
+Pass `sessionState.viewport` back to Canvas. Restored sessions therefore paint the persisted transform immediately.
 
-- [ ] **Step 5: Verify transform-aware placement after viewport changes**
-
-Run:
+- [ ] **Step 5: Verify transformed placement**
 
 ```bash
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
 ```
 
-On iPad, zoom/pan and then verify both tap-cell and tray-drag release map to the correct canonical cell. Fit must return to `viewport === null` after the next save.
+On iPad: zoom/pan, then verify both tap-cell and tray drag release still map to correct canonical cells. Fit must lead to `viewport === null` in the saved state.
 
-- [ ] **Step 6: Commit viewport interaction**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add apps/mobile/app/gameplay/PuzzleCanvas.svelte apps/mobile/app/gameplay/Gameplay.svelte apps/mobile/app/gameplay/boardViewport.ts apps/mobile/app/gameplay/boardViewport.test.ts
@@ -566,7 +525,7 @@ git commit -m "feat(mobile): add puzzle zoom pan and fit"
 
 ---
 
-### Task 5: Replace auto-start with setup, explicit pause, restart, discard, and correct app lifecycle
+### Task 5: Replace auto-start with setup, pause, restart, discard, and correct lifecycle timing
 
 **Files:**
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
@@ -575,19 +534,9 @@ git commit -m "feat(mobile): add puzzle zoom pan and fit"
 - Create: `apps/mobile/app/gameplay/DiscardSheet.svelte`
 - Modify: `apps/mobile/app/app.css`
 
-**Interfaces:**
-- Consumes: existing `configure_setup`, `start`, `pause`, `resume`, `restart`, `SessionStorageAdapter.clearSession`.
-- Produces: concrete session-control sheets and correct suspend ordering. No new game-core lifecycle action.
+- [ ] **Step 1: Remove the HPA-1 automatic start/resume dispatch**
 
-- [ ] **Step 1: Remove the HPA-1 automatic start/resume block**
-
-Replace:
-
-```ts
-session.dispatch({ type: restored?.lifecycle === 'paused' ? 'resume' : 'start' });
-```
-
-with entry orchestration:
+Replace the current unconditional startup behavior with route-local entry state:
 
 ```ts
 let sheet: 'setup' | 'pause' | 'discard' | null = null;
@@ -597,46 +546,71 @@ if (session) {
     sheet = 'setup';
   } else if (restored.lifecycle === 'paused') {
     sheet = 'pause';
+  } else if (restored.lifecycle === 'active') {
+    // Hydration does not automatically create a live clock interval.
+    // This re-arms it only when timerStarted/mode/lifecycle require it.
+    session.setDocumentHidden(false);
   }
 }
 ```
 
-An active restored snapshot stays active. A paused restored snapshot stays paused.
+This explicit `setDocumentHidden(false)` is load-bearing for timed active resumes: the current engine hydrates state but starts a clock interval only through `resume`, visibility re-entry, or first timer-starting gameplay action.
 
-- [ ] **Step 2: Add the concrete setup sheet**
+- [ ] **Step 2: Add `MissionSetupSheet.svelte`**
 
-`MissionSetupSheet.svelte` accepts a draft `{ mode, rotationEnabled }` and callbacks. It contains only Timed/Relaxed, Rotation On/Off, Start, and Library.
-
-On Start:
+Expose only Timed/Relaxed, Rotation On/Off, Start, Library. On Start:
 
 ```ts
-session.dispatch({ type: 'configure_setup', mode: draft.mode, rotationEnabled: draft.rotationEnabled });
+session.dispatch({
+  type: 'configure_setup',
+  mode: setupDraft.mode,
+  rotationEnabled: setupDraft.rotationEnabled
+});
 session.dispatch({ type: 'start' });
 persist();
 sheet = null;
 ```
 
-Delete the `createRotations: ids => all-zero` override from `createPuzzleSession()` so game-core's real production rotation generator is used.
+Delete the current all-zero `createRotations` override so `PuzzleSession` uses the existing production random-rotation generator when rotation is enabled.
 
-- [ ] **Step 3: Add Pause/Resume and restart semantics**
+Do not add a mobile preference store in HPA-3.
 
-Explicit Pause:
+- [ ] **Step 3: Add explicit Pause/Resume**
 
 ```ts
-const outcome = session.dispatch({ type: 'pause' });
-if (outcome.type === 'lifecycle_transitioned') {
+function pauseSession(): void {
+  const outcome = session?.dispatch({ type: 'pause' });
+  if (outcome?.type !== 'lifecycle_transitioned') return;
   persist();
   sheet = 'pause';
 }
+
+function resumeSession(): void {
+  const outcome = session?.dispatch({ type: 'resume' });
+  if (outcome?.type === 'lifecycle_transitioned') {
+    persist();
+    sheet = null;
+  }
+}
 ```
 
-Restart stores the current mode/rotation as the setup draft, confirms when `hasUserActivity`, dispatches `restart`, persists the fresh setup state, then opens setup. Start subsequently runs `configure_setup + start`.
+`PauseSheet.svelte` also exposes Restart, Library and Discard.
 
-Do not build a generic modal component.
+- [ ] **Step 4: Add Restart without a rules copy**
 
-- [ ] **Step 4: Add explicit discard confirmation**
+Seed the setup draft from current `mode`/`rotationEnabled`. If `hasUserActivity`, show an inline restart confirmation state in the concrete Pause/More flow. On confirmation:
 
-`DiscardSheet.svelte` calls back to `Gameplay.svelte`. The parent clears the real variant session key:
+```ts
+session.dispatch({ type: 'restart' });
+persist();
+sheet = 'setup';
+```
+
+The next Start does `configure_setup + start`. Fresh engine state resets viewport to Fit and the filter to All under existing restart semantics.
+
+- [ ] **Step 5: Add concrete Discard confirmation**
+
+`DiscardSheet.svelte` calls the parent. Clear the real variant session and exit only on success:
 
 ```ts
 function confirmDiscard(): void {
@@ -648,11 +622,11 @@ function confirmDiscard(): void {
 }
 ```
 
-Keep the sheet open on failure.
+No generic dialog/error layer.
 
-- [ ] **Step 5: Fix background checkpoint ordering**
+- [ ] **Step 6: Fix suspend ordering**
 
-Change suspend handling to:
+Do not serialize before the engine stops/checkpoints the clock:
 
 ```ts
 function onSuspend(): void {
@@ -666,28 +640,20 @@ function onResume(): void {
 }
 ```
 
-Split `persist()` if necessary so `saveCurrentSnapshot()` does not call `checkpointTime()` a second time after `setDocumentHidden(true)`. Explicit Pause remains lifecycle `paused`; backgrounding never changes the sheet.
+If needed, split the old `persist()` into `checkpointAndSave()` and `saveCurrentSnapshot()` so suspend does not checkpoint twice. Backgrounding never changes `sheet`; an explicitly paused lifecycle stays paused.
 
-- [ ] **Step 6: Verify the lifecycle journey on iPad**
+- [ ] **Step 7: Verify on iPad**
 
-Check:
+Check new Start -> setup; active timed resume continues ticking; paused resume stays paused; explicit Pause persists; hidden time does not accrue; foreground does not create a Pause sheet; Restart returns to setup with prior choices; Discard clears the save.
 
-1. START opens setup instead of immediately running.
-2. Rotation On creates non-zero randomized orientations for at least one repeated run when randomness produces them.
-3. explicit Pause survives app background/foreground;
-4. an active timed run backgrounded for several seconds does not accrue those hidden seconds;
-5. returning from background does not open Pause unless the user explicitly paused;
-6. restarting returns to setup with prior mode/rotation selected;
-7. discard removes the session and returns to Downloaded.
-
-Then run:
+Run:
 
 ```bash
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
 ```
 
-- [ ] **Step 7: Commit session controls**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add apps/mobile/app/gameplay/Gameplay.svelte apps/mobile/app/gameplay/MissionSetupSheet.svelte apps/mobile/app/gameplay/PauseSheet.svelte apps/mobile/app/gameplay/DiscardSheet.svelte apps/mobile/app/app.css
@@ -696,7 +662,7 @@ git commit -m "feat(mobile): add mission session controls"
 
 ---
 
-### Task 6: Add toolbar, filters/shuffle, rotation, hints, and all reference modes
+### Task 6: Add toolbar parity, filters/shuffle, rotation, hints, and all reference modes
 
 **Files:**
 - Create: `apps/mobile/app/gameplay/GameplayToolbar.svelte`
@@ -707,13 +673,7 @@ git commit -m "feat(mobile): add mission session controls"
 - Create: `apps/mobile/app/gameplay/trayPieces.test.ts`
 - Modify: `apps/mobile/app/app.css`
 
-**Interfaces:**
-- Consumes: existing `canUndo/canRedo`, `rotate_piece`, `set_rotation_mode`, `use_hint`, `set_reference_mode`, `update_tray_organization`, `hint_target` event, `matchesInventoryFilter`.
-- Produces: touch-oriented parity without a mobile rules copy.
-
-- [ ] **Step 1: Write pure tray projection/shuffle tests**
-
-`trayPieces.ts` should expose:
+- [ ] **Step 1: Test filtered unplaced projection and shuffle**
 
 ```ts
 export function visibleUnplacedPieceIds(
@@ -721,38 +681,35 @@ export function visibleUnplacedPieceIds(
   pieces: SessionPuzzleSpec['pieces']
 ): number[];
 
-export function shuffleIds(ids: readonly number[], random: () => number = Math.random): number[];
+export function shuffleIds(
+  ids: readonly number[],
+  random: () => number = Math.random
+): number[];
 ```
 
-Tests must prove:
-
-- placed IDs never appear;
-- `all/corners/edges/center` reuse `matchesInventoryFilter` rather than local edge rules;
-- input order/array is not mutated;
-- injected random makes Fisher-Yates deterministic.
-
-Run red then green:
+Tests prove placed IDs never appear; All/Corners/Edges/Center call the existing `matchesInventoryFilter`; input arrays are not mutated; injected randomness makes Fisher-Yates deterministic.
 
 ```bash
-bun run --cwd apps/mobile test:unit -- app/gameplay/trayPieces.test.ts
+cd apps/mobile
+bunx vitest run app/gameplay/trayPieces.test.ts
 ```
 
-- [ ] **Step 2: Add the concrete top toolbar**
+- [ ] **Step 2: Add `GameplayToolbar.svelte`**
 
-Visible row: Library, puzzle name + difficulty, timer, Undo, Redo, Hint, Reference, More.
+Visible: Library, puzzle name+difficulty, timer, Undo, Redo, Hint, Reference, More.
 
-`GameplayToolbar.svelte` takes booleans/callbacks; it does not dispatch directly. `More` expands an inline row with exactly Fit, Rotation, Pause, Restart, Discard.
+`More` expands one concrete row with exactly: Fit Board, Rotation On/Off, Pause, Restart, Discard.
 
-Disable Undo/Redo from `sessionState.canUndo/canRedo`; disable Rotation toggle once the engine would reject it (placed pieces > 0); keep Pause active only in active lifecycle.
+The component receives state/callback props and does not dispatch directly. Disable Undo/Redo from engine flags; lock rotation toggle after placements; gate Pause by active lifecycle.
 
-- [ ] **Step 3: Wire undo/redo/filter/shuffle/selected Rotate through the engine**
+- [ ] **Step 3: Wire engine-owned tray controls**
 
-Use these existing dispatch shapes, followed by `persist()` when state changes:
+Use existing actions, then persist state-changing outcomes:
 
 ```ts
 session.dispatch({ type: 'undo' });
 session.dispatch({ type: 'redo' });
-session.dispatch({ type: 'rotate_piece', pieceId: sessionState.selectedPieceId });
+session.dispatch({ type: 'rotate_piece', pieceId: selectedPieceId });
 session.dispatch({
   type: 'update_tray_organization',
   update: { type: 'set_filter', filter }
@@ -763,48 +720,49 @@ session.dispatch({
 });
 ```
 
-`PuzzleTray` renders only the filtered unplaced projection and one Rotate control; no per-piece Rotate overlay.
+`PuzzleTray` shows remaining count, four filters, Shuffle, selection, and one selected-piece Rotate action. It does not expose `activeTray`, membership or names.
 
-- [ ] **Step 4: Wire hint presentation from `PuzzleSession` events**
+- [ ] **Step 4: Wire hint presentation from the existing event**
 
-Pass `onEvent` when constructing the session. On `hint_target`, set ephemeral `hintPieceId` and `hintTarget`. Do not persist this UI state.
+Construct the session with `onEvent`. On `hint_target`, store ephemeral `hintPieceId` and `hintTarget`. The engine already resets a non-All filter to All. Highlight the hinted tray piece and board cell; clear when that piece gets `placement_accepted` or a later hint replaces it.
 
-The Canvas draws a distinct hint target outline. The tray highlights the hinted piece. Clear the hint after `placement_accepted` for that piece; another hint replaces it. Let the existing engine reset a non-All filter to All.
+Do not serialize hint presentation state.
 
-- [ ] **Step 5: Add all three reference modes with one concrete Reference row**
+- [ ] **Step 5: Implement the three reference modes in one concrete row**
 
-The toolbar's Reference button expands Hold to Peek / Toggle / Ghost.
-
-Dispatch exactly:
+Reference expands: Hold to Peek, Toggle, Ghost.
 
 ```ts
 session.dispatch({ type: 'set_reference_mode', mode: 'hold' }); // touch down
-session.dispatch({ type: 'set_reference_mode', mode: null });   // touch up/cancel
+session.dispatch({ type: 'set_reference_mode', mode: null });   // up/cancel
 session.dispatch({ type: 'set_reference_mode', mode: 'toggle' });
 session.dispatch({ type: 'set_reference_mode', mode: 'ghost' });
 ```
 
-Toggle/ghost tapping the already-active mode dispatches `null`. Persist after engine-owned reference activations/counters change; the active mode itself remains runtime-only per the codec.
+Tapping the currently active Toggle/Ghost sends `null`. Persist after activation counters/facts change; active mode itself stays runtime-only.
 
-Load `launch.install.referencePath` once in `PuzzleCanvas.svelte` when present. Draw ghost behind pieces at low opacity; draw hold/toggle as a stronger board-aligned overlay. When there is no `referencePath`, hide/disable the Reference action and do not fetch anything.
+Load only `launch.install.referencePath`. No path means the Reference action is hidden/disabled and there is no network fallback.
 
-- [ ] **Step 6: Add short accepted/rejected board feedback**
+Canvas layering:
 
-Store only ephemeral `{ cell, kind: 'accepted' | 'rejected' }` in `Gameplay.svelte` from placement outcomes/events. Pass it to Canvas for a green/red cell flash; clear with one short timeout. Keep hint outline separate and persistent until consumed.
+- Ghost: board-aligned reference behind pieces, low opacity.
+- Hold/Toggle: stronger board-aligned overlay while pieces remain visible.
 
-Do not add animation/sound frameworks.
+- [ ] **Step 6: Add short placement feedback**
 
-- [ ] **Step 7: Run parity-focused mobile gates**
+Keep only ephemeral `{ cell, kind: 'accepted' | 'rejected' }` plus a short timeout. Canvas draws green/red target feedback. Hint target remains distinct until consumed/replaced.
+
+- [ ] **Step 7: Run gates + native parity spot-check**
 
 ```bash
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
-bunx prettier --check apps/mobile/app
+cd ../.. && bunx prettier --check apps/mobile/app
 ```
 
-On iPad verify Undo/Redo, Hint, all four filters, Shuffle, selected Rotate, Hold/Toggle/Ghost Reference, Fit, Pause, Restart and Discard all mutate/project the shared session correctly.
+On iPad verify Undo/Redo, Hint, all filters, Shuffle, selected Rotate, Hold/Toggle/Ghost, Fit, Pause, Restart, Discard.
 
-- [ ] **Step 8: Commit gameplay parity controls**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add apps/mobile/app/gameplay apps/mobile/app/app.css
@@ -813,7 +771,7 @@ git commit -m "feat(mobile): add landscape gameplay controls"
 
 ---
 
-### Task 7: Add local completion sheet, Downloaded variant clarity, and the final offline iPad gate
+### Task 7: Add local completion sheet and execute the final offline iPad gate
 
 **Files:**
 - Create: `apps/mobile/app/gameplay/CompletionSheet.svelte`
@@ -821,13 +779,9 @@ git commit -m "feat(mobile): add landscape gameplay controls"
 - Modify: `apps/mobile/app/library/Downloaded.svelte`
 - Modify: `apps/mobile/app/app.css`
 
-**Interfaces:**
-- Consumes: `PuzzleSessionEvent.completion_sealed`, `SealedCompletion`, `manifest.puzzle.difficulty`, existing Downloaded protected-progress classification.
-- Produces: durable local completion presentation and final HPA-3 acceptance evidence. No HPA-4 auth/server submission work.
+- [ ] **Step 1: Present the immutable local completion seal**
 
-- [ ] **Step 1: Show a concrete completion sheet from the sealed completion**
-
-On `completion_sealed`, persist immediately and set the sheet seal. Render only stable local facts:
+On `completion_sealed`, save immediately and show a concrete sheet projected from `SealedCompletion` + downloaded metadata:
 
 ```ts
 interface CompletionSheetProps {
@@ -838,27 +792,15 @@ interface CompletionSheetProps {
 }
 ```
 
-Display difficulty, Timed/Relaxed result, elapsed time when non-null, hints, incorrect attempts, rotation enabled/used, and Back to Library.
+Display puzzle/difficulty, Timed or Relaxed result, elapsed time when non-null, hints, incorrect attempts, rotation enabled/used, Back to Library.
 
-Do **not** call completion APIs, add an outbox, or surface pending `serverSubmission` state. HPA-4 owns account-bound server submission.
+Do not call completion APIs, add auth, add an outbox, or build a second local stats database. The sealed session itself is the HPA-3 durable local completion state; HPA-4 owns account-bound submission.
 
-- [ ] **Step 2: Make Downloaded rows unambiguous after family difficulty**
+- [ ] **Step 2: Clarify variant difficulty in Downloaded**
 
-Reuse `getDifficultyLabel()` from `familyGallery.ts` and change the detail copy from:
+Reuse `getDifficultyLabel()` from `familyGallery.ts` and change row copy from `16 PIECES` to `EASY · 16 PIECES`. Keep the existing `none | resumable | protected | invalid` action matrix untouched.
 
-```text
-16 PIECES
-```
-
-to:
-
-```text
-EASY · 16 PIECES
-```
-
-Keep all existing `none | resumable | protected | invalid` action behavior unchanged.
-
-- [ ] **Step 3: Run all automated gates before native acceptance**
+- [ ] **Step 3: Run all automated gates**
 
 ```bash
 bun run --cwd packages/game-core test:unit
@@ -868,37 +810,33 @@ cd ../.. && bun run check
 bun run lint
 ```
 
-All must pass before claiming the native gate.
+All must pass before native acceptance is claimed.
 
-- [ ] **Step 4: Prepare one real downloaded Easy variant**
+- [ ] **Step 4: Download one real Easy variant, then remove the network dependency**
 
-Run the local API using the repository's normal development command and download one ready Easy family variant through the mobile Gallery. Confirm its finalized `downloads/<variantId>/manifest.json`, reference when available, and piece files exist before disabling/stopping network/API access.
-
-Do not add a special HPA-3 fixture or backend route.
+Run the normal local API, download one ready Easy family variant through Gallery, and confirm the finalized package exists. Then stop the API/disable networking for the gameplay journey. Do not add an HPA-3 backend route or permanent special fixture.
 
 - [ ] **Step 5: Execute the landscape iPad offline smoke**
 
-Using the existing NativeScript iPad simulator/device workflow, record the exact device/runtime versions and verify this journey after the package is downloaded and the API/network is unavailable:
+Record NativeScript/Xcode/iPad simulator versions and verify:
 
 1. Downloaded row shows difficulty and START.
-2. START opens setup; choose a mode/rotation and enter gameplay.
+2. START opens setup; choose mode/rotation.
 3. Tap-place one piece.
 4. Cross-view drag-place one piece.
-5. Release one piece outside the board and verify no incorrect-attempt increment.
-6. Pinch zoom and two-finger pan; inspect the session file after a gesture end and confirm finite `viewport` values.
-7. Exit/relaunch Resume and confirm the same viewport and placements restore.
-8. Fit and confirm the next saved snapshot omits `viewport`.
-9. Exercise Rotate, all filters, Shuffle, Hint, Hold/Toggle/Ghost Reference, Undo and Redo.
-10. Explicitly Pause and Resume.
-11. Background an active timed run for at least five seconds; foreground and verify hidden time was not added and no new Pause sheet appeared.
-12. Complete the variant offline and verify the completion sheet.
-13. Return to Downloaded and verify `COMPLETED PROGRESS` with no Start/Resume until explicit Discard Progress.
+5. Release outside board; incorrect attempts stay unchanged.
+6. Pinch zoom and two-finger pan; saved session gets finite viewport values.
+7. Exit/relaunch Resume; placements and viewport restore and an active timed clock continues.
+8. Fit; next saved snapshot omits viewport.
+9. Exercise Rotate, all filters, Shuffle, Hint, Hold/Toggle/Ghost Reference, Undo, Redo.
+10. Explicit Pause/Resume.
+11. Background an active timed run for at least five seconds; hidden time is excluded and no unwanted Pause sheet appears.
+12. Finish the variant offline and see the completion sheet.
+13. Return to Downloaded; row is `COMPLETED PROGRESS` and has no Start/Resume until explicit Discard Progress.
 
-If the current simulator/XCUITest path cannot reliably inject pinch/two-finger motion, document those two physical gestures as manual PASS/PENDING evidence instead of adding a new native automation framework. Automated `boardViewport.test.ts` still gates the transform math.
+If the current simulator/XCUITest path cannot reliably inject pinch/two-finger motion, record those two physical gestures as explicit manual PASS/PENDING evidence instead of adding a new native automation framework. `boardViewport.test.ts` remains the automated math gate.
 
 - [ ] **Step 6: Perform the final scope sweep**
-
-Run:
 
 ```bash
 git diff --name-only main...HEAD
@@ -906,27 +844,15 @@ rg "activeTray|membership|rename_tray|remove_tray|move_piece" apps/mobile/app/ga
 rg "fetch\(|/api/|CompletionOutbox|AuthService" apps/mobile/app/gameplay
 ```
 
-Expected:
+Expected: no manual-tray feature and no gameplay network/auth/outbox path. Production changes stay inside the narrow game-core viewport seam, mobile gameplay/library presentation, and iPad orientation.
 
-- changed production code is confined to game-core viewport ownership, mobile gameplay/library presentation, iPad orientation, and planning docs;
-- no mobile manual-tray mutation is introduced;
-- no gameplay network/auth/outbox path is introduced.
-
-- [ ] **Step 7: Commit completion/polish evidence changes**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add apps/mobile/app/gameplay/CompletionSheet.svelte apps/mobile/app/gameplay/Gameplay.svelte apps/mobile/app/library/Downloaded.svelte apps/mobile/app/app.css
 git commit -m "feat(mobile): add offline completion summary"
 ```
 
-- [ ] **Step 8: Update the existing draft PR rather than opening another one**
+- [ ] **Step 8: Update this same draft PR**
 
-Update its body with:
-
-- task checklist for Tasks 1–7;
-- automated gate results;
-- iPad device/runtime and native smoke evidence;
-- any explicitly manual multi-touch acceptance status;
-- confirmation that HPA-46/HPA-4 remain out of scope.
-
-When implementation and the recorded gate are complete, mark this same PR ready for review.
+Add Task 1–7 completion state, automated gate output, native device/runtime details, native smoke evidence, and any explicitly manual multi-touch evidence to the existing PR body. Do not open another PR. Mark this PR ready only after implementation and the acceptance ledger are complete.
