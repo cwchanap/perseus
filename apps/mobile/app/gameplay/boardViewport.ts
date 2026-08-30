@@ -229,16 +229,26 @@ export function transformViewportForTwoPointers(
 	// translates the board one-to-one.
 	const boardWidth = board.gridCols * fitCellSize * zoom;
 	const boardHeight = board.gridRows * fitCellSize * zoom;
+	// Clamp the start pan with the start-scale board dimensions, matching
+	// createBoardTransform's rendered-viewport clamping. Without this, a
+	// viewport persisted on a larger surface (pan within the old limit but
+	// beyond the current one after relayout) anchors the pinch to a board
+	// origin that does not match what is drawn, and the first zoom frame
+	// jumps the content under the focus.
+	const startBoardWidth = board.gridCols * fitCellSize * startZoom;
+	const startBoardHeight = board.gridRows * fitCellSize * startZoom;
+	const startPanX = clampPan(start?.panX ?? 0, startBoardWidth, board.canvasWidth, fitCellSize);
+	const startPanY = clampPan(start?.panY ?? 0, startBoardHeight, board.canvasHeight, fitCellSize);
 	const startBoardX = projectBoardOrigin(
 		board.canvasWidth,
-		board.gridCols * fitCellSize * startZoom,
-		start?.panX ?? 0,
+		startBoardWidth,
+		startPanX,
 		fitCellSize
 	);
 	const startBoardY = projectBoardOrigin(
 		board.canvasHeight,
-		board.gridRows * fitCellSize * startZoom,
-		start?.panY ?? 0,
+		startBoardHeight,
+		startPanY,
 		fitCellSize
 	);
 	const anchorX = (gesture.startFocusX - startBoardX) * (zoom / startZoom);
