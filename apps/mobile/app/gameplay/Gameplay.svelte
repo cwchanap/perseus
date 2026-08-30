@@ -13,11 +13,13 @@
 		type PuzzleSessionState,
 		type PuzzleSession,
 		type ReferenceMode,
+		type SealedCompletion,
 		type SessionStorageAdapter
 	} from '@perseus/game-core';
 	import { classifyProgress, type GameplayLaunch } from '../library/downloadedLibrary';
 	import { sessionSpecFromManifest } from '../library/downloadManifest';
 	import { getDifficultyLabel } from '../library/familyGallery';
+	import CompletionSheet from './CompletionSheet.svelte';
 	import DiscardSheet from './DiscardSheet.svelte';
 	import GameplayToolbar from './GameplayToolbar.svelte';
 	import MissionSetupSheet from './MissionSetupSheet.svelte';
@@ -57,6 +59,10 @@
 	let hintPieceId: number | null = null;
 	let hintTarget: BoardCell | null = null;
 
+	// The immutable local seal, captured from the engine's event stream; the
+	// completion sheet projects it read-only.
+	let completionSeal: SealedCompletion | null = null;
+
 	const session: PuzzleSession | null = launchUnavailable
 		? null
 		: createPuzzleSession({
@@ -73,6 +79,11 @@
 					} else if (event.type === 'placement_accepted' && hintPieceId === event.pieceId) {
 						hintPieceId = null;
 						hintTarget = null;
+					} else if (event.type === 'completion_sealed') {
+						// The seal is already on state when this event fires, so the
+						// immediate save contains the completed snapshot.
+						saveCurrentSnapshot();
+						completionSeal = event.seal;
 					}
 				}
 			});
@@ -436,7 +447,16 @@
 				/>
 			</absoluteLayout>
 		{/if}
-		{#if sheet === 'setup'}
+		{#if completionSeal}
+			<gridLayout class="sheet-backdrop">
+				<CompletionSheet
+					puzzleName={launch.install.manifest.puzzle.name}
+					difficulty={launch.install.manifest.puzzle.difficulty}
+					seal={completionSeal}
+					onBackToLibrary={exitToLibrary}
+				/>
+			</gridLayout>
+		{:else if sheet === 'setup'}
 			<gridLayout class="sheet-backdrop">
 				<MissionSetupSheet
 					bind:mode={setupDraft.mode}
