@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	backingSizeFromLayout,
+	canFitOnDoubleTap,
 	createBoardTransform,
 	screenPointToCanvas,
 	transformViewportForTwoPointers
@@ -207,5 +208,20 @@ describe('boardViewport', () => {
 		const transform = createBoardTransform({ ...FIT_INPUT, viewport: combined });
 		// Content cell under the start focus (400,300) at zoom 2 was cell (1, 1).
 		expect(transform.cellAt(550, 300)).toEqual({ x: 1, y: 1 });
+	});
+
+	describe('canFitOnDoubleTap', () => {
+		it('allows Fit when unselected and outside the suppression window', () => {
+			expect(canFitOnDoubleTap(null, 1000, 500)).toBe(true);
+		});
+
+		it('blocks Fit while a piece is selected', () => {
+			expect(canFitOnDoubleTap(7, 1000, 500)).toBe(false);
+		});
+
+		it('blocks Fit inside the suppression window and at the exact boundary allows it again', () => {
+			expect(canFitOnDoubleTap(null, 1000, 1500)).toBe(false);
+			expect(canFitOnDoubleTap(null, 1500, 1500)).toBe(true);
+		});
 	});
 });

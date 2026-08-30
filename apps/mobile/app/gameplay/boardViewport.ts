@@ -183,6 +183,19 @@ export function createBoardTransform(input: BoardViewportInput): BoardTransform 
 	};
 }
 
+/**
+ * True when a double tap may fit the board: no piece is selected (a selected
+ * piece hands the gesture to More -> Fit Board) and any placement tap's
+ * suppression window has expired.
+ */
+export function canFitOnDoubleTap(
+	selectedPieceId: number | null,
+	nowMs: number,
+	suppressFitUntilMs: number
+): boolean {
+	return selectedPieceId === null && nowMs >= suppressFitUntilMs;
+}
+
 export function transformViewportForTwoPointers(
 	board: BoardViewportInput,
 	gesture: TwoPointerTransformInput
