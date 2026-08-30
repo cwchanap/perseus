@@ -37,7 +37,10 @@ export function createBoardViewModel(transform: BoardTransform): BoardViewModel 
 			y: transform.boardY + piece.y * transform.cellSize - transform.cellSize * 0.2,
 			width: transform.cellSize * 1.4,
 			height: transform.cellSize * 1.4,
-			rotation: session.pieceRotations[piece.pieceId] ?? 0
+			// Placement validation stops checking orientation once rotation is
+			// disabled, so a non-upright piece is accepted; render it upright to
+			// match the accepted state rather than the stale pieceRotations map.
+			rotation: session.rotationEnabled ? (session.pieceRotations[piece.pieceId] ?? 0) : 0
 		}));
 
 		return {

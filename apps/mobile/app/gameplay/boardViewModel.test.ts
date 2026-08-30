@@ -98,4 +98,29 @@ describe('BoardViewModel', () => {
 		expect(transform.cellAt(550, 450)).toEqual({ x: 1, y: 1 });
 		expect(transform.cellAt(5, 5)).toBeNull();
 	});
+
+	it('projects 0° for a placed piece after rotation is disabled, even when pieceRotations is stale', () => {
+		const transform = createBoardTransform({
+			canvasWidth: 800,
+			canvasHeight: 600,
+			gridCols: 2,
+			gridRows: 2,
+			viewport: null
+		});
+		const session = makeSession();
+		session.dispatch({ type: 'configure_setup', mode: 'relaxed', rotationEnabled: true });
+		session.dispatch({ type: 'start' });
+		// Rotate the piece so pieceRotations holds a non-zero value, then
+		// disable rotation: pieceRotations is left intact, but placement no
+		// longer checks orientation, so the piece is accepted sideways.
+		session.dispatch({ type: 'rotate_piece', pieceId: 2 });
+		session.dispatch({ type: 'set_rotation_mode', enabled: false });
+		expect(session.getState().pieceRotations[2]).not.toBe(0);
+		session.dispatch({ type: 'attempt_placement', pieceId: 2, x: 0, y: 0 });
+
+		const render = createBoardViewModel(transform).state(session.getState());
+
+		expect(render.drawRecords).toHaveLength(1);
+		expect(render.drawRecords[0].rotation).toBe(0);
+	});
 });
