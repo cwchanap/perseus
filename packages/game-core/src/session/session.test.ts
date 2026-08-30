@@ -3011,3 +3011,81 @@ it('rejects configure_setup after start', () => {
 	expect(session.getState().mode).toBe('timed');
 	expect(session.getState().rotationEnabled).toBe(false);
 });
+
+// --- HPA-3: persisted viewport -------------------------------------------------
+
+describe('PuzzleSession persisted viewport', () => {
+	it('stores viewport without changing gameplay activity, history, or result class', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'start' });
+		const before = session.getState();
+
+		expect(
+			session.dispatch({
+				type: 'set_viewport',
+				viewport: { zoom: 2, panX: 1.25, panY: -0.5 }
+			})
+		).toEqual({
+			type: 'viewport_changed',
+			viewport: { zoom: 2, panX: 1.25, panY: -0.5 }
+		});
+
+		const after = session.getState();
+		expect(after.viewport).toEqual({ zoom: 2, panX: 1.25, panY: -0.5 });
+		expect(after.hasUserActivity).toBe(before.hasUserActivity);
+		expect(after.canUndo).toBe(before.canUndo);
+		expect(after.canRedo).toBe(before.canRedo);
+		expect(after.resultClass).toBe(before.resultClass);
+	});
+
+	it.each([
+		{ zoom: 0, panX: 0, panY: 0 },
+		{ zoom: -1, panX: 0, panY: 0 },
+		{ zoom: Number.NaN, panX: 0, panY: 0 },
+		{ zoom: 1, panX: Number.POSITIVE_INFINITY, panY: 0 },
+		{ zoom: 1, panX: 0, panY: Number.NEGATIVE_INFINITY }
+	])('rejects a viewport the V1 codec would reject: %o', (viewport) => {
+		const { session } = startedSession();
+		const before = session.getState().viewport;
+
+		expect(session.dispatch({ type: 'set_viewport', viewport })).toEqual({
+			type: 'viewport_noop',
+			reason: 'invalid_viewport'
+		});
+		expect(session.getState().viewport).toEqual(before);
+	});
+
+	it('clears viewport for Fit', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'set_viewport', viewport: { zoom: 2, panX: 1, panY: 1 } });
+
+		expect(session.dispatch({ type: 'set_viewport', viewport: null })).toEqual({
+			type: 'viewport_changed',
+			viewport: null
+		});
+		expect(session.getState().viewport).toBeNull();
+	});
+
+	it('round-trips a set viewport through the V1 codec', () => {
+		const metadata = makeMetadata();
+		// UUID-format run id: the loader's isPuzzleRunId check rejects the short
+		// engine-test ids (run-1) that makeRunIdFactory produces.
+		const session = createPuzzleSession({
+			...makeOptions({ metadata }),
+			runIdFactory: { create: () => '11111111-1111-4111-8111-111111111111' }
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({
+			type: 'set_viewport',
+			viewport: { zoom: 1.75, panX: 0.5, panY: -1 }
+		});
+
+		const snapshot = serializeSession(session.getState(), 1234)!;
+		expect(snapshot.viewport).toEqual({ zoom: 1.75, panX: 0.5, panY: -1 });
+		const loaded = loadPersistedSession(JSON.stringify(snapshot), contextFromMetadata(metadata));
+		expect(loaded).toMatchObject({
+			status: 'loaded',
+			snapshot: { viewport: { zoom: 1.75, panX: 0.5, panY: -1 } }
+		});
+	});
+});

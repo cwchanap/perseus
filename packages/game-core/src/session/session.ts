@@ -18,6 +18,7 @@ import type {
 	PuzzleSessionEvent,
 	PersistedPuzzleSessionV1,
 	PersistedTrayOrganization,
+	PersistedViewport,
 	PlacementOutcome,
 	ResultClass,
 	ReferenceMode,
@@ -536,6 +537,32 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		return { type: 'tray_organization_applied', update };
 	}
 
+	// --- Persisted viewport ---------------------------------------------------
+
+	// Viewport is a UI preference, not gameplay: it never touches
+	// hasUserActivity, history, the result class, or the timer. Values are
+	// validated against the same rules the V1 codec enforces (finite numbers,
+	// zoom > 0) and cloned so a caller cannot mutate retained state by
+	// reference. `null` clears back to Fit.
+	function doSetViewport(viewport: PersistedViewport | null): PuzzleSessionOutcome {
+		if (
+			viewport !== null &&
+			(!Number.isFinite(viewport.zoom) ||
+				viewport.zoom <= 0 ||
+				!Number.isFinite(viewport.panX) ||
+				!Number.isFinite(viewport.panY))
+		) {
+			return { type: 'viewport_noop', reason: 'invalid_viewport' };
+		}
+
+		state.viewport = viewport ? { ...viewport } : null;
+		notify();
+		return {
+			type: 'viewport_changed',
+			viewport: state.viewport ? { ...state.viewport } : null
+		};
+	}
+
 	// --- Restart --------------------------------------------------------------
 
 	function doRestart(): PuzzleSessionOutcome {
@@ -886,6 +913,8 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 				return doSetReferenceMode(action.mode);
 			case 'update_tray_organization':
 				return doUpdateTrayOrganization(action.update);
+			case 'set_viewport':
+				return doSetViewport(action.viewport);
 			case 'restart':
 				return doRestart();
 			case 'complete':
