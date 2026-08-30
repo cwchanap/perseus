@@ -16,6 +16,8 @@
 	import { classifyProgress, type GameplayLaunch } from '../library/downloadedLibrary';
 	import { sessionSpecFromManifest } from '../library/downloadManifest';
 	import PuzzleCanvas from './PuzzleCanvas.svelte';
+	import PuzzleTray from './PuzzleTray.svelte';
+	import { shuffleIds } from './trayPieces';
 	import { resolveMobileCrypto } from './runtime';
 	import type { BoardCell } from './boardViewModel';
 
@@ -44,8 +46,8 @@
 				clock: createDefaultClock(),
 				runIdFactory: createRunIdFactory(resolveMobileCrypto()),
 				restored,
-				initialTrayOrder: spec.pieces.map((piece) => piece.id),
-				createTrayOrder: () => spec.pieces.map((piece) => piece.id),
+				initialTrayOrder: shuffleIds(spec.pieces.map((piece) => piece.id)),
+				createTrayOrder: () => shuffleIds(spec.pieces.map((piece) => piece.id)),
 				createRotations: (ids) =>
 					Object.fromEntries(ids.map((id) => [id, 0])) as Record<number, Rotation>
 			});
@@ -140,6 +142,50 @@
 		if (outcome.type === 'placement' && outcome.outcome.status !== 'noop') persist();
 		return outcome;
 	}
+
+	// Full-bleed cross-view drag: the overlay image follows the finger in
+	// TRUE screen DIPs while the tray hands the piece over the board.
+	interface ActivePieceDrag {
+		pieceId: number;
+		screenX: number;
+		screenY: number;
+	}
+
+	const DRAG_OVERLAY_SIZE = 140;
+
+	let activePieceDrag: ActivePieceDrag | null = null;
+	let page: any = null;
+	let puzzleCanvas: any = null;
+
+	function startPieceDrag(pieceId: number, screenX: number, screenY: number): void {
+		activePieceDrag = { pieceId, screenX, screenY };
+	}
+
+	function movePieceDrag(screenX: number, screenY: number): void {
+		if (!activePieceDrag) return;
+		activePieceDrag = { ...activePieceDrag, screenX, screenY };
+	}
+
+	function endPieceDrag(): void {
+		if (!activePieceDrag) return;
+		const cell =
+			puzzleCanvas?.cellAtScreenPoint(activePieceDrag.screenX, activePieceDrag.screenY) ?? null;
+		const pieceId = activePieceDrag.pieceId;
+		activePieceDrag = null;
+		if (cell) attemptPlacement(pieceId, cell);
+	}
+
+	function overlayOrigin(): { x: number; y: number } {
+		return page?.getLocationOnScreen?.() ?? { x: 0, y: 0 };
+	}
+
+	function overlayLeft(screenX: number): number {
+		return screenX - overlayOrigin().x - DRAG_OVERLAY_SIZE / 2;
+	}
+
+	function overlayTop(screenY: number): number {
+		return screenY - overlayOrigin().y - DRAG_OVERLAY_SIZE / 2;
+	}
 </script>
 
 {#if launchUnavailable}
@@ -155,44 +201,70 @@
 		<button row="1" text="BACK TO LIBRARY" class="library-button" on:tap={exitToLibrary} />
 	</gridLayout>
 {:else if sessionState}
-	<gridLayout rows="auto,auto,auto,auto,*,auto" backgroundColor="#111820">
-		<label
-			row="0"
-			text={launch.install.manifest.puzzle.name}
-			fontSize="24"
-			color="#f7fafc"
-			margin="12,12,4,12"
-		/>
-		<label
-			row="1"
-			text="Tap a piece, then a cell, or drag a piece into its cell."
-			textWrap="true"
-			color="#cbd5e0"
-			margin="2,12"
-		/>
-		<label
-			row="2"
-			text={`puzzle=${sessionState.puzzleId} grid=${sessionState.gridCols}x${sessionState.gridRows} lifecycle=${sessionState.lifecycle} placed=${sessionState.placedPieces.length}/${sessionState.pieceCount} wrong=${sessionState.counters.incorrectAttempts}`}
-			textWrap="true"
-			color="#f7fafc"
-			margin="2,12"
-		/>
-		<label
-			row="3"
-			text={`selected=${sessionState.selectedPieceId === null ? 'none' : `piece-${sessionState.selectedPieceId}`} last=${lastAction}`}
-			textWrap="true"
-			color="#f6e05e"
-			margin="2,12"
-		/>
-		<gridLayout row="4">
-			<PuzzleCanvas
-				{sessionState}
-				piecePaths={launch.install.piecePaths}
-				onSelectPiece={selectPiece}
-				onAttemptPlacement={attemptPlacement}
-				onLoadError={handlePieceLoadError}
+	<gridLayout bind:this={page} backgroundColor="#111820">
+		<gridLayout rows="auto,auto,auto,auto,*,auto">
+			<label
+				row="0"
+				text={launch.install.manifest.puzzle.name}
+				fontSize="24"
+				color="#f7fafc"
+				margin="12,12,4,12"
 			/>
+			<label
+				row="1"
+				text="Tap a piece, then a cell, or drag a piece into its cell."
+				textWrap="true"
+				color="#cbd5e0"
+				margin="2,12"
+			/>
+			<label
+				row="2"
+				text={`puzzle=${sessionState.puzzleId} grid=${sessionState.gridCols}x${sessionState.gridRows} lifecycle=${sessionState.lifecycle} placed=${sessionState.placedPieces.length}/${sessionState.pieceCount} wrong=${sessionState.counters.incorrectAttempts}`}
+				textWrap="true"
+				color="#f7fafc"
+				margin="2,12"
+			/>
+			<label
+				row="3"
+				text={`selected=${sessionState.selectedPieceId === null ? 'none' : `piece-${sessionState.selectedPieceId}`} last=${lastAction}`}
+				textWrap="true"
+				color="#f6e05e"
+				margin="2,12"
+			/>
+			<gridLayout row="4" columns="*,320">
+				<gridLayout col={0}>
+					<PuzzleCanvas
+						bind:this={puzzleCanvas}
+						{sessionState}
+						piecePaths={launch.install.piecePaths}
+						onAttemptPlacement={attemptPlacement}
+						onLoadError={handlePieceLoadError}
+					/>
+				</gridLayout>
+				<gridLayout col={1}>
+					<PuzzleTray
+						{sessionState}
+						pieces={spec.pieces}
+						piecePaths={launch.install.piecePaths}
+						onSelectPiece={selectPiece}
+						onPieceDragStart={startPieceDrag}
+						onPieceDragMove={movePieceDrag}
+						onPieceDragEnd={endPieceDrag}
+					/>
+				</gridLayout>
+			</gridLayout>
+			<button row="5" text="LIBRARY" class="library-button" on:tap={exitToLibrary} />
 		</gridLayout>
-		<button row="5" text="LIBRARY" class="library-button" on:tap={exitToLibrary} />
+		{#if activePieceDrag}
+			<absoluteLayout>
+				<image
+					src={launch.install.piecePaths[activePieceDrag.pieceId]}
+					left={overlayLeft(activePieceDrag.screenX)}
+					top={overlayTop(activePieceDrag.screenY)}
+					style={`width: ${DRAG_OVERLAY_SIZE}; height: ${DRAG_OVERLAY_SIZE};`}
+					stretch="aspectFit"
+				/>
+			</absoluteLayout>
+		{/if}
 	</gridLayout>
 {/if}
