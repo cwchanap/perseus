@@ -235,7 +235,13 @@
 	function drawRecord(context: any, record: BoardDrawRecord): void {
 		const image = pieceImages[record.pieceId];
 		if (!image) return;
-		context.drawImage(image, record.x, record.y, record.width, record.height);
+		// Rotation is clockwise degrees about the record center (the padded
+		// square keeps tabs inside the rotated bounds).
+		context.save();
+		context.translate(record.x + record.width / 2, record.y + record.height / 2);
+		context.rotate((record.rotation * Math.PI) / 180);
+		context.drawImage(image, -record.width / 2, -record.height / 2, record.width, record.height);
+		context.restore();
 	}
 
 	// Single conversion for every local gesture point: view-local DIPs into

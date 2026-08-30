@@ -7,6 +7,7 @@
 	export let canUndo: boolean;
 	export let canRedo: boolean;
 	export let rotationEnabled: boolean;
+	export let hasUserActivity: boolean;
 	export let referenceAvailable: boolean;
 	export let referenceMode: ReferenceMode | null = null;
 	export let onLibrary: () => void;
@@ -24,13 +25,29 @@
 	// out through callbacks — this component never dispatches.
 	let openMenu: 'more' | 'reference' | null = null;
 
+	// Same armed confirm as the pause sheet: with meaningful activity the
+	// first tap arms (the item becomes CONFIRM RESTART?), the second fires;
+	// without activity restart is immediate. Disarming on menu close keeps
+	// the armed state from leaking across opens.
+	let confirmRestart = false;
+
 	function toggleMenu(menu: 'more' | 'reference'): void {
+		confirmRestart = false;
 		openMenu = openMenu === menu ? null : menu;
 	}
 
 	function runFromMenu(action: () => void): void {
+		confirmRestart = false;
 		openMenu = null;
 		action();
+	}
+
+	function requestRestart(): void {
+		if (hasUserActivity && !confirmRestart) {
+			confirmRestart = true;
+			return;
+		}
+		runFromMenu(onRestart);
 	}
 
 	function formatElapsed(seconds: number | null): string {
@@ -104,7 +121,12 @@
 				on:tap={() => runFromMenu(() => onSetRotationMode(!rotationEnabled))}
 			/>
 			<button col={2} text="PAUSE" class="toolbar-button" on:tap={() => runFromMenu(onPause)} />
-			<button col={3} text="RESTART" class="toolbar-button" on:tap={() => runFromMenu(onRestart)} />
+			<button
+				col={3}
+				text={confirmRestart ? 'CONFIRM RESTART?' : 'RESTART'}
+				class={confirmRestart ? 'toolbar-button-active' : 'toolbar-button'}
+				on:tap={requestRestart}
+			/>
 			<button col={4} text="DISCARD" class="toolbar-button" on:tap={() => runFromMenu(onDiscard)} />
 		</gridLayout>
 	{:else if openMenu === 'reference'}
