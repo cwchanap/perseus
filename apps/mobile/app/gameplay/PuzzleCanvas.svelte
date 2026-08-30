@@ -18,7 +18,6 @@
 
 	export let sessionState: Readonly<PuzzleSessionState>;
 	export let piecePaths: Record<number, string>;
-	export let onSelectPiece: (pieceId: number) => void;
 	export let onAttemptPlacement: (pieceId: number, cell: BoardCell) => PuzzleSessionOutcome;
 	export let onLoadError: ((failedPieceIds: number[]) => void) | undefined = undefined;
 
@@ -29,13 +28,6 @@
 	let firstPaintScheduled = false;
 	let pieceImages: Record<number, ImageAsset> = {};
 	let surfaceReady = false;
-	let draggingPieceId: number | null = null;
-	let dragOffsetX = 0;
-	let dragOffsetY = 0;
-	let dragX = 0;
-	let dragY = 0;
-	let dragStartX = 0;
-	let dragStartY = 0;
 
 	$: if (surfaceReady && viewModel && sessionState) draw();
 	$: if (piecePaths) loadPieces();
@@ -132,15 +124,8 @@
 			context.stroke();
 		}
 
-		for (const record of render.drawRecords.filter((item) => !item.placed)) {
-			if (record.pieceId !== draggingPieceId) drawRecord(context, record);
-		}
-		for (const record of render.drawRecords.filter((item) => item.placed)) {
+		for (const record of render.drawRecords) {
 			drawRecord(context, record);
-		}
-		if (draggingPieceId !== null) {
-			const record = render.drawRecords.find((item) => item.pieceId === draggingPieceId);
-			if (record) drawRecord(context, { ...record, x: dragX, y: dragY });
 		}
 	}
 
@@ -148,11 +133,6 @@
 		const image = pieceImages[record.pieceId];
 		if (!image) return;
 		context.drawImage(image, record.x, record.y, record.width, record.height);
-		if (record.selected) {
-			context.strokeStyle = '#f6e05e';
-			context.lineWidth = 4;
-			context.strokeRect(record.x, record.y, record.width, record.height);
-		}
 	}
 
 	// Single conversion for every local gesture point: view-local DIPs into
@@ -163,94 +143,24 @@
 		return screenPointToCanvas(x, y, 0, 0, surfaceMetrics);
 	}
 
-	function pointFromPan(event: any): { x: number; y: number } | null {
-		const density = Screen.mainScreen.scale || 1;
-		try {
-			if (event.ios?.locationInView && event.view?.nativeViewProtected) {
-				const point = event.ios.locationInView(event.view.nativeViewProtected);
-				return toCanvasPoint(point.x, point.y);
-			}
-		} catch {
-			// Fall through to the platform-extracted position used by the installed runtime.
-		}
-		const current = event.android?.current;
-		if (current && typeof current.getX === 'function' && typeof current.getY === 'function') {
-			// Android MotionEvent coordinates are view-local pixels, not DIPs.
-			return toCanvasPoint(current.getX() / density, current.getY() / density);
-		}
-		if (draggingPieceId !== null) {
-			return { x: dragStartX + event.deltaX * density, y: dragStartY + event.deltaY * density };
-		}
-		return null;
-	}
-
 	function onTap(event: any): void {
-		if (
-			!viewModel ||
-			!transform ||
-			typeof event.getX !== 'function' ||
-			typeof event.getY !== 'function'
-		)
-			return;
+		if (!transform || typeof event.getX !== 'function' || typeof event.getY !== 'function') return;
 		const point = toCanvasPoint(event.getX(), event.getY());
 		if (!point) return;
-		const pieceId = viewModel.pieceAt(point.x, point.y, sessionState);
-		if (pieceId !== null) {
-			onSelectPiece(pieceId);
-			return;
-		}
 		const cell = transform.cellAt(point.x, point.y);
 		if (cell && sessionState.selectedPieceId !== null) {
 			onAttemptPlacement(sessionState.selectedPieceId, cell);
 		}
 	}
 
-	function onPan(event: any): void {
-		if (!viewModel || !transform) return;
-		if (event.state === 1) {
-			const start = pointFromPan(event);
-			if (!start) return;
-			const pieceId = viewModel.pieceAt(start.x, start.y, sessionState);
-			if (pieceId === null) return;
-			const record = viewModel
-				.state(sessionState)
-				.drawRecords.find((item) => item.pieceId === pieceId);
-			if (!record) return;
-			draggingPieceId = pieceId;
-			dragStartX = start.x;
-			dragStartY = start.y;
-			dragOffsetX = start.x - record.x;
-			dragOffsetY = start.y - record.y;
-			dragX = start.x - dragOffsetX;
-			dragY = start.y - dragOffsetY;
-			draw();
-			return;
-		}
-		if (draggingPieceId === null) return;
-		const point = pointFromPan(event);
-		if (event.state === 2 && point) {
-			dragX = point.x - dragOffsetX;
-			dragY = point.y - dragOffsetY;
-			draw();
-			return;
-		}
-		if (event.state === 0) {
-			draggingPieceId = null;
-			draw();
-			return;
-		}
-		if (event.state === 3) {
-			const density = Screen.mainScreen.scale || 1;
-			const release = point ?? {
-				x: dragStartX + event.deltaX * density,
-				y: dragStartY + event.deltaY * density
-			};
-			const cell = transform.cellAt(release.x, release.y);
-			const pieceId = draggingPieceId;
-			draggingPieceId = null;
-			if (cell) onAttemptPlacement(pieceId, cell);
-			draw();
-		}
+	// Overlay drags arrive in TRUE screen DIPs (unlike local gesture points,
+	// whose origin is the view itself), so the canvas origin on screen is the
+	// one place the nonzero origin is correct.
+	export function cellAtScreenPoint(screenX: number, screenY: number): BoardCell | null {
+		const origin = canvas?.getLocationOnScreen?.();
+		if (!origin || !surfaceMetrics || !transform) return null;
+		const point = screenPointToCanvas(screenX, screenY, origin.x, origin.y, surfaceMetrics);
+		return point ? transform.cellAt(point.x, point.y) : null;
 	}
 </script>
 
@@ -262,5 +172,4 @@
 	on:loaded={syncSurface}
 	on:layoutChanged={syncSurface}
 	on:tap={onTap}
-	on:pan={onPan}
 />

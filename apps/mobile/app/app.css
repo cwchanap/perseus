@@ -92,3 +92,17 @@
 .library-load-more {
 	margin-top: 12;
 }
+
+.tray-scroll {
+	background-color: #0d1520;
+}
+
+.tray-piece {
+	background-color: #1f2b38;
+	margin: 4;
+}
+
+.tray-piece-selected {
+	background-color: #2b6cb0;
+	margin: 4;
+}
