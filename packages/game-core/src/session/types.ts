@@ -129,10 +129,10 @@ export interface PersistedTrayOrganization {
 }
 
 /**
- * Optional persisted viewport (zoom/pan) state. Reserved for a consuming
- * feature that explicitly opts into persisting it; absent until then. The
- * codec validates and preserves it across a round-trip even when the current
- * route does not populate it, per the approved persistence contract.
+ * Portable persisted viewport units.
+ * `zoom` is a multiplier over fit-to-viewport cell scale (`1` = Fit).
+ * `panX`/`panY` are offsets in fit-cell units, positive right/down.
+ * App UIs may clamp their usable range but must preserve these units.
  */
 export interface PersistedViewport {
 	zoom: number;
@@ -283,6 +283,7 @@ export type PuzzleSessionAction =
 	| { type: 'use_hint' }
 	| { type: 'set_reference_mode'; mode: ReferenceMode | null }
 	| { type: 'update_tray_organization'; update: TrayOrganizationUpdate }
+	| { type: 'set_viewport'; viewport: PersistedViewport | null }
 	| {
 			type: 'acknowledge_completion_effect';
 			runId: string;
@@ -355,6 +356,8 @@ export type PuzzleSessionOutcome =
 			type: 'tray_organization_noop';
 			reason: 'invalid_update' | 'not_implemented' | 'lifecycle_disallows';
 	  }
+	| { type: 'viewport_changed'; viewport: PersistedViewport | null }
+	| { type: 'viewport_noop'; reason: 'invalid_viewport' }
 	| { type: 'completion_sealed'; seal: SealedCompletion }
 	| {
 			type: 'completion_noop';
