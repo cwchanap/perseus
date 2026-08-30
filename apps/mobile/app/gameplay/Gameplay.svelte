@@ -7,20 +7,24 @@
 		createRunIdFactory,
 		serializeSession,
 		validationContextFrom,
+		type InventoryFilter,
 		type PersistedViewport,
 		type PuzzleSessionOutcome,
 		type PuzzleSessionState,
 		type PuzzleSession,
+		type ReferenceMode,
 		type SessionStorageAdapter
 	} from '@perseus/game-core';
 	import { classifyProgress, type GameplayLaunch } from '../library/downloadedLibrary';
 	import { sessionSpecFromManifest } from '../library/downloadManifest';
+	import { getDifficultyLabel } from '../library/familyGallery';
 	import DiscardSheet from './DiscardSheet.svelte';
+	import GameplayToolbar from './GameplayToolbar.svelte';
 	import MissionSetupSheet from './MissionSetupSheet.svelte';
 	import PauseSheet from './PauseSheet.svelte';
 	import PuzzleCanvas from './PuzzleCanvas.svelte';
 	import PuzzleTray from './PuzzleTray.svelte';
-	import { shuffleIds } from './trayPieces';
+	import { shuffledUnplacedPieceIds, shuffleIds } from './trayPieces';
 	import { resolveMobileCrypto } from './runtime';
 	import {
 		commitViewport as commitSessionViewport,
@@ -48,6 +52,11 @@
 	const canResume = launch.mode === 'resume' && restored !== undefined;
 	const launchUnavailable = !canStart && !canResume;
 
+	// Ephemeral hint presentation from the engine's event stream; a later
+	// hint replaces both, an accepted placement of the hinted piece clears both.
+	let hintPieceId: number | null = null;
+	let hintTarget: BoardCell | null = null;
+
 	const session: PuzzleSession | null = launchUnavailable
 		? null
 		: createPuzzleSession({
@@ -56,11 +65,19 @@
 				runIdFactory: createRunIdFactory(resolveMobileCrypto()),
 				restored,
 				initialTrayOrder: shuffleIds(spec.pieces.map((piece) => piece.id)),
-				createTrayOrder: () => shuffleIds(spec.pieces.map((piece) => piece.id))
+				createTrayOrder: () => shuffleIds(spec.pieces.map((piece) => piece.id)),
+				onEvent: (event) => {
+					if (event.type === 'hint_target') {
+						hintPieceId = event.pieceId;
+						hintTarget = event.target;
+					} else if (event.type === 'placement_accepted' && hintPieceId === event.pieceId) {
+						hintPieceId = null;
+						hintTarget = null;
+					}
+				}
 			});
 
 	let sessionState: Readonly<PuzzleSessionState> | null = session?.getState() ?? null;
-	let lastAction = 'ready';
 	let unsubscribe: (() => void) | null = null;
 	let sheet: 'setup' | 'pause' | 'discard' | null = entrySheetFor(restored);
 	let setupDraft = { mode: sessionState?.mode ?? 'timed', rotationEnabled: false };
@@ -114,18 +131,27 @@
 		const outcome = session.dispatch({ type: 'restart' });
 		if (outcome.type !== 'lifecycle_transitioned') return;
 		setupDraft = setupDraftSeed;
+		// The fresh run invalidates both ephemeral overlays.
+		hintPieceId = null;
+		hintTarget = null;
+		clearPlacementFeedback();
 		saveCurrentSnapshot();
 		sheet = 'setup';
 	}
 
+	// Discard is reachable from the pause sheet AND the active toolbar; cancel
+	// returns to wherever the sheet was opened from.
+	let discardReturn: 'pause' | null = null;
+
 	function requestDiscard(): void {
 		discardError = '';
+		discardReturn = sheet === 'pause' ? 'pause' : null;
 		sheet = 'discard';
 	}
 
 	function cancelDiscard(): void {
 		discardError = '';
-		sheet = 'pause';
+		sheet = discardReturn;
 	}
 
 	function confirmDiscard(): void {
@@ -166,24 +192,104 @@
 	});
 
 	onDestroy(() => {
+		clearPlacementFeedback();
 		saveCurrentSnapshot();
 		unsubscribe?.();
 		session?.dispose();
 	});
 
 	function selectPiece(pieceId: number): void {
-		if (!session) return;
-		const outcome = session.dispatch({ type: 'select_piece', pieceId });
-		lastAction = outcome.type === 'selection_changed' ? `selected piece-${pieceId}` : outcome.type;
-	}
-
-	function handlePieceLoadError(failedPieceIds: number[]): void {
-		lastAction = `piece load failed: ${failedPieceIds.length} piece(s)`;
+		session?.dispatch({ type: 'select_piece', pieceId });
 	}
 
 	function commitViewport(viewport: PersistedViewport | null): void {
 		if (!session) return;
 		commitSessionViewport(session, viewport, saveCurrentSnapshot);
+	}
+
+	// Fit Board is always available, even with a piece selected; it dispatches
+	// set_viewport null through the same policy helper as canvas gestures.
+	function fitBoard(): void {
+		commitViewport(null);
+	}
+
+	function undoMove(): void {
+		const outcome = session?.dispatch({ type: 'undo' });
+		if (outcome?.type === 'history_restored') saveCurrentSnapshot();
+	}
+
+	function redoMove(): void {
+		const outcome = session?.dispatch({ type: 'redo' });
+		if (outcome?.type === 'history_restored') saveCurrentSnapshot();
+	}
+
+	function useHint(): void {
+		const outcome = session?.dispatch({ type: 'use_hint' });
+		if (outcome?.type === 'hint_used') saveCurrentSnapshot();
+	}
+
+	function rotateSelected(): void {
+		const pieceId = sessionState?.selectedPieceId;
+		if (pieceId === null || pieceId === undefined) return;
+		const outcome = session?.dispatch({ type: 'rotate_piece', pieceId });
+		if (outcome?.type === 'piece_rotated') saveCurrentSnapshot();
+	}
+
+	function setRotationMode(enabled: boolean): void {
+		const outcome = session?.dispatch({ type: 'set_rotation_mode', enabled });
+		if (outcome?.type === 'rotation_mode_changed') saveCurrentSnapshot();
+	}
+
+	// Reference mode is runtime-only engine state; never persisted, no save.
+	function setReferenceMode(mode: ReferenceMode | null): void {
+		session?.dispatch({ type: 'set_reference_mode', mode });
+	}
+
+	function setTrayFilter(filter: InventoryFilter): void {
+		const outcome = session?.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter }
+		});
+		if (outcome?.type === 'tray_organization_applied') saveCurrentSnapshot();
+	}
+
+	// Shuffle reorders ALL unplaced pieces (never the filtered subset) — the
+	// Task 3B Corners regression is the contract.
+	function shuffleTray(): void {
+		if (!session || !sessionState) return;
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: {
+				type: 'reorder',
+				trayId: 'main',
+				pieceIds: shuffledUnplacedPieceIds(sessionState)
+			}
+		});
+		if (outcome.type === 'tray_organization_applied') saveCurrentSnapshot();
+	}
+
+	// One ephemeral placement feedback with one replaceable short timeout;
+	// the canvas draws it — no reducer/animation framework.
+	const PLACEMENT_FEEDBACK_MS = 800;
+	let placementFeedback: {
+		cell: BoardCell;
+		kind: 'accepted' | 'rejected';
+	} | null = null;
+	let placementFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function showPlacementFeedback(cell: BoardCell, kind: 'accepted' | 'rejected'): void {
+		if (placementFeedbackTimer !== null) clearTimeout(placementFeedbackTimer);
+		placementFeedback = { cell, kind };
+		placementFeedbackTimer = setTimeout(() => {
+			placementFeedbackTimer = null;
+			placementFeedback = null;
+		}, PLACEMENT_FEEDBACK_MS);
+	}
+
+	function clearPlacementFeedback(): void {
+		if (placementFeedbackTimer !== null) clearTimeout(placementFeedbackTimer);
+		placementFeedbackTimer = null;
+		placementFeedback = null;
 	}
 
 	function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcome {
@@ -200,15 +306,9 @@
 			y: cell.y
 		});
 		if (outcome.type === 'placement') {
-			if (outcome.outcome.status === 'accepted') {
-				lastAction = `placement accepted piece-${pieceId}`;
-			} else if (outcome.outcome.status === 'rejected') {
-				lastAction = `placement rejected ${outcome.outcome.reason} counted`;
-			} else {
-				lastAction = `placement ${outcome.outcome.reason}`;
+			if (outcome.outcome.status === 'accepted' || outcome.outcome.status === 'rejected') {
+				showPlacementFeedback(cell, outcome.outcome.status);
 			}
-		} else {
-			lastAction = outcome.type;
 		}
 		if (outcome.type === 'placement' && outcome.outcome.status !== 'noop') saveCurrentSnapshot();
 		return outcome;
@@ -273,43 +373,38 @@
 	</gridLayout>
 {:else if sessionState}
 	<gridLayout bind:this={page} backgroundColor="#111820">
-		<gridLayout rows="auto,auto,auto,auto,*,auto">
-			<label
-				row="0"
-				text={launch.install.manifest.puzzle.name}
-				fontSize="24"
-				color="#f7fafc"
-				margin="12,12,4,12"
+		<gridLayout rows="auto,*">
+			<GameplayToolbar
+				puzzleName={launch.install.manifest.puzzle.name}
+				difficultyLabel={getDifficultyLabel(launch.install.manifest.puzzle.difficulty)}
+				elapsedSeconds={sessionState.elapsedActiveSeconds}
+				canUndo={sessionState.canUndo}
+				canRedo={sessionState.canRedo}
+				rotationEnabled={sessionState.rotationEnabled}
+				referenceAvailable={launch.install.referencePath !== undefined}
+				referenceMode={sessionState.activeReferenceMode}
+				onLibrary={exitToLibrary}
+				onUndo={undoMove}
+				onRedo={redoMove}
+				onHint={useHint}
+				onFitBoard={fitBoard}
+				onSetRotationMode={setRotationMode}
+				onPause={pauseSession}
+				onRestart={restartSession}
+				onDiscard={requestDiscard}
+				onSetReferenceMode={setReferenceMode}
 			/>
-			<label
-				row="1"
-				text="Tap a piece, then a cell, or drag a piece into its cell."
-				textWrap="true"
-				color="#cbd5e0"
-				margin="2,12"
-			/>
-			<label
-				row="2"
-				text={`puzzle=${sessionState.puzzleId} grid=${sessionState.gridCols}x${sessionState.gridRows} lifecycle=${sessionState.lifecycle} placed=${sessionState.placedPieces.length}/${sessionState.pieceCount} wrong=${sessionState.counters.incorrectAttempts}`}
-				textWrap="true"
-				color="#f7fafc"
-				margin="2,12"
-			/>
-			<label
-				row="3"
-				text={`selected=${sessionState.selectedPieceId === null ? 'none' : `piece-${sessionState.selectedPieceId}`} last=${lastAction}`}
-				textWrap="true"
-				color="#f6e05e"
-				margin="2,12"
-			/>
-			<gridLayout row="4" columns="*,320">
+			<gridLayout row={1} columns="*,320">
 				<gridLayout col={0}>
 					<PuzzleCanvas
 						bind:this={puzzleCanvas}
 						{sessionState}
 						piecePaths={launch.install.piecePaths}
+						referencePath={launch.install.referencePath}
+						referenceMode={sessionState.activeReferenceMode}
+						{hintTarget}
+						{placementFeedback}
 						onAttemptPlacement={attemptPlacement}
-						onLoadError={handlePieceLoadError}
 						onViewportCommit={commitViewport}
 					/>
 				</gridLayout>
@@ -318,14 +413,17 @@
 						{sessionState}
 						pieces={spec.pieces}
 						piecePaths={launch.install.piecePaths}
+						{hintPieceId}
 						onSelectPiece={selectPiece}
 						onPieceDragStart={startPieceDrag}
 						onPieceDragMove={movePieceDrag}
 						onPieceDragEnd={endPieceDrag}
+						onSetFilter={setTrayFilter}
+						onShuffle={shuffleTray}
+						onRotateSelected={rotateSelected}
 					/>
 				</gridLayout>
 			</gridLayout>
-			<button row="5" text="LIBRARY" class="library-button" on:tap={exitToLibrary} />
 		</gridLayout>
 		{#if activePieceDrag}
 			<absoluteLayout>

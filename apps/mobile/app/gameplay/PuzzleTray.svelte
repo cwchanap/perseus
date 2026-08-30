@@ -1,21 +1,39 @@
 <script lang="ts">
 	import { GestureStateTypes } from '@nativescript/core';
-	import type { PuzzleSessionState, SessionPuzzleSpec } from '@perseus/game-core';
-	import { visibleUnplacedPieceIds } from './trayPieces';
+	import type { InventoryFilter, PuzzleSessionState, SessionPuzzleSpec } from '@perseus/game-core';
+	import { unplacedPieceIds, visibleUnplacedPieceIds } from './trayPieces';
 
 	export let sessionState: Readonly<PuzzleSessionState>;
 	export let pieces: SessionPuzzleSpec['pieces'];
 	export let piecePaths: Record<number, string>;
+	export let hintPieceId: number | null = null;
 	export let onSelectPiece: (pieceId: number) => void;
 	export let onPieceDragStart: (pieceId: number, screenX: number, screenY: number) => void;
 	export let onPieceDragMove: (screenX: number, screenY: number) => void;
 	export let onPieceDragEnd: () => void;
+	export let onSetFilter: (filter: InventoryFilter) => void;
+	export let onShuffle: () => void;
+	export let onRotateSelected: () => void;
 
 	const TILE_SIZE = 120;
+	const FILTERS: ReadonlyArray<{ filter: InventoryFilter; label: string }> = [
+		{ filter: 'all', label: 'ALL' },
+		{ filter: 'corners', label: 'CORNERS' },
+		{ filter: 'edges', label: 'EDGES' },
+		{ filter: 'center', label: 'CENTER' }
+	];
 
 	let dragArmed = false;
 
 	$: visibleIds = visibleUnplacedPieceIds(sessionState, pieces);
+	$: remainingCount = unplacedPieceIds(sessionState).length;
+	$: activeFilter = sessionState.organization?.filter ?? 'all';
+
+	function tileClass(pieceId: number): string {
+		if (sessionState.selectedPieceId === pieceId) return 'tray-piece-selected';
+		if (hintPieceId === pieceId) return 'tray-piece-hinted';
+		return 'tray-piece';
+	}
 
 	// Tray-piece gesture points are view-local DIPs; the Gameplay overlay
 	// consumes true screen DIPs, so add the view's on-screen origin.
@@ -46,18 +64,46 @@
 	}
 </script>
 
-<scroll-view class="tray-scroll" isScrollEnabled={!dragArmed}>
-	<wrapLayout padding="8">
-		{#each visibleIds as pieceId (pieceId)}
-			<gridLayout
-				class={sessionState.selectedPieceId === pieceId ? 'tray-piece-selected' : 'tray-piece'}
-				style={`width: ${TILE_SIZE}; height: ${TILE_SIZE};`}
-				on:tap={() => onSelectPiece(pieceId)}
-				on:longPress={(args) => onLongPress(args, pieceId)}
-				on:touch={(args) => onTouch(args)}
-			>
-				<image src={piecePaths[pieceId]} stretch="aspectFit" margin="8" />
-			</gridLayout>
+<gridLayout rows="auto,auto,*">
+	<gridLayout row={0} class="tray-header" columns="auto,*,auto,auto">
+		<label
+			col={0}
+			text={`REMAINING ${remainingCount}`}
+			class="tray-count"
+			verticalAlignment="middle"
+		/>
+		<button col={2} text="SHUFFLE" class="tray-action" on:tap={onShuffle} />
+		<button
+			col={3}
+			text="ROTATE"
+			class={sessionState.selectedPieceId !== null ? 'tray-action' : 'tray-action-disabled'}
+			isEnabled={sessionState.selectedPieceId !== null}
+			on:tap={onRotateSelected}
+		/>
+	</gridLayout>
+	<gridLayout row={1} columns="*,*,*,*">
+		{#each FILTERS as entry, index (entry.filter)}
+			<button
+				col={index}
+				text={entry.label}
+				class={activeFilter === entry.filter ? 'tray-filter-selected' : 'tray-filter'}
+				on:tap={() => onSetFilter(entry.filter)}
+			/>
 		{/each}
-	</wrapLayout>
-</scroll-view>
+	</gridLayout>
+	<scroll-view row={2} class="tray-scroll" isScrollEnabled={!dragArmed}>
+		<wrapLayout padding="8">
+			{#each visibleIds as pieceId (pieceId)}
+				<gridLayout
+					class={tileClass(pieceId)}
+					style={`width: ${TILE_SIZE}; height: ${TILE_SIZE};`}
+					on:tap={() => onSelectPiece(pieceId)}
+					on:longPress={(args) => onLongPress(args, pieceId)}
+					on:touch={(args) => onTouch(args)}
+				>
+					<image src={piecePaths[pieceId]} stretch="aspectFit" margin="8" />
+				</gridLayout>
+			{/each}
+		</wrapLayout>
+	</scroll-view>
+</gridLayout>

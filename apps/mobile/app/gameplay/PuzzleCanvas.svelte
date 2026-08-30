@@ -4,7 +4,8 @@
 	import type {
 		PersistedViewport,
 		PuzzleSessionOutcome,
-		PuzzleSessionState
+		PuzzleSessionState,
+		ReferenceMode
 	} from '@perseus/game-core';
 	import {
 		backingSizeFromLayout,
@@ -26,6 +27,11 @@
 	export let sessionState: Readonly<PuzzleSessionState>;
 	export let piecePaths: Record<number, string>;
 	export let onAttemptPlacement: (pieceId: number, cell: BoardCell) => PuzzleSessionOutcome;
+	// Ephemeral overlays owned by Gameplay; the canvas only renders them.
+	export let placementFeedback: { cell: BoardCell; kind: 'accepted' | 'rejected' } | null = null;
+	export let hintTarget: BoardCell | null = null;
+	export let referencePath: string | undefined = undefined;
+	export let referenceMode: ReferenceMode | null = null;
 	// One commit per gesture: pinch/pan redraws transiently and commits the
 	// final viewport once on gesture end; doubleTap commits Fit as null.
 	export let onViewportCommit: (viewport: PersistedViewport | null) => void;
@@ -37,7 +43,12 @@
 	let viewModel: BoardViewModel | null = null;
 	let firstPaintScheduled = false;
 	let pieceImages: Record<number, ImageAsset> = {};
+	let referenceImage: ImageAsset | null = null;
 	let surfaceReady = false;
+
+	// Reactive overlay bundle so prop-only changes (feedback timeout, hint,
+	// reference mode) redraw even when sessionState itself did not change.
+	$: overlay = { placementFeedback, hintTarget, referenceMode };
 
 	// undefined = no gesture in flight; null = a valid transient Fit frame.
 	let transientViewport: PersistedViewport | null | undefined = undefined;
@@ -62,7 +73,7 @@
 	$: effectiveViewport =
 		transientViewport !== undefined ? transientViewport : sessionState.viewport;
 
-	$: if (surfaceReady && sessionState) {
+	$: if (surfaceReady && sessionState && overlay) {
 		rebuildTransform(effectiveViewport);
 		draw();
 	}
@@ -70,6 +81,7 @@
 
 	function loadPieces(): void {
 		pieceImages = {};
+		referenceImage = null;
 		const failedPieceIds: number[] = [];
 		for (const [rawPieceId, imagePath] of Object.entries(piecePaths)) {
 			const pieceId = Number(rawPieceId);
@@ -86,6 +98,12 @@
 		}
 		if (failedPieceIds.length > 0 && onLoadError) {
 			onLoadError(failedPieceIds);
+		}
+		// A failed reference load simply draws nothing; the affordance stays
+		// bound to referencePath presence, never a network fallback.
+		if (referencePath) {
+			const image = new ImageAsset();
+			if (image.fromFileSync(referencePath)) referenceImage = image;
 		}
 	}
 
@@ -168,6 +186,50 @@
 		for (const record of render.drawRecords) {
 			drawRecord(context, record);
 		}
+		if (overlay.hintTarget) {
+			drawCellMark(context, render, overlay.hintTarget, '#f6e05e');
+		}
+		if (overlay.placementFeedback) {
+			drawCellMark(
+				context,
+				render,
+				overlay.placementFeedback.cell,
+				overlay.placementFeedback.kind === 'accepted' ? '#38a169' : '#c53030'
+			);
+		}
+		if (overlay.referenceMode) {
+			drawReference(context, render, overlay.referenceMode);
+		}
+	}
+
+	// Translucent fill + solid outline over one board cell; used for the hint
+	// target and accepted/rejected placement feedback (drawn separately).
+	function drawCellMark(context: any, render: any, cell: BoardCell, color: string): void {
+		const x = render.boardX + cell.x * render.cellWidth;
+		const y = render.boardY + cell.y * render.cellHeight;
+		context.save();
+		context.globalAlpha = 0.4;
+		context.fillStyle = color;
+		context.fillRect(x, y, render.cellWidth, render.cellHeight);
+		context.globalAlpha = 1;
+		context.strokeStyle = color;
+		context.lineWidth = 3;
+		context.strokeRect(x, y, render.cellWidth, render.cellHeight);
+		context.restore();
+	}
+
+	function drawReference(context: any, render: any, mode: ReferenceMode): void {
+		if (!referenceImage) return;
+		context.save();
+		context.globalAlpha = mode === 'ghost' ? 0.35 : 0.9;
+		context.drawImage(
+			referenceImage,
+			render.boardX,
+			render.boardY,
+			render.boardWidth,
+			render.boardHeight
+		);
+		context.restore();
 	}
 
 	function drawRecord(context: any, record: BoardDrawRecord): void {
