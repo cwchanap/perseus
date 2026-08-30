@@ -11,15 +11,23 @@
 		type PuzzleSessionOutcome,
 		type PuzzleSessionState,
 		type PuzzleSession,
-		type Rotation,
 		type SessionStorageAdapter
 	} from '@perseus/game-core';
 	import { classifyProgress, type GameplayLaunch } from '../library/downloadedLibrary';
 	import { sessionSpecFromManifest } from '../library/downloadManifest';
+	import DiscardSheet from './DiscardSheet.svelte';
+	import MissionSetupSheet from './MissionSetupSheet.svelte';
+	import PauseSheet from './PauseSheet.svelte';
 	import PuzzleCanvas from './PuzzleCanvas.svelte';
 	import PuzzleTray from './PuzzleTray.svelte';
 	import { shuffleIds } from './trayPieces';
 	import { resolveMobileCrypto } from './runtime';
+	import {
+		commitViewport as commitSessionViewport,
+		discardProgress,
+		entrySheetFor,
+		suspendSession
+	} from './gameplaySessionPolicy';
 	import type { BoardCell } from './boardViewModel';
 
 	export let launch: GameplayLaunch;
@@ -48,16 +56,17 @@
 				runIdFactory: createRunIdFactory(resolveMobileCrypto()),
 				restored,
 				initialTrayOrder: shuffleIds(spec.pieces.map((piece) => piece.id)),
-				createTrayOrder: () => shuffleIds(spec.pieces.map((piece) => piece.id)),
-				createRotations: (ids) =>
-					Object.fromEntries(ids.map((id) => [id, 0])) as Record<number, Rotation>
+				createTrayOrder: () => shuffleIds(spec.pieces.map((piece) => piece.id))
 			});
 
 	let sessionState: Readonly<PuzzleSessionState> | null = session?.getState() ?? null;
 	let lastAction = 'ready';
 	let unsubscribe: (() => void) | null = null;
+	let sheet: 'setup' | 'pause' | 'discard' | null = entrySheetFor(restored);
+	let setupDraft = { mode: sessionState?.mode ?? 'timed', rotationEnabled: false };
+	let discardError = '';
 
-	function persist(): void {
+	function saveCurrentSnapshot(): void {
 		if (!session) return;
 		session.checkpointTime();
 		const snapshot = serializeSession(session.getState());
@@ -68,40 +77,96 @@
 		unsubscribe = session.subscribe(() => {
 			sessionState = session.getState();
 		});
+	}
 
-		session.dispatch({ type: restored?.lifecycle === 'paused' ? 'resume' : 'start' });
-		sessionState = session.getState();
-		persist();
+	function startMission(): void {
+		if (!session) return;
+		session.dispatch({
+			type: 'configure_setup',
+			mode: setupDraft.mode,
+			rotationEnabled: setupDraft.rotationEnabled
+		});
+		session.dispatch({ type: 'start' });
+		saveCurrentSnapshot();
+		sheet = null;
+	}
+
+	function pauseSession(): void {
+		const outcome = session?.dispatch({ type: 'pause' });
+		if (outcome?.type !== 'lifecycle_transitioned') return;
+		saveCurrentSnapshot();
+		sheet = 'pause';
+	}
+
+	function resumeSession(): void {
+		const outcome = session?.dispatch({ type: 'resume' });
+		if (outcome?.type !== 'lifecycle_transitioned') return;
+		saveCurrentSnapshot();
+		sheet = null;
+	}
+
+	function restartSession(): void {
+		if (!session || !sessionState) return;
+		const setupDraftSeed = {
+			mode: sessionState.mode,
+			rotationEnabled: sessionState.rotationEnabled
+		};
+		const outcome = session.dispatch({ type: 'restart' });
+		if (outcome.type !== 'lifecycle_transitioned') return;
+		setupDraft = setupDraftSeed;
+		saveCurrentSnapshot();
+		sheet = 'setup';
+	}
+
+	function requestDiscard(): void {
+		discardError = '';
+		sheet = 'discard';
+	}
+
+	function cancelDiscard(): void {
+		discardError = '';
+		sheet = 'pause';
+	}
+
+	function confirmDiscard(): void {
+		if (!discardProgress(storage, spec.puzzleId)) {
+			discardError = 'Unable to discard saved progress.';
+			return;
+		}
+		// Dispose before exiting so onDestroy's save cannot resurrect the
+		// cleared save (serializeSession returns null for disposed sessions).
+		session?.dispatch({ type: 'dispose' });
+		onExit();
 	}
 
 	function onSuspend(): void {
-		persist();
-		if (session) session.setDocumentHidden(true);
+		if (!session) return;
+		suspendSession(session, saveCurrentSnapshot);
 	}
 
 	function onResume(): void {
-		if (session) session.setDocumentHidden(false);
+		session?.setDocumentHidden(false);
 	}
 
 	function exitToLibrary(): void {
-		persist();
+		saveCurrentSnapshot();
 		onExit();
 	}
 
 	onMount(() => {
 		Application.on(Application.suspendEvent, onSuspend);
 		Application.on(Application.resumeEvent, onResume);
-		Application.on(Application.exitEvent, persist);
+		Application.on(Application.exitEvent, saveCurrentSnapshot);
 
 		return () => {
 			Application.off(Application.suspendEvent, onSuspend);
 			Application.off(Application.resumeEvent, onResume);
-			Application.off(Application.exitEvent, persist);
+			Application.off(Application.exitEvent, saveCurrentSnapshot);
 		};
 	});
 
 	onDestroy(() => {
-		persist();
+		saveCurrentSnapshot();
 		unsubscribe?.();
 		session?.dispose();
 	});
@@ -116,11 +181,9 @@
 		lastAction = `piece load failed: ${failedPieceIds.length} piece(s)`;
 	}
 
-	// Task 5 moves this policy into gameplaySessionPolicy.commitViewport().
 	function commitViewport(viewport: PersistedViewport | null): void {
 		if (!session) return;
-		const outcome = session.dispatch({ type: 'set_viewport', viewport });
-		if (outcome.type === 'viewport_changed') persist();
+		commitSessionViewport(session, viewport, saveCurrentSnapshot);
 	}
 
 	function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcome {
@@ -147,7 +210,7 @@
 		} else {
 			lastAction = outcome.type;
 		}
-		if (outcome.type === 'placement' && outcome.outcome.status !== 'noop') persist();
+		if (outcome.type === 'placement' && outcome.outcome.status !== 'noop') saveCurrentSnapshot();
 		return outcome;
 	}
 
@@ -274,6 +337,29 @@
 					stretch="aspectFit"
 				/>
 			</absoluteLayout>
+		{/if}
+		{#if sheet === 'setup'}
+			<gridLayout class="sheet-backdrop">
+				<MissionSetupSheet
+					bind:mode={setupDraft.mode}
+					bind:rotationEnabled={setupDraft.rotationEnabled}
+					onStart={startMission}
+					onBack={exitToLibrary}
+				/>
+			</gridLayout>
+		{:else if sheet === 'pause'}
+			<gridLayout class="sheet-backdrop">
+				<PauseSheet
+					hasUserActivity={sessionState?.hasUserActivity ?? false}
+					onResume={resumeSession}
+					onRestart={restartSession}
+					onDiscard={requestDiscard}
+				/>
+			</gridLayout>
+		{:else if sheet === 'discard'}
+			<gridLayout class="sheet-backdrop">
+				<DiscardSheet error={discardError} onConfirm={confirmDiscard} onCancel={cancelDiscard} />
+			</gridLayout>
 		{/if}
 	</gridLayout>
 {/if}

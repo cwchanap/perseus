@@ -106,3 +106,66 @@
 	background-color: #2b6cb0;
 	margin: 4;
 }
+
+.sheet-backdrop {
+	background-color: rgba(17, 24, 32, 0.92);
+}
+
+.sheet {
+	background-color: #1f2b38;
+	margin: 24 16;
+	padding: 16;
+}
+
+.sheet-title {
+	color: #f7fafc;
+	font-size: 24;
+	font-weight: 700;
+	margin: 0 0 8 0;
+}
+
+.sheet-text {
+	color: #cbd5e0;
+	font-size: 14;
+	margin: 4 0 12 0;
+}
+
+.sheet-option {
+	background-color: #273548;
+	color: #cbd5e0;
+	font-size: 13;
+	margin: 3;
+	padding: 8 10;
+}
+
+.sheet-option-selected {
+	background-color: #2b6cb0;
+	color: #f7fafc;
+	font-size: 13;
+	font-weight: 700;
+	margin: 3;
+	padding: 8 10;
+}
+
+.sheet-primary {
+	background-color: #2b6cb0;
+	color: #f7fafc;
+	font-size: 16;
+	font-weight: 700;
+	margin: 3;
+	padding: 10 12;
+}
+
+.sheet-danger {
+	background-color: #c53030;
+	color: #f7fafc;
+	font-size: 14;
+	margin: 3;
+	padding: 8 10;
+}
+
+.sheet-error {
+	color: #fc8181;
+	font-size: 14;
+	margin: 4 0;
+}
