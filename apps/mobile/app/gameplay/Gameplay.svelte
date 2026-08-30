@@ -7,6 +7,7 @@
 		createRunIdFactory,
 		serializeSession,
 		validationContextFrom,
+		type PersistedViewport,
 		type PuzzleSessionOutcome,
 		type PuzzleSessionState,
 		type PuzzleSession,
@@ -113,6 +114,13 @@
 
 	function handlePieceLoadError(failedPieceIds: number[]): void {
 		lastAction = `piece load failed: ${failedPieceIds.length} piece(s)`;
+	}
+
+	// Task 5 moves this policy into gameplaySessionPolicy.commitViewport().
+	function commitViewport(viewport: PersistedViewport | null): void {
+		if (!session) return;
+		const outcome = session.dispatch({ type: 'set_viewport', viewport });
+		if (outcome.type === 'viewport_changed') persist();
 	}
 
 	function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcome {
@@ -239,6 +247,7 @@
 						piecePaths={launch.install.piecePaths}
 						onAttemptPlacement={attemptPlacement}
 						onLoadError={handlePieceLoadError}
+						onViewportCommit={commitViewport}
 					/>
 				</gridLayout>
 				<gridLayout col={1}>
