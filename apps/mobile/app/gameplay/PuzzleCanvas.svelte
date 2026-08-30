@@ -3,6 +3,13 @@
 	import { Screen } from '@nativescript/core';
 	import type { PuzzleSessionState, PuzzleSessionOutcome } from '@perseus/game-core';
 	import {
+		backingSizeFromLayout,
+		createBoardTransform,
+		screenPointToCanvas,
+		type BoardTransform,
+		type CanvasSurfaceMetrics
+	} from './boardViewport';
+	import {
 		createBoardViewModel,
 		type BoardCell,
 		type BoardDrawRecord,
@@ -15,11 +22,11 @@
 	export let onAttemptPlacement: (pieceId: number, cell: BoardCell) => PuzzleSessionOutcome;
 	export let onLoadError: ((failedPieceIds: number[]) => void) | undefined = undefined;
 
-	const CANVAS_WIDTH = 700;
-	const CANVAS_HEIGHT = 800;
-
 	let canvas: any;
+	let surfaceMetrics: CanvasSurfaceMetrics | null = null;
+	let transform: BoardTransform | null = null;
 	let viewModel: BoardViewModel | null = null;
+	let firstPaintScheduled = false;
 	let pieceImages: Record<number, ImageAsset> = {};
 	let surfaceReady = false;
 	let draggingPieceId: number | null = null;
@@ -31,6 +38,7 @@
 	let dragStartY = 0;
 
 	$: if (surfaceReady && viewModel && sessionState) draw();
+	$: if (piecePaths) loadPieces();
 
 	function loadPieces(): void {
 		pieceImages = {};
@@ -53,37 +61,58 @@
 		}
 	}
 
-	function onLoaded(args: any): void {
-		canvas = args.object;
-		const width = Number(canvas.width) || CANVAS_WIDTH;
-		const height = Number(canvas.height) || CANVAS_HEIGHT;
-		viewModel = createBoardViewModel({
+	function syncSurface(args: any): void {
+		const view = args.object ?? canvas;
+		const size = view?.getActualSize?.();
+		const density = Screen.mainScreen.scale || 1;
+		if (!size) return;
+
+		const backing = backingSizeFromLayout(size.width, size.height, density);
+		if (!backing) return;
+
+		// Canvas backing dimensions are integers on the native surface; round
+		// once and keep the surface metrics consistent with what we set.
+		const width = Math.round(backing.width);
+		const height = Math.round(backing.height);
+		canvas.width = width;
+		canvas.height = height;
+		surfaceMetrics = {
+			layoutWidthDip: size.width,
+			layoutHeightDip: size.height,
+			backingWidth: width,
+			backingHeight: height
+		};
+		transform = createBoardTransform({
 			canvasWidth: width,
 			canvasHeight: height,
 			gridCols: sessionState.gridCols,
-			gridRows: sessionState.gridRows
+			gridRows: sessionState.gridRows,
+			viewport: sessionState.viewport
 		});
-		loadPieces();
+		viewModel = createBoardViewModel(transform);
 
-		// The native surface can be reported as loaded before its backing surface
-		// accepts draw calls. Wait for the first post-layout turn before painting.
-		setTimeout(() => {
-			surfaceReady = true;
+		if (!firstPaintScheduled) {
+			firstPaintScheduled = true;
+			// The native surface can be reported as loaded before its backing
+			// surface accepts draw calls. Paint on the first post-layout turn.
+			setTimeout(() => {
+				surfaceReady = true;
+				draw();
+			}, 0);
+		} else if (surfaceReady) {
 			draw();
-		}, 100);
+		}
 	}
 
 	function draw(): void {
 		if (!canvas || !viewModel || !sessionState) return;
 		const context = canvas.getContext('2d');
 		if (!context) return;
-		const width = Number(canvas.width) || CANVAS_WIDTH;
-		const height = Number(canvas.height) || CANVAS_HEIGHT;
 		const render = viewModel.state(sessionState);
 
-		context.clearRect(0, 0, width, height);
+		context.clearRect(0, 0, canvas.width, canvas.height);
 		context.fillStyle = '#111820';
-		context.fillRect(0, 0, width, height);
+		context.fillRect(0, 0, canvas.width, canvas.height);
 		context.fillStyle = '#1f2b38';
 		context.fillRect(render.boardX, render.boardY, render.boardWidth, render.boardHeight);
 		context.strokeStyle = '#718096';
@@ -126,58 +155,58 @@
 		}
 	}
 
-	function toCanvasPoint(event: any, x: number, y: number): { x: number; y: number } {
-		const scale = Screen.mainScreen.scale || 1;
-		const viewSize = event.view?.getActualSize?.() ?? {
-			width: Number(canvas.width) / scale,
-			height: Number(canvas.height) / scale
-		};
-		const displayWidth = Number(canvas.width) / scale;
-		const displayHeight = Number(canvas.height) / scale;
-		return {
-			x: (x - (viewSize.width - displayWidth) / 2) * scale,
-			y: (y - (viewSize.height - displayHeight) / 2) * scale
-		};
+	// Single conversion for every local gesture point: view-local DIPs into
+	// Canvas backing coordinates through the rendered surface's actual
+	// backing/layout ratios.
+	function toCanvasPoint(x: number, y: number): { x: number; y: number } | null {
+		if (!surfaceMetrics) return null;
+		return screenPointToCanvas(x, y, 0, 0, surfaceMetrics);
 	}
 
 	function pointFromPan(event: any): { x: number; y: number } | null {
+		const density = Screen.mainScreen.scale || 1;
 		try {
 			if (event.ios?.locationInView && event.view?.nativeViewProtected) {
 				const point = event.ios.locationInView(event.view.nativeViewProtected);
-				return toCanvasPoint(event, point.x, point.y);
+				return toCanvasPoint(point.x, point.y);
 			}
 		} catch {
-			// Fall through to the delta-based position used by the installed runtime.
+			// Fall through to the platform-extracted position used by the installed runtime.
 		}
 		const current = event.android?.current;
 		if (current && typeof current.getX === 'function' && typeof current.getY === 'function') {
-			return toCanvasPoint(event, current.getX(), current.getY());
+			// Android MotionEvent coordinates are view-local pixels, not DIPs.
+			return toCanvasPoint(current.getX() / density, current.getY() / density);
 		}
 		if (draggingPieceId !== null) {
-			const scale = Screen.mainScreen.scale || 1;
-			return { x: dragStartX + event.deltaX * scale, y: dragStartY + event.deltaY * scale };
+			return { x: dragStartX + event.deltaX * density, y: dragStartY + event.deltaY * density };
 		}
 		return null;
 	}
 
 	function onTap(event: any): void {
-		if (!viewModel || typeof event.getX !== 'function' || typeof event.getY !== 'function') return;
-		const point = toCanvasPoint(event, event.getX(), event.getY());
-		const x = point.x;
-		const y = point.y;
-		const pieceId = viewModel.pieceAt(x, y, sessionState);
+		if (
+			!viewModel ||
+			!transform ||
+			typeof event.getX !== 'function' ||
+			typeof event.getY !== 'function'
+		)
+			return;
+		const point = toCanvasPoint(event.getX(), event.getY());
+		if (!point) return;
+		const pieceId = viewModel.pieceAt(point.x, point.y, sessionState);
 		if (pieceId !== null) {
 			onSelectPiece(pieceId);
 			return;
 		}
-		const cell = viewModel.cellAt(x, y);
+		const cell = transform.cellAt(point.x, point.y);
 		if (cell && sessionState.selectedPieceId !== null) {
 			onAttemptPlacement(sessionState.selectedPieceId, cell);
 		}
 	}
 
 	function onPan(event: any): void {
-		if (!viewModel) return;
+		if (!viewModel || !transform) return;
 		if (event.state === 1) {
 			const start = pointFromPan(event);
 			if (!start) return;
@@ -211,12 +240,12 @@
 			return;
 		}
 		if (event.state === 3) {
-			const scale = Screen.mainScreen.scale || 1;
+			const density = Screen.mainScreen.scale || 1;
 			const release = point ?? {
-				x: dragStartX + event.deltaX * scale,
-				y: dragStartY + event.deltaY * scale
+				x: dragStartX + event.deltaX * density,
+				y: dragStartY + event.deltaY * density
 			};
-			const cell = viewModel.cellAt(release.x, release.y);
+			const cell = transform.cellAt(release.x, release.y);
 			const pieceId = draggingPieceId;
 			draggingPieceId = null;
 			if (cell) onAttemptPlacement(pieceId, cell);
@@ -227,10 +256,11 @@
 
 <canvas
 	bind:this={canvas}
-	width={CANVAS_WIDTH}
-	height={CANVAS_HEIGHT}
+	horizontalAlignment="stretch"
+	verticalAlignment="stretch"
 	backgroundColor="#111820"
-	on:loaded={onLoaded}
+	on:loaded={syncSurface}
+	on:layoutChanged={syncSurface}
 	on:tap={onTap}
 	on:pan={onPan}
 />
