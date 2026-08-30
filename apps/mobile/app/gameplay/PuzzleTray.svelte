@@ -28,6 +28,7 @@
 	$: visibleIds = visibleUnplacedPieceIds(sessionState, pieces);
 	$: remainingCount = unplacedPieceIds(sessionState).length;
 	$: activeFilter = sessionState.organization?.filter ?? 'all';
+	$: canRotate = sessionState.selectedPieceId !== null && sessionState.rotationEnabled;
 
 	function tileClass(pieceId: number): string {
 		if (sessionState.selectedPieceId === pieceId) return 'tray-piece-selected';
@@ -76,8 +77,8 @@
 		<button
 			col={3}
 			text="ROTATE"
-			class={sessionState.selectedPieceId !== null ? 'tray-action' : 'tray-action-disabled'}
-			isEnabled={sessionState.selectedPieceId !== null}
+			class={canRotate ? 'tray-action' : 'tray-action-disabled'}
+			isEnabled={canRotate}
 			on:tap={onRotateSelected}
 		/>
 	</gridLayout>
@@ -91,7 +92,7 @@
 			/>
 		{/each}
 	</gridLayout>
-	<scroll-view row={2} class="tray-scroll" isScrollEnabled={!dragArmed}>
+	<scrollView row={2} class="tray-scroll" isScrollEnabled={!dragArmed}>
 		<wrapLayout padding="8">
 			{#each visibleIds as pieceId (pieceId)}
 				<gridLayout
@@ -101,9 +102,14 @@
 					on:longPress={(args) => onLongPress(args, pieceId)}
 					on:touch={(args) => onTouch(args)}
 				>
-					<image src={piecePaths[pieceId]} stretch="aspectFit" margin="8" />
+					<image
+						src={piecePaths[pieceId]}
+						rotate={sessionState.pieceRotations[pieceId] ?? 0}
+						stretch="aspectFit"
+						margin="8"
+					/>
 				</gridLayout>
 			{/each}
 		</wrapLayout>
-	</scroll-view>
+	</scrollView>
 </gridLayout>

@@ -392,6 +392,7 @@
 				canUndo={sessionState.canUndo}
 				canRedo={sessionState.canRedo}
 				rotationEnabled={sessionState.rotationEnabled}
+				hasUserActivity={sessionState.hasUserActivity}
 				referenceAvailable={launch.install.referencePath !== undefined}
 				referenceMode={sessionState.activeReferenceMode}
 				onLibrary={exitToLibrary}
@@ -440,6 +441,7 @@
 			<absoluteLayout>
 				<image
 					src={launch.install.piecePaths[activePieceDrag.pieceId]}
+					rotate={sessionState?.pieceRotations[activePieceDrag.pieceId] ?? 0}
 					left={overlayLeft(activePieceDrag.screenX)}
 					top={overlayTop(activePieceDrag.screenY)}
 					style={`width: ${DRAG_OVERLAY_SIZE}; height: ${DRAG_OVERLAY_SIZE};`}
