@@ -5,6 +5,7 @@
 		type DownloadedPuzzleRow,
 		type GameplayLaunch
 	} from './downloadedLibrary';
+	import { getDifficultyLabel } from './familyGallery';
 	import type { CorruptDownload } from './downloadStore';
 
 	type DownloadJobView = {
@@ -73,7 +74,7 @@
 			<stackLayout col="1" class="library-card-copy">
 				<label text={row.install.manifest.puzzle.name} class="library-card-title" textWrap="true" />
 				<label
-					text={`${row.install.manifest.puzzle.pieceCount} PIECES`}
+					text={`${getDifficultyLabel(row.install.manifest.puzzle.difficulty)} · ${row.install.manifest.puzzle.pieceCount} PIECES`}
 					class="library-card-detail"
 				/>
 				{#if row.progress.kind === 'resumable'}

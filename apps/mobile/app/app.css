@@ -130,6 +130,12 @@
 	margin: 4 0 12 0;
 }
 
+.sheet-stat {
+	color: #f7fafc;
+	font-size: 16;
+	margin: 4 0;
+}
+
 .sheet-option {
 	background-color: #273548;
 	color: #cbd5e0;
