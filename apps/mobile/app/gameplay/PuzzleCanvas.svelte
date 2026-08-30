@@ -65,6 +65,7 @@
 		startFocusX: number;
 		startFocusY: number;
 		startDistance: number;
+		startRunId: string;
 	}
 
 	let gesture: TwoPointerGesture | null = null;
@@ -72,6 +73,16 @@
 
 	$: effectiveViewport =
 		transientViewport !== undefined ? transientViewport : sessionState.viewport;
+
+	// A restart changes runId while this canvas stays mounted behind the setup
+	// sheet; a two-pointer gesture in flight belongs to the prior run and must
+	// not commit its transient viewport into the fresh run. Reset without
+	// committing so the next draw uses the new run's persisted viewport.
+	$: if (gesture && sessionState && sessionState.runId !== gesture.startRunId) {
+		gesture = null;
+		transientViewport = undefined;
+		lastPointerPoints = [null, null];
+	}
 
 	$: if (surfaceReady && sessionState && overlay) {
 		rebuildTransform(effectiveViewport);
@@ -292,11 +303,14 @@
 		if (!gesture) {
 			if (!(distance > 0)) return;
 			// First frame at exactly two pointers: capture the start baseline.
+			// startRunId ties the gesture to this run so a restart mid-pinch
+			// cannot commit the stale transient viewport into the fresh run.
 			gesture = {
 				startViewport: effectiveViewport,
 				startFocusX: focusX,
 				startFocusY: focusY,
-				startDistance: distance
+				startDistance: distance,
+				startRunId: sessionState.runId
 			};
 		}
 		// Every frame derives from the START baseline, so no drift accumulates.

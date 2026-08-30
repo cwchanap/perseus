@@ -7,6 +7,7 @@
 	export let canUndo: boolean;
 	export let canRedo: boolean;
 	export let rotationEnabled: boolean;
+	export let rotationToggleDisabled: boolean;
 	export let hasUserActivity: boolean;
 	export let referenceAvailable: boolean;
 	export let referenceMode: ReferenceMode | null = null;
@@ -117,7 +118,8 @@
 			<button
 				col={1}
 				text={rotationEnabled ? 'ROTATION OFF' : 'ROTATION ON'}
-				class="toolbar-button"
+				class={rotationToggleDisabled ? 'toolbar-button-disabled' : 'toolbar-button'}
+				isEnabled={!rotationToggleDisabled}
 				on:tap={() => runFromMenu(() => onSetRotationMode(!rotationEnabled))}
 			/>
 			<button col={2} text="PAUSE" class="toolbar-button" on:tap={() => runFromMenu(onPause)} />

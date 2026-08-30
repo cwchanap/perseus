@@ -11,6 +11,7 @@
 	export let onPieceDragStart: (pieceId: number, screenX: number, screenY: number) => void;
 	export let onPieceDragMove: (screenX: number, screenY: number) => void;
 	export let onPieceDragEnd: () => void;
+	export let onPieceDragCancel: () => void;
 	export let onSetFilter: (filter: InventoryFilter) => void;
 	export let onShuffle: () => void;
 	export let onRotateSelected: () => void;
@@ -36,6 +37,13 @@
 		return 'tray-piece';
 	}
 
+	// Rendered rotation follows the same gate as placement validation: when
+	// rotation is off, pieceRotations may still hold stale non-zero values but
+	// sideways pieces are accepted upright, so render them upright.
+	function tileRotation(pieceId: number): number {
+		return sessionState.rotationEnabled ? (sessionState.pieceRotations[pieceId] ?? 0) : 0;
+	}
+
 	// Tray-piece gesture points are view-local DIPs; the Gameplay overlay
 	// consumes true screen DIPs, so add the view's on-screen origin.
 	function screenPoint(args: any): { x: number; y: number } | null {
@@ -58,9 +66,14 @@
 		if (args.action === 'move') {
 			const point = screenPoint(args);
 			if (point) onPieceDragMove(point.x, point.y);
-		} else if (args.action === 'up' || args.action === 'cancel') {
+		} else if (args.action === 'up') {
 			dragArmed = false;
 			onPieceDragEnd();
+		} else if (args.action === 'cancel') {
+			// A system/recognizer cancellation aborts the drag: clear the
+			// armed/overlay state without hit-testing or placing the piece.
+			dragArmed = false;
+			onPieceDragCancel();
 		}
 	}
 </script>
@@ -104,7 +117,7 @@
 				>
 					<image
 						src={piecePaths[pieceId]}
-						rotate={sessionState.pieceRotations[pieceId] ?? 0}
+						rotate={tileRotation(pieceId)}
 						stretch="aspectFit"
 						margin="8"
 					/>

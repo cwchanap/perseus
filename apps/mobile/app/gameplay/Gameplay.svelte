@@ -357,6 +357,19 @@
 		if (cell) attemptPlacement(pieceId, cell);
 	}
 
+	// A recognizer/system cancellation aborts the drag without placing: the
+	// overlay may be over the board, but the gesture was not a committed drop.
+	function cancelPieceDrag(): void {
+		activePieceDrag = null;
+	}
+
+	// The drag overlay mirrors the board/tray rotation gate: when rotation is
+	// off, stale pieceRotations values must not render the dragged piece
+	// sideways even though placement accepts it upright.
+	function overlayRotation(pieceId: number): number {
+		return sessionState?.rotationEnabled ? (sessionState?.pieceRotations[pieceId] ?? 0) : 0;
+	}
+
 	function overlayOrigin(): { x: number; y: number } {
 		return page?.getLocationOnScreen?.() ?? { x: 0, y: 0 };
 	}
@@ -392,6 +405,7 @@
 				canUndo={sessionState.canUndo}
 				canRedo={sessionState.canRedo}
 				rotationEnabled={sessionState.rotationEnabled}
+				rotationToggleDisabled={sessionState.placedPieces.length > 0}
 				hasUserActivity={sessionState.hasUserActivity}
 				referenceAvailable={launch.install.referencePath !== undefined}
 				referenceMode={sessionState.activeReferenceMode}
@@ -430,6 +444,7 @@
 						onPieceDragStart={startPieceDrag}
 						onPieceDragMove={movePieceDrag}
 						onPieceDragEnd={endPieceDrag}
+						onPieceDragCancel={cancelPieceDrag}
 						onSetFilter={setTrayFilter}
 						onShuffle={shuffleTray}
 						onRotateSelected={rotateSelected}
@@ -441,7 +456,7 @@
 			<absoluteLayout>
 				<image
 					src={launch.install.piecePaths[activePieceDrag.pieceId]}
-					rotate={sessionState?.pieceRotations[activePieceDrag.pieceId] ?? 0}
+					rotate={overlayRotation(activePieceDrag.pieceId)}
 					left={overlayLeft(activePieceDrag.screenX)}
 					top={overlayTop(activePieceDrag.screenY)}
 					style={`width: ${DRAG_OVERLAY_SIZE}; height: ${DRAG_OVERLAY_SIZE};`}
