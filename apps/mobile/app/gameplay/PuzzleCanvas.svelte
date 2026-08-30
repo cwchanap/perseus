@@ -140,7 +140,11 @@
 			backingWidth: width,
 			backingHeight: height
 		};
-		rebuildTransform(sessionState.viewport);
+		// Use effectiveViewport, not sessionState.viewport: during a two-pointer
+		// gesture effectiveViewport is the transient frame, and a relayout
+		// mid-gesture must preserve it rather than snapping back to the persisted
+		// transform until the next move frame.
+		rebuildTransform(effectiveViewport);
 
 		if (!firstPaintScheduled) {
 			firstPaintScheduled = true;
@@ -319,8 +323,14 @@
 		const action = typeof args?.action === 'string' ? args.action : '';
 		if (action === 'down') {
 			activePointerCount += 1;
-		} else if (action === 'up' || action === 'cancel') {
+		} else if (action === 'up') {
 			activePointerCount = Math.max(0, activePointerCount - 1);
+		} else if (action === 'cancel') {
+			// Android ACTION_CANCEL and iOS touchesCancelledWithEvent each fire
+			// once for the whole aborted touch set, not per pointer; decrementing
+			// would leave a stale count that breaks the next pinch. Reset fully.
+			activePointerCount = 0;
+			lastPointerPoints = [null, null];
 		} else if (action !== 'move') {
 			return;
 		}

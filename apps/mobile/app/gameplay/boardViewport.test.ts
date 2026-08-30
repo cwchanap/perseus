@@ -210,6 +210,39 @@ describe('boardViewport', () => {
 		expect(transform.cellAt(550, 300)).toEqual({ x: 1, y: 1 });
 	});
 
+	it('clamps an out-of-range start pan before anchoring the pinch', () => {
+		// Viewport persisted on a larger surface: panX 9 was within the old
+		// limit but exceeds the 800x600 limit at zoom 2 (max 2/3). The rendered
+		// board clamps panX to 2/3 (boardX 0); the pinch baseline must match,
+		// or the first zoom frame jumps the content under the focus.
+		const rendered = createBoardTransform({
+			...FIT_INPUT,
+			viewport: { zoom: 2, panX: 9, panY: 0 }
+		});
+		expect(rendered.viewport?.panX).toBeCloseTo(2 / 3);
+		expect(rendered.boardX).toBe(0);
+
+		const pinched = transformViewportForTwoPointers(FIT_INPUT, {
+			startViewport: { zoom: 2, panX: 9, panY: 0 },
+			startFocusX: 400,
+			startFocusY: 300,
+			currentFocusX: 400,
+			currentFocusY: 300,
+			scale: 2
+		});
+		// With the baseline clamped, the content under the focus (offset 400
+		// from boardX 0) stays under the focus: panX 4/3, not the 2/3 that
+		// results from anchoring to the unclamped board origin.
+		expect(pinched).toEqual({ zoom: 4, panX: 4 / 3, panY: 0 });
+
+		const transform = createBoardTransform({ ...FIT_INPUT, viewport: pinched });
+		// The content point originally under the focus (board-offset 400 at
+		// start zoom 2) scales to offset 800 at zoom 4 and stays under the
+		// focus: boardX -400 + 800 = 400.
+		expect(transform.boardX).toBe(-400);
+		expect(transform.boardX + 400 * (4 / 2)).toBe(400);
+	});
+
 	describe('canFitOnDoubleTap', () => {
 		it('allows Fit when unselected and outside the suppression window', () => {
 			expect(canFitOnDoubleTap(null, 1000, 500)).toBe(true);
