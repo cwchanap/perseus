@@ -4,9 +4,9 @@
 
 **Goal:** Make the completed NativeScript iPad gameplay fully usable in portrait and preserve the same active puzzle run while rotating between portrait and landscape.
 
-**Architecture:** Keep one mounted `Gameplay.svelte` tree. A tiny feature-local `gameplayLayout.ts` derives concrete GridLayout rows/columns from actual rendered size; the existing Canvas and tray move within that grid while `PuzzleSession` and viewport persistence remain unchanged. Portrait adds only a compact toolbar arrangement and an ephemeral two-height bottom tray drawer.
+**Architecture:** Keep one mounted `Gameplay.svelte` tree. A tiny feature-local `gameplayLayout.ts` derives concrete GridLayout rows/columns from actual rendered size; the existing Canvas and tray move within that grid while `PuzzleSession` and viewport persistence remain unchanged. On a real surface resize, cancel only transient Canvas/tray gesture state without committing it, then reproject the original persisted viewport on the new surface. Portrait adds only a compact toolbar arrangement and an ephemeral two-height bottom tray drawer.
 
-**Tech Stack:** NativeScript 9, Svelte Native 4, TypeScript 5.9, `@nativescript/canvas`, `@perseus/game-core`, Vitest 4, iOS/iPad.
+**Tech Stack:** NativeScript 9, `@nativescript-community/svelte-native` ~1.0.30, Svelte ~4.2.20, TypeScript ~5.9, `@nativescript/canvas` 2.x, `@perseus/game-core`, Vitest 4, iOS/iPad.
 
 **Spec:** `docs/superpowers/specs/2026-08-30-hpa-46-portrait-adaptive-tablet-design.md`
 
@@ -20,8 +20,10 @@
 - Landscape HPA-3 behavior must remain unchanged.
 - Portrait tray is a concrete bottom drawer: `220` DIPs collapsed, `360` DIPs expanded; expansion is not persisted.
 - Landscape tray remains `320` DIPs wide.
+- Invalid/zero relayout sizes keep the last valid layout; do not invent a fallback device size/orientation.
+- `sessionState.viewport` remains persisted user intent. `BoardTransform.viewport` is a render-clamped echo and is never written back because of relayout.
+- Surface resize may cancel an in-flight drag/pinch. It must clear transient pointer/drag state without calling `onViewportCommit` or changing gameplay/session state.
 - No phone optimization, Android release work, Google auth/sync, draggable tray divider, named trays, generic responsive framework, or new native E2E framework.
-- If rotation cancels an in-flight drag/pinch, that gesture may end; gameplay/session state must not be lost.
 
 ---
 
@@ -31,9 +33,10 @@
 | --- | --- |
 | `apps/mobile/app/gameplay/gameplayLayout.ts` | New tiny pure size → concrete tablet layout projection. |
 | `apps/mobile/app/gameplay/gameplayLayout.test.ts` | Pins landscape/portrait/drawer constants and invalid-size behavior. |
-| `apps/mobile/app/gameplay/boardViewport.test.ts` | Characterizes the existing persisted viewport contract across aspect changes. |
-| `apps/mobile/app/gameplay/Gameplay.svelte` | Keeps one session/component tree and binds the adaptive GridLayout. |
-| `apps/mobile/app/gameplay/PuzzleTray.svelte` | Adds only the portrait drawer expand/collapse affordance. |
+| `apps/mobile/app/gameplay/boardViewport.test.ts` | Pins persisted-input vs render-clamped viewport behavior across aspect changes. |
+| `apps/mobile/app/gameplay/Gameplay.svelte` | Keeps one session/component tree, last-valid layout, drag overlay, and adaptive GridLayout. |
+| `apps/mobile/app/gameplay/PuzzleCanvas.svelte` | Cancels transient multi-pointer state when backing dimensions change, then rebuilds from persisted viewport without committing. |
+| `apps/mobile/app/gameplay/PuzzleTray.svelte` | Adds portrait drawer affordance and one narrow exported cancel method for local `dragArmed`. |
 | `apps/mobile/app/gameplay/GameplayToolbar.svelte` | Adds one compact portrait arrangement; action callbacks stay unchanged. |
 | `apps/mobile/app/app.css` | Adds only concrete compact-toolbar/drawer styling if required. |
 | `apps/mobile/App_Resources/iOS/Info.plist` | Enables portrait on iPad. |
@@ -42,7 +45,7 @@ No files under `packages/game-core`, API, workflows, web, downloads, or persiste
 
 ---
 
-### Task 1: Pin the adaptive layout and cross-aspect viewport contracts
+### Task 1: Pin the adaptive layout and persisted-vs-render viewport contracts
 
 **Files:**
 - Create: `apps/mobile/app/gameplay/gameplayLayout.ts`
@@ -52,7 +55,7 @@ No files under `packages/game-core`, API, workflows, web, downloads, or persiste
 **Interfaces:**
 - Produces: `createGameplayLayout(widthDip, heightDip, portraitTrayExpanded): GameplayLayout | null`
 - Produces constants: `LANDSCAPE_TRAY_WIDTH`, `PORTRAIT_TRAY_COLLAPSED_HEIGHT`, `PORTRAIT_TRAY_EXPANDED_HEIGHT`
-- Consumes: existing `createBoardTransform()` only for the characterization test; no production board geometry change.
+- Consumes: existing `createBoardTransform()` only for characterization; no production board geometry change is expected.
 
 - [ ] **Step 1: Write the failing adaptive-layout tests**
 
@@ -99,7 +102,7 @@ describe('createGameplayLayout', () => {
     expect(createGameplayLayout(1194, 834, true)?.rows).toBe('*');
   });
 
-  it('ignores non-renderable sizes', () => {
+  it('returns null for non-renderable sizes so the caller can keep last-valid layout', () => {
     expect(createGameplayLayout(0, 1194, false)).toBeNull();
     expect(createGameplayLayout(834, Number.NaN, false)).toBeNull();
   });
@@ -180,13 +183,13 @@ export function createGameplayLayout(
 
 Do not add breakpoints, device classes, platform checks, or a responsive-layout registry.
 
-- [ ] **Step 4: Add the viewport aspect-change characterization**
+- [ ] **Step 4: Replace the tautological cross-aspect test with the real clamp contract**
 
-Extend `boardViewport.test.ts` with one test using the same persisted viewport on two surfaces:
+Extend `boardViewport.test.ts` with a viewport whose vertical pan is legal in landscape but must be clamped in portrait:
 
 ```ts
-it('reprojects one persisted viewport across landscape and portrait without changing canonical cells', () => {
-  const viewport = { zoom: 2, panX: 0.5, panY: 0.1 };
+it('clamps a persisted viewport only for the current surface and recovers the original input later', () => {
+  const viewport = { zoom: 2, panX: 0, panY: 1 };
   const puzzle = { gridCols: 4, gridRows: 3, viewport };
 
   const landscape = createBoardTransform({
@@ -199,25 +202,27 @@ it('reprojects one persisted viewport across landscape and portrait without chan
     canvasWidth: 700,
     canvasHeight: 1000
   });
+  const landscapeAgain = createBoardTransform({
+    ...puzzle,
+    canvasWidth: 1000,
+    canvasHeight: 700
+  });
 
   expect(landscape.viewport).toEqual(viewport);
-  expect(portrait.viewport).toEqual(viewport);
-  expect(
-    landscape.cellAt(
-      landscape.boardX + 2.5 * landscape.cellSize,
-      landscape.boardY + 1.5 * landscape.cellSize
-    )
-  ).toEqual({ x: 2, y: 1 });
-  expect(
-    portrait.cellAt(
-      portrait.boardX + 2.5 * portrait.cellSize,
-      portrait.boardY + 1.5 * portrait.cellSize
-    )
-  ).toEqual({ x: 2, y: 1 });
+  expect(portrait.viewport).toEqual({ zoom: 2, panX: 0, panY: 1 / 7 });
+  expect(viewport).toEqual({ zoom: 2, panX: 0, panY: 1 });
+  expect(landscapeAgain.viewport).toEqual(viewport);
 });
 ```
 
-This is deliberately a characterization test. If it already passes, keep `boardViewport.ts` unchanged.
+Why this test exists:
+
+- `BoardTransform.viewport` is the clamped projection for the current surface;
+- the caller's persisted `viewport` object remains unchanged;
+- returning to a roomier aspect with the same persisted value recovers the wider pan;
+- do **not** replace this with `cellAt(boardX + n * cellSize, ...)`, which passes regardless of whether pan was preserved.
+
+If this test already passes, keep `boardViewport.ts` unchanged.
 
 - [ ] **Step 5: Run the mobile unit suite**
 
@@ -235,15 +240,16 @@ Expected: PASS.
 git add apps/mobile/app/gameplay/gameplayLayout.ts \
   apps/mobile/app/gameplay/gameplayLayout.test.ts \
   apps/mobile/app/gameplay/boardViewport.test.ts
-git commit -m "test(mobile): pin adaptive tablet layout"
+git commit -m "test(mobile): pin adaptive tablet contracts"
 ```
 
 ---
 
-### Task 2: Reflow the same gameplay tree and add the portrait tray drawer
+### Task 2: Reflow the existing gameplay tree and make resize cancellation deterministic
 
 **Files:**
-- Modify: `apps/mobile/app/gameplay/Gameplay.svelte` (current composition around the toolbar/content grid)
+- Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
+- Modify: `apps/mobile/app/gameplay/PuzzleCanvas.svelte`
 - Modify: `apps/mobile/app/gameplay/PuzzleTray.svelte`
 - Modify: `apps/mobile/App_Resources/iOS/Info.plist`
 - Modify: `apps/mobile/app/app.css` only if the drawer toggle needs a concrete class
@@ -251,7 +257,8 @@ git commit -m "test(mobile): pin adaptive tablet layout"
 **Interfaces:**
 - Consumes: `createGameplayLayout()` from Task 1.
 - Produces: one mounted Canvas/tray tree that moves between right-panel landscape and bottom-drawer portrait.
-- `PuzzleTray` adds presentation props `drawerMode`, `drawerExpanded`, `onToggleDrawer`; gameplay callbacks are otherwise unchanged.
+- `PuzzleTray` adds presentation props `drawerMode`, `drawerExpanded`, `onToggleDrawer` and `cancelActiveDrag(): void`.
+- `PuzzleCanvas` keeps its existing public placement/drop API; resize cancellation remains component-local and never calls `onViewportCommit`.
 
 - [ ] **Step 1: Enable iPad portrait in the product metadata**
 
@@ -267,9 +274,9 @@ In `UISupportedInterfaceOrientations~ipad`, change only the array from two lands
 
 Do not add `UIInterfaceOrientationPortraitUpsideDown` and do not change the phone orientation array.
 
-- [ ] **Step 2: Seed and update the adaptive layout from actual rendered size**
+- [ ] **Step 2: Seed once from `Screen`, then retain the last valid rendered layout**
 
-In `Gameplay.svelte`:
+`Gameplay.svelte` already imports `Application`; extend that import to include `Screen` and add the feature-local helper:
 
 ```ts
 import { Application, Screen } from '@nativescript/core';
@@ -278,14 +285,25 @@ import { createGameplayLayout } from './gameplayLayout';
 let portraitTrayExpanded = false;
 let layoutWidthDip = Screen.mainScreen.widthDIPs;
 let layoutHeightDip = Screen.mainScreen.heightDIPs;
+let gameplayLayout = createGameplayLayout(layoutWidthDip, layoutHeightDip, false)!;
+let puzzleTray: any = null;
 
-$: gameplayLayout =
-  createGameplayLayout(layoutWidthDip, layoutHeightDip, portraitTrayExpanded) ??
-  createGameplayLayout(1024, 768, false)!;
+$: {
+  const nextLayout = createGameplayLayout(
+    layoutWidthDip,
+    layoutHeightDip,
+    portraitTrayExpanded
+  );
+  if (nextLayout) gameplayLayout = nextLayout;
+}
 
 function onGameplayLayoutChanged(args: any): void {
   const size = args.object?.getActualSize?.();
   if (!size || size.width <= 0 || size.height <= 0) return;
+
+  const changed = size.width !== layoutWidthDip || size.height !== layoutHeightDip;
+  if (changed) puzzleTray?.cancelActiveDrag?.();
+
   layoutWidthDip = size.width;
   layoutHeightDip = size.height;
 }
@@ -295,7 +313,12 @@ function togglePortraitTray(): void {
 }
 ```
 
-Use the rendered content size as the ongoing source of truth. Do not subscribe to a second orientation service.
+Important invariants:
+
+- there is no `1024×768` or other silent fallback;
+- zero/invalid intermediate layout passes leave `gameplayLayout` unchanged;
+- `portraitTrayExpanded` stays in memory while landscape ignores it;
+- use actual rendered size as the ongoing source of truth; do not add `Application.orientationChanged` or a device-class service.
 
 - [ ] **Step 3: Replace the fixed `columns="*,320"` content grid with one adaptive grid**
 
@@ -324,6 +347,7 @@ Keep exactly one `PuzzleCanvas` and one `PuzzleTray` in the markup:
 
   <gridLayout row={gameplayLayout.trayRow} col={gameplayLayout.trayColumn}>
     <PuzzleTray
+      bind:this={puzzleTray}
       {sessionState}
       pieces={spec.pieces}
       piecePaths={launch.install.piecePaths}
@@ -346,9 +370,9 @@ Keep exactly one `PuzzleCanvas` and one `PuzzleTray` in the markup:
 
 Do **not** use `{#if portrait}` to duplicate/remount the gameplay subtree.
 
-- [ ] **Step 4: Add the portrait-only drawer affordance to `PuzzleTray`**
+- [ ] **Step 4: Add the portrait drawer and explicit local drag cancellation to `PuzzleTray`**
 
-Add:
+Add the presentation props and columns:
 
 ```ts
 export let drawerMode = false;
@@ -358,9 +382,15 @@ export let onToggleDrawer: () => void = () => {};
 $: headerColumns = drawerMode ? 'auto,*,auto,auto,auto' : 'auto,*,auto,auto';
 $: shuffleColumn = drawerMode ? 3 : 2;
 $: rotateColumn = drawerMode ? 4 : 3;
+
+export function cancelActiveDrag(): void {
+  if (!dragArmed) return;
+  dragArmed = false;
+  onPieceDragCancel();
+}
 ```
 
-Then keep the existing header/actions, inserting only this conditional button:
+Keep the existing header/actions, inserting only the portrait drawer button:
 
 ```svelte
 <gridLayout row={0} class="tray-header" columns={headerColumns}>
@@ -384,9 +414,54 @@ Then keep the existing header/actions, inserting only this conditional button:
 </gridLayout>
 ```
 
-Do not change filters, piece tile size, long-press drag ownership, ScrollView behavior, tray order, or session persistence.
+Do not change filters, piece tile size, long-press drag ownership, ScrollView behavior, tray order, or session persistence. `cancelActiveDrag()` exists only so a real gameplay resize cannot leave `dragArmed` true and scrolling disabled if iOS swallows the native cancel.
 
-- [ ] **Step 5: Pass the compact-layout flag to the toolbar without changing toolbar behavior yet**
+- [ ] **Step 5: Reset transient Canvas pointer state on a real backing-size change without committing it**
+
+In `PuzzleCanvas.svelte`, extract the no-commit reset already represented by the run-change behavior:
+
+```ts
+function resetPointerGestureWithoutCommit(): void {
+  gesture = null;
+  transientViewport = undefined;
+  lastPointerPoints = [null, null];
+  activePointerCount = 0;
+}
+
+$: if (sessionState && sessionState.runId !== lastRunId) {
+  resetPointerGestureWithoutCommit();
+  lastRunId = sessionState.runId;
+}
+```
+
+Then update `syncSurface()` after calculating the rounded backing dimensions:
+
+```ts
+const width = Math.round(backing.width);
+const height = Math.round(backing.height);
+const backingChanged =
+  surfaceMetrics !== null &&
+  (surfaceMetrics.backingWidth !== width || surfaceMetrics.backingHeight !== height);
+
+if (backingChanged) resetPointerGestureWithoutCommit();
+
+canvas.width = width;
+canvas.height = height;
+surfaceMetrics = {
+  layoutWidthDip: size.width,
+  layoutHeightDip: size.height,
+  backingWidth: width,
+  backingHeight: height
+};
+
+rebuildTransform(backingChanged ? sessionState.viewport : effectiveViewport);
+```
+
+Why the explicit viewport choice matters: Svelte's reactive `effectiveViewport` assignment is not guaranteed to recompute synchronously inside `syncSurface()` immediately after clearing `transientViewport`. On a resize that cancels a pinch, rebuild directly from `sessionState.viewport` so stale transient zoom/pan cannot leak into the new surface.
+
+Do **not** call `onViewportCommit()` here. Do not feed `transform.viewport` back into persistence. Leave the existing native `onTouch` cancel behavior otherwise unchanged; HPA-46 only adds the resize-specific no-commit path.
+
+- [ ] **Step 6: Pass the compact-layout flag to the toolbar without changing toolbar behavior yet**
 
 Add to the existing toolbar call:
 
@@ -397,9 +472,9 @@ Add to the existing toolbar call:
 />
 ```
 
-Task 3 implements the compact markup. Landscape should still receive `false`.
+Task 3 implements the compact markup. Landscape receives `false`.
 
-- [ ] **Step 6: Run unit tests before the native gate**
+- [ ] **Step 7: Run unit tests before the native gate**
 
 Run:
 
@@ -409,7 +484,7 @@ bun run --cwd apps/mobile test:unit
 
 Expected: PASS.
 
-- [ ] **Step 7: Prove the single-tree reflow on iPad before polishing the toolbar**
+- [ ] **Step 8: Prove the single-tree reflow and post-rotation gesture state on iPad**
 
 Run from `apps/mobile`:
 
@@ -424,16 +499,22 @@ On the target iPad simulator/device:
 3. confirm Canvas above and tray below;
 4. toggle `MORE PIECES` / `LESS PIECES` and confirm only Canvas/tray allocation changes;
 5. place/select a piece;
-6. rotate to landscape and confirm the same run/placement/selection remains present and the right tray appears;
-7. rotate back to portrait.
+6. zoom/pan once;
+7. rotate to landscape and confirm the same run/placement/selection remains present and the right tray appears;
+8. perform another pinch and verify it starts normally after the resize;
+9. verify tray scrolling works normally;
+10. rotate back to portrait and verify the prior drawer expanded/collapsed choice returns.
 
-Stop here if row/column changes remount `PuzzleCanvas`/`PuzzleTray` or reset gameplay state. The fallback is an imperative update of the same GridLayout's row/column definitions, not duplicated portrait markup.
+If practical, rotate once while a pinch or armed tray drag is active. The gesture may be canceled, but the next pinch/drag and tray scroll must work. Do not add automation infrastructure solely to force this case.
 
-- [ ] **Step 8: Commit the adaptive composition**
+Stop here if row/column changes remount `PuzzleCanvas`/`PuzzleTray`, session state resets, a resize commits/clobbers viewport persistence, or stale pointer/drag state breaks the next gesture. The fallback for remounting is an imperative update of the same GridLayout properties, not duplicated portrait markup.
+
+- [ ] **Step 9: Commit the adaptive composition**
 
 ```bash
 git add apps/mobile/App_Resources/iOS/Info.plist \
   apps/mobile/app/gameplay/Gameplay.svelte \
+  apps/mobile/app/gameplay/PuzzleCanvas.svelte \
   apps/mobile/app/gameplay/PuzzleTray.svelte \
   apps/mobile/app/app.css
 git commit -m "feat(mobile): add portrait gameplay layout"
@@ -588,12 +669,14 @@ Exercise this exact journey:
 5. select and place a piece in portrait;
 6. set a non-All tray filter and zoom/pan the board;
 7. rotate to landscape and confirm the same run, placed piece, filter, selection where applicable, timer/lifecycle, and understandable viewport remain;
-8. verify the existing HPA-3 landscape right tray and toolbar still behave normally;
-9. rotate back to portrait;
-10. long-press drag one tray piece onto the board using the portrait layout;
-11. background the app for several seconds, foreground it, and confirm HPA-3 timing/persistence behavior remains unchanged.
+8. perform another pinch and verify it starts normally after rotation;
+9. verify the existing HPA-3 landscape right tray, toolbar, and tray scrolling behave normally;
+10. rotate back to portrait;
+11. long-press drag one tray piece onto the board using the portrait layout;
+12. verify tray scrolling remains enabled after the drag/rotation cycle;
+13. background the app for several seconds, foreground it, and confirm HPA-3 timing/persistence behavior remains unchanged.
 
-If convenient, inspect the simulator session file before/after orientation with the existing app container to confirm the `runId` and placements are unchanged. Do not create new automation infrastructure solely for this evidence.
+If convenient, inspect the simulator session file before/after orientation with the existing app container to confirm the `runId`, placements, and persisted viewport JSON are unchanged by rotation itself. Do not create new automation infrastructure solely for this evidence.
 
 - [ ] **Step 8: Re-run the mobile suite after any smoke fixes**
 
@@ -610,6 +693,7 @@ Expected: PASS.
 git add apps/mobile/app/gameplay/GameplayToolbar.svelte \
   apps/mobile/app/app.css \
   apps/mobile/app/gameplay/Gameplay.svelte \
+  apps/mobile/app/gameplay/PuzzleCanvas.svelte \
   apps/mobile/app/gameplay/PuzzleTray.svelte \
   apps/mobile/app/gameplay/gameplayLayout.ts \
   apps/mobile/app/gameplay/gameplayLayout.test.ts \
@@ -631,11 +715,15 @@ Before marking HPA-46 ready for review:
 - [ ] Exactly one `PuzzleCanvas` and one `PuzzleTray` exist in the gameplay markup.
 - [ ] Landscape still uses the HPA-3 `320` DIP right tray.
 - [ ] Portrait uses one bottom tray with `220`/`360` DIP states.
-- [ ] Drawer expansion is not persisted.
+- [ ] Drawer expansion is not persisted and survives a temporary switch to landscape in memory.
+- [ ] Invalid/zero layout events keep the last valid layout; there is no synthetic `1024×768` fallback.
 - [ ] `PuzzleCanvas` still owns surface relayout and `boardViewport.ts` still owns all board geometry.
+- [ ] A backing-size change clears transient Canvas pointer/gesture state without `onViewportCommit`.
+- [ ] A gameplay resize cancels any armed tray drag and restores ScrollView availability.
+- [ ] `sessionState.viewport` remains the persistence source; render-clamped `BoardTransform.viewport` is never written back on relayout.
 - [ ] No orientation-specific viewport/schema field exists.
 - [ ] Toolbar callbacks are unchanged; only presentation differs.
 - [ ] iPad plist supports portrait + two landscape orientations, not upside-down portrait.
 - [ ] Mobile unit tests and workspace checks pass.
-- [ ] Native evidence covers portrait play, live orientation change, return to portrait, portrait drag placement, and background/foreground.
+- [ ] Native evidence covers portrait play, live orientation change, a working post-rotation pinch, return to portrait, portrait drag placement, tray scrolling, and background/foreground.
 - [ ] PR body records any manual native evidence and any deviation from the planned `220`/`360` tray heights.
