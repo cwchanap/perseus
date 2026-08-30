@@ -119,6 +119,15 @@ describe('boardViewport', () => {
 		});
 		expect(clamped.viewport?.panX).toBeCloseTo(-2 / 3);
 		expect(clamped.viewport?.panY).toBe(1);
+		// Geometry must come from the clamped pan, not the raw input:
+		// boardX = -200 + (-2/3)*300, boardY = -300 + 1*300.
+		expect(clamped.boardX).toBeCloseTo(-400);
+		expect(clamped.boardY).toBe(0);
+		expect(clamped.cellAt(0, 0)).toEqual({ x: 0, y: 0 });
+		// Re-projecting the echoed viewport is a fixed point.
+		const roundTripped = createBoardTransform({ ...FIT_INPUT, viewport: clamped.viewport });
+		expect(roundTripped.boardX).toBeCloseTo(clamped.boardX);
+		expect(roundTripped.boardY).toBe(clamped.boardY);
 
 		// Height overflows at zoom 2, width still fits and stays centered.
 		const wide = createBoardTransform({

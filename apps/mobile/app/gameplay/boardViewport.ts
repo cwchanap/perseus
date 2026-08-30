@@ -116,6 +116,16 @@ function clampPan(
 	return Math.max(-maxFitCells, Math.min(maxFitCells, pan));
 }
 
+/** Centers a board of the given size and offsets it by the pan (fit-cell units). */
+function projectBoardOrigin(
+	canvasSize: number,
+	boardSize: number,
+	panFitCells: number,
+	fitCellSize: number
+): number {
+	return (canvasSize - boardSize) / 2 + panFitCells * fitCellSize;
+}
+
 export function createBoardTransform(input: BoardViewportInput): BoardTransform {
 	const fitCellSize = calculateFitZoom(
 		input.gridCols,
@@ -130,9 +140,18 @@ export function createBoardTransform(input: BoardViewportInput): BoardTransform 
 	const boardWidth = cellSize * input.gridCols;
 	const boardHeight = cellSize * input.gridRows;
 	// Persisted pan is in fit-cell units: one unit moves the board one
-	// fit-scale cell, independent of zoom.
-	const boardX = (input.canvasWidth - boardWidth) / 2 + (viewport?.panX ?? 0) * fitCellSize;
-	const boardY = (input.canvasHeight - boardHeight) / 2 + (viewport?.panY ?? 0) * fitCellSize;
+	// fit-scale cell, independent of zoom. Clamp once so the projection and
+	// the echoed viewport always agree.
+	const panX =
+		viewport && fitCellSize > 0
+			? clampPan(viewport.panX, boardWidth, input.canvasWidth, fitCellSize)
+			: 0;
+	const panY =
+		viewport && fitCellSize > 0
+			? clampPan(viewport.panY, boardHeight, input.canvasHeight, fitCellSize)
+			: 0;
+	const boardX = projectBoardOrigin(input.canvasWidth, boardWidth, panX, fitCellSize);
+	const boardY = projectBoardOrigin(input.canvasHeight, boardHeight, panY, fitCellSize);
 
 	function cellAt(canvasX: number, canvasY: number): { x: number; y: number } | null {
 		if (
@@ -159,14 +178,7 @@ export function createBoardTransform(input: BoardViewportInput): BoardTransform 
 		boardY,
 		boardWidth,
 		boardHeight,
-		viewport:
-			viewport && fitCellSize > 0
-				? {
-						zoom,
-						panX: clampPan(viewport.panX, boardWidth, input.canvasWidth, fitCellSize),
-						panY: clampPan(viewport.panY, boardHeight, input.canvasHeight, fitCellSize)
-					}
-				: null,
+		viewport: viewport && fitCellSize > 0 ? { zoom, panX, panY } : null,
 		cellAt
 	};
 }
@@ -202,24 +214,38 @@ export function transformViewportForTwoPointers(
 	// Anchor the board content point under the start focus so it stays under
 	// the moving focus at the new zoom (focal pinch); focus movement then
 	// translates the board one-to-one.
-	const startBoardX =
-		(board.canvasWidth - board.gridCols * fitCellSize * startZoom) / 2 +
-		(start?.panX ?? 0) * fitCellSize;
-	const startBoardY =
-		(board.canvasHeight - board.gridRows * fitCellSize * startZoom) / 2 +
-		(start?.panY ?? 0) * fitCellSize;
+	const boardWidth = board.gridCols * fitCellSize * zoom;
+	const boardHeight = board.gridRows * fitCellSize * zoom;
+	const startBoardX = projectBoardOrigin(
+		board.canvasWidth,
+		board.gridCols * fitCellSize * startZoom,
+		start?.panX ?? 0,
+		fitCellSize
+	);
+	const startBoardY = projectBoardOrigin(
+		board.canvasHeight,
+		board.gridRows * fitCellSize * startZoom,
+		start?.panY ?? 0,
+		fitCellSize
+	);
 	const anchorX = (gesture.startFocusX - startBoardX) * (zoom / startZoom);
 	const anchorY = (gesture.startFocusY - startBoardY) * (zoom / startZoom);
 	const boardX = gesture.currentFocusX - anchorX;
 	const boardY = gesture.currentFocusY - anchorY;
-	const centeredX = (board.canvasWidth - board.gridCols * fitCellSize * zoom) / 2;
-	const centeredY = (board.canvasHeight - board.gridRows * fitCellSize * zoom) / 2;
-	const boardWidth = board.gridCols * fitCellSize * zoom;
-	const boardHeight = board.gridRows * fitCellSize * zoom;
 
 	return {
 		zoom,
-		panX: clampPan((boardX - centeredX) / fitCellSize, boardWidth, board.canvasWidth, fitCellSize),
-		panY: clampPan((boardY - centeredY) / fitCellSize, boardHeight, board.canvasHeight, fitCellSize)
+		panX: clampPan(
+			(boardX - projectBoardOrigin(board.canvasWidth, boardWidth, 0, fitCellSize)) / fitCellSize,
+			boardWidth,
+			board.canvasWidth,
+			fitCellSize
+		),
+		panY: clampPan(
+			(boardY - projectBoardOrigin(board.canvasHeight, boardHeight, 0, fitCellSize)) / fitCellSize,
+			boardHeight,
+			board.canvasHeight,
+			fitCellSize
+		)
 	};
 }
