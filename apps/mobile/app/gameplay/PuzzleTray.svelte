@@ -68,6 +68,13 @@
 			if (point) onPieceDragMove(point.x, point.y);
 		} else if (args.action === 'up') {
 			dragArmed = false;
+			// Forward the release coordinates before ending the drag: endPieceDrag
+			// hit-tests activePieceDrag.screenX/screenY, which movePieceDrag
+			// updates only on `move`. A finger can drift between the last move
+			// and the up event, so without this the placement would hit-test the
+			// stale last-move position.
+			const point = screenPoint(args);
+			if (point) onPieceDragMove(point.x, point.y);
 			onPieceDragEnd();
 		} else if (args.action === 'cancel') {
 			// A system/recognizer cancellation aborts the drag: clear the
