@@ -79,9 +79,17 @@
 	// not commit its transient viewport into the fresh run. Reset without
 	// committing so the next draw uses the new run's persisted viewport.
 	$: if (gesture && sessionState && sessionState.runId !== gesture.startRunId) {
+		// Treat the run change like a full gesture cancellation: clear the
+		// in-flight gesture state AND the pointer counter. The counter can
+		// still be 2 from the old run, and the old pointers' remaining `up`
+		// events may not fire (or arrive late) once the setup overlay covers
+		// the canvas; leaving it stale would make the next single `down`
+		// increment to 3, so a fresh two-pointer gesture could never reach
+		// exactly 2. Mirrors the `cancel` branch in onTouch.
 		gesture = null;
 		transientViewport = undefined;
 		lastPointerPoints = [null, null];
+		activePointerCount = 0;
 	}
 
 	$: if (surfaceReady && sessionState && overlay) {
