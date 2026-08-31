@@ -79,6 +79,36 @@ export function backingSizeFromLayout(
 	return { width: widthDip * density, height: heightDip * density };
 }
 
+export interface NextSurfaceMetrics {
+	metrics: CanvasSurfaceMetrics;
+	backingChanged: boolean;
+}
+
+export function nextSurfaceMetrics(
+	layoutWidthDip: number,
+	layoutHeightDip: number,
+	density: number,
+	previous: CanvasSurfaceMetrics | null
+): NextSurfaceMetrics | null {
+	const backing = backingSizeFromLayout(layoutWidthDip, layoutHeightDip, density);
+	if (!backing) return null;
+
+	const metrics: CanvasSurfaceMetrics = {
+		layoutWidthDip,
+		layoutHeightDip,
+		backingWidth: Math.round(backing.width),
+		backingHeight: Math.round(backing.height)
+	};
+
+	return {
+		metrics,
+		backingChanged:
+			previous !== null &&
+			(previous.backingWidth !== metrics.backingWidth ||
+				previous.backingHeight !== metrics.backingHeight)
+	};
+}
+
 /**
  * Maps a screen point (DIPs) into Canvas backing coordinates through the
  * actual backing/layout ratios of the rendered surface.
