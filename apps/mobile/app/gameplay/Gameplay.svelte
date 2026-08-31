@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { Application } from '@nativescript/core';
+	import { Application, Screen } from '@nativescript/core';
 	import {
 		createDefaultClock,
 		createPuzzleSession,
@@ -35,6 +35,7 @@
 		suspendSession
 	} from './gameplaySessionPolicy';
 	import type { BoardCell } from './boardViewModel';
+	import { DEFAULT_GAMEPLAY_LAYOUT, createGameplayLayout } from './gameplayLayout';
 
 	export let launch: GameplayLaunch;
 	export let storage: SessionStorageAdapter;
@@ -93,6 +94,28 @@
 	let sheet: 'setup' | 'pause' | 'discard' | null = entrySheetFor(restored);
 	let setupDraft = { mode: sessionState?.mode ?? 'timed', rotationEnabled: false };
 	let discardError = '';
+
+	// One safe initial layout; layoutChanged on the outer page grid measures
+	// the real page and keeps the last valid layout across invalid/zero events.
+	let portraitTrayExpanded = false;
+	let pageWidthDip = Screen.mainScreen.widthDIPs;
+	let pageHeightDip = Screen.mainScreen.heightDIPs;
+	let gameplayLayout =
+		createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded) ??
+		DEFAULT_GAMEPLAY_LAYOUT;
+
+	function onGameplayLayoutChanged(args: any): void {
+		const size = args.object?.getActualSize?.();
+		if (!size || size.width <= 0 || size.height <= 0) return;
+		if (size.width === pageWidthDip && size.height === pageHeightDip) return;
+
+		const next = createGameplayLayout(size.width, size.height, portraitTrayExpanded);
+		if (!next) return;
+
+		pageWidthDip = size.width;
+		pageHeightDip = size.height;
+		gameplayLayout = next;
+	}
 
 	function saveCurrentSnapshot(): void {
 		if (!session) return;
@@ -396,7 +419,7 @@
 		<button row="1" text="BACK TO LIBRARY" class="library-button" on:tap={exitToLibrary} />
 	</gridLayout>
 {:else if sessionState}
-	<gridLayout bind:this={page} backgroundColor="#111820">
+	<gridLayout bind:this={page} backgroundColor="#111820" on:layoutChanged={onGameplayLayoutChanged}>
 		<gridLayout rows="auto,*">
 			<GameplayToolbar
 				puzzleName={launch.install.manifest.puzzle.name}
@@ -420,8 +443,8 @@
 				onDiscard={requestDiscard}
 				onSetReferenceMode={setReferenceMode}
 			/>
-			<gridLayout row={1} columns="*,320">
-				<gridLayout col={0}>
+			<gridLayout row={1} rows={gameplayLayout.rows} columns={gameplayLayout.columns}>
+				<gridLayout row={0} col={0}>
 					<PuzzleCanvas
 						bind:this={puzzleCanvas}
 						{sessionState}
@@ -434,7 +457,7 @@
 						onViewportCommit={commitViewport}
 					/>
 				</gridLayout>
-				<gridLayout col={1}>
+				<gridLayout row={gameplayLayout.trayRow} col={gameplayLayout.trayColumn}>
 					<PuzzleTray
 						{sessionState}
 						pieces={spec.pieces}
