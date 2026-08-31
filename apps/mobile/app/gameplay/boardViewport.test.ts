@@ -3,6 +3,7 @@ import {
 	backingSizeFromLayout,
 	canFitOnDoubleTap,
 	createBoardTransform,
+	nextSurfaceMetrics,
 	screenPointToCanvas,
 	transformViewportForTwoPointers
 } from './boardViewport';
@@ -141,6 +142,34 @@ describe('boardViewport', () => {
 		expect(wide.viewport).toEqual({ zoom: 2, panX: 0, panY: 1 });
 	});
 
+	it('keeps persisted pan intent while a narrower aspect clamps only the render projection', () => {
+		const viewport = { zoom: 2, panX: 0, panY: 1 };
+		const puzzle = { gridCols: 4, gridRows: 3, viewport };
+
+		const landscape = createBoardTransform({
+			...puzzle,
+			canvasWidth: 1000,
+			canvasHeight: 700
+		});
+		const portrait = createBoardTransform({
+			...puzzle,
+			canvasWidth: 700,
+			canvasHeight: 1000
+		});
+		const landscapeAgain = createBoardTransform({
+			...puzzle,
+			canvasWidth: 1000,
+			canvasHeight: 700
+		});
+
+		expect(landscape.viewport).toEqual(viewport);
+		expect(portrait.viewport?.zoom).toBe(2);
+		expect(portrait.viewport?.panX).toBe(0);
+		expect(portrait.viewport?.panY).toBeCloseTo(1 / 7);
+		expect(viewport).toEqual({ zoom: 2, panX: 0, panY: 1 });
+		expect(landscapeAgain.viewport).toEqual(viewport);
+	});
+
 	it('translates with two pointers without zooming', () => {
 		const translated = transformViewportForTwoPointers(FIT_INPUT, {
 			startViewport: { zoom: 2, panX: 0, panY: 0 },
@@ -256,5 +285,54 @@ describe('boardViewport', () => {
 			expect(canFitOnDoubleTap(null, 1000, 1500)).toBe(false);
 			expect(canFitOnDoubleTap(null, 1500, 1500)).toBe(true);
 		});
+	});
+});
+
+describe('nextSurfaceMetrics', () => {
+	it('does not treat the first valid layout as a resize', () => {
+		expect(nextSurfaceMetrics(512, 384, 2, null)).toEqual({
+			metrics: {
+				layoutWidthDip: 512,
+				layoutHeightDip: 384,
+				backingWidth: 1024,
+				backingHeight: 768
+			},
+			backingChanged: false
+		});
+	});
+
+	it('does not reset pointers for an identical layoutChanged refire', () => {
+		const previous = {
+			layoutWidthDip: 512,
+			layoutHeightDip: 384,
+			backingWidth: 1024,
+			backingHeight: 768
+		};
+
+		expect(nextSurfaceMetrics(512, 384, 2, previous)?.backingChanged).toBe(false);
+	});
+
+	it('reports a real backing resize after the surface was established', () => {
+		const previous = {
+			layoutWidthDip: 512,
+			layoutHeightDip: 384,
+			backingWidth: 1024,
+			backingHeight: 768
+		};
+
+		expect(nextSurfaceMetrics(600, 384, 2, previous)).toEqual({
+			metrics: {
+				layoutWidthDip: 600,
+				layoutHeightDip: 384,
+				backingWidth: 1200,
+				backingHeight: 768
+			},
+			backingChanged: true
+		});
+	});
+
+	it('rejects non-renderable surface input', () => {
+		expect(nextSurfaceMetrics(0, 384, 2, null)).toBeNull();
+		expect(nextSurfaceMetrics(512, 384, 0, null)).toBeNull();
 	});
 });
