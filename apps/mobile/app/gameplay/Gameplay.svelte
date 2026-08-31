@@ -112,6 +112,7 @@
 		const next = createGameplayLayout(size.width, size.height, portraitTrayExpanded);
 		if (!next) return;
 
+		puzzleTray?.cancelActiveDrag?.();
 		pageWidthDip = size.width;
 		pageHeightDip = size.height;
 		gameplayLayout = next;
@@ -361,6 +362,7 @@
 	let activePieceDrag: ActivePieceDrag | null = null;
 	let page: any = null;
 	let puzzleCanvas: any = null;
+	let puzzleTray: any = null;
 
 	function startPieceDrag(pieceId: number, screenX: number, screenY: number): void {
 		activePieceDrag = { pieceId, screenX, screenY };
@@ -459,6 +461,7 @@
 				</gridLayout>
 				<gridLayout row={gameplayLayout.trayRow} col={gameplayLayout.trayColumn}>
 					<PuzzleTray
+						bind:this={puzzleTray}
 						{sessionState}
 						pieces={spec.pieces}
 						piecePaths={launch.install.piecePaths}

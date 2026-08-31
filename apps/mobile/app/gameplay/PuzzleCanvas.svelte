@@ -8,9 +8,9 @@
 		ReferenceMode
 	} from '@perseus/game-core';
 	import {
-		backingSizeFromLayout,
 		canFitOnDoubleTap,
 		createBoardTransform,
+		nextSurfaceMetrics,
 		screenPointToCanvas,
 		transformViewportForTwoPointers,
 		type BoardTransform,
@@ -84,11 +84,15 @@
 	// unconditionally on every run change, including when gesture is null and
 	// only the counter is stale, without committing so the next draw uses the
 	// new run's persisted viewport. Mirrors the `cancel` branch in onTouch.
-	$: if (sessionState && sessionState.runId !== lastRunId) {
+	function resetPointerGestureWithoutCommit(): void {
 		gesture = null;
 		transientViewport = undefined;
 		lastPointerPoints = [null, null];
 		activePointerCount = 0;
+	}
+
+	$: if (sessionState && sessionState.runId !== lastRunId) {
+		resetPointerGestureWithoutCommit();
 		lastRunId = sessionState.runId;
 	}
 
@@ -144,26 +148,18 @@
 		const density = Screen.mainScreen.scale || 1;
 		if (!size) return;
 
-		const backing = backingSizeFromLayout(size.width, size.height, density);
-		if (!backing) return;
+		const next = nextSurfaceMetrics(size.width, size.height, density, surfaceMetrics);
+		if (!next) return;
 
-		// Canvas backing dimensions are integers on the native surface; round
-		// once and keep the surface metrics consistent with what we set.
-		const width = Math.round(backing.width);
-		const height = Math.round(backing.height);
-		canvas.width = width;
-		canvas.height = height;
-		surfaceMetrics = {
-			layoutWidthDip: size.width,
-			layoutHeightDip: size.height,
-			backingWidth: width,
-			backingHeight: height
-		};
-		// Use effectiveViewport, not sessionState.viewport: during a two-pointer
-		// gesture effectiveViewport is the transient frame, and a relayout
-		// mid-gesture must preserve it rather than snapping back to the persisted
-		// transform until the next move frame.
-		rebuildTransform(effectiveViewport);
+		if (next.backingChanged) {
+			resetPointerGestureWithoutCommit();
+		}
+
+		canvas.width = next.metrics.backingWidth;
+		canvas.height = next.metrics.backingHeight;
+		surfaceMetrics = next.metrics;
+
+		rebuildTransform(next.backingChanged ? sessionState.viewport : effectiveViewport);
 
 		if (!firstPaintScheduled) {
 			firstPaintScheduled = true;

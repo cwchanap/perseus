@@ -77,11 +77,17 @@
 			if (point) onPieceDragMove(point.x, point.y);
 			onPieceDragEnd();
 		} else if (args.action === 'cancel') {
-			// A system/recognizer cancellation aborts the drag: clear the
-			// armed/overlay state without hit-testing or placing the piece.
-			dragArmed = false;
-			onPieceDragCancel();
+			cancelActiveDrag();
 		}
+	}
+
+	// A system/recognizer cancellation aborts the drag: clear the armed/overlay
+	// state without hit-testing or placing the piece. Also invoked by Gameplay
+	// when a real page resize invalidates the in-flight gesture.
+	export function cancelActiveDrag(): void {
+		if (!dragArmed) return;
+		dragArmed = false;
+		onPieceDragCancel();
 	}
 </script>
 
