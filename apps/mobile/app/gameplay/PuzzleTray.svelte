@@ -15,6 +15,9 @@
 	export let onSetFilter: (filter: InventoryFilter) => void;
 	export let onShuffle: () => void;
 	export let onRotateSelected: () => void;
+	export let drawerMode = false;
+	export let drawerExpanded = false;
+	export let onToggleDrawer: () => void = () => {};
 
 	const TILE_SIZE = 120;
 	const FILTERS: ReadonlyArray<{ filter: InventoryFilter; label: string }> = [
@@ -30,6 +33,10 @@
 	$: remainingCount = unplacedPieceIds(sessionState).length;
 	$: activeFilter = sessionState.organization?.filter ?? 'all';
 	$: canRotate = sessionState.selectedPieceId !== null && sessionState.rotationEnabled;
+
+	$: headerColumns = drawerMode ? 'auto,*,auto,auto,auto' : 'auto,*,auto,auto';
+	$: shuffleColumn = drawerMode ? 3 : 2;
+	$: rotateColumn = drawerMode ? 4 : 3;
 
 	function tileClass(pieceId: number): string {
 		if (sessionState.selectedPieceId === pieceId) return 'tray-piece-selected';
@@ -92,16 +99,24 @@
 </script>
 
 <gridLayout rows="auto,auto,*">
-	<gridLayout row={0} class="tray-header" columns="auto,*,auto,auto">
+	<gridLayout row={0} class="tray-header" columns={headerColumns}>
 		<label
 			col={0}
 			text={`REMAINING ${remainingCount}`}
 			class="tray-count"
 			verticalAlignment="middle"
 		/>
-		<button col={2} text="SHUFFLE" class="tray-action" on:tap={onShuffle} />
+		{#if drawerMode}
+			<button
+				col={2}
+				text={drawerExpanded ? 'LESS PIECES' : 'MORE PIECES'}
+				class="tray-action"
+				on:tap={onToggleDrawer}
+			/>
+		{/if}
+		<button col={shuffleColumn} text="SHUFFLE" class="tray-action" on:tap={onShuffle} />
 		<button
-			col={3}
+			col={rotateColumn}
 			text="ROTATE"
 			class={canRotate ? 'tray-action' : 'tray-action-disabled'}
 			isEnabled={canRotate}

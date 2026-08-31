@@ -118,6 +118,14 @@
 		gameplayLayout = next;
 	}
 
+	// Ephemeral drawer state: recomputes the layout from the last valid page
+	// size; never persisted.
+	function togglePortraitTray(): void {
+		portraitTrayExpanded = !portraitTrayExpanded;
+		const next = createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded);
+		if (next) gameplayLayout = next;
+	}
+
 	function saveCurrentSnapshot(): void {
 		if (!session) return;
 		session.checkpointTime();
@@ -474,6 +482,9 @@
 						onSetFilter={setTrayFilter}
 						onShuffle={shuffleTray}
 						onRotateSelected={rotateSelected}
+						drawerMode={gameplayLayout.mode === 'portrait'}
+						drawerExpanded={portraitTrayExpanded}
+						onToggleDrawer={togglePortraitTray}
 					/>
 				</gridLayout>
 			</gridLayout>
