@@ -339,7 +339,7 @@ Do not claim root `bun run check` validates HPA-46: `apps/mobile` currently has 
 1. **Runtime GridLayout row/column reassignment** — prove first, before drawer/cancellation work. If children remount, stop and use the smallest imperative property update.
 2. **False-positive resize cancellation** — pure `nextSurfaceMetrics` tests must prove identical `layoutChanged` events do not reset active pointers.
 3. **Viewport persistence regression** — render-clamped `BoardTransform.viewport` must never replace `sessionState.viewport` because of relayout.
-4. **Toolbar width** — measure before coding. If an existing action clips, stop and revise around one adaptive markup tree rather than a duplicate toolbar.
+4. **Toolbar width** — measure before coding, at both full portrait width **and compact multitasking width** (Split View / Slide Over). The four-orientation plist without `UIRequiresFullScreen` makes compact window widths a supported runtime state, and the existing `auto,*,auto,auto,auto,auto,auto,auto` toolbar grid sizes `auto` tracks to content, so fixed actions can overflow a compact window even when full-width portrait fits. If an existing action clips at any supported width, stop and revise around one adaptive markup tree (single-tree row/column reflow) rather than a duplicate toolbar or opting out of multitasking.
 5. **Tray height** — `220`/`360` are concrete starting values. Adjust only if native smoke shows one is unusable.
 6. **Gesture cancellation during rotation** — canceling an in-flight gesture is acceptable. Gameplay/session state loss is not.
 

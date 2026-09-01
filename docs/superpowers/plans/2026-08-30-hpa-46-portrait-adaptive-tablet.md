@@ -484,11 +484,13 @@ On the target iPad simulator/device:
 3. rotate to portrait;
 4. confirm the same run, placement, selected state, Canvas content, and tray contents remain present;
 5. exercise Library, Undo, Redo, Hint, Reference, More, and the More menu at portrait width;
-6. rotate back to landscape and confirm the existing HPA-3 layout returns.
+6. rotate back to landscape and confirm the existing HPA-3 layout returns;
+7. drag the iPad Split View divider to the smallest compact width and also open Slide Over, so the gameplay window is multitasking-compact (not merely rotated-portrait);
+8. at that compact width, confirm every toolbar action (Library, Undo, Redo, Hint, Reference, More) and every More/Reference menu item remains fully reachable and unclipped.
 
 **Stop condition:** if runtime `row`/`col` changes remount or break the Canvas/tray, stop HPA-46 here. Replace dynamic child-placement attributes with the smallest imperative GridLayout/native-view property update on the same views. Do not proceed to Task 2B/2C and do not duplicate portrait markup.
 
-**Toolbar stop condition:** if a toolbar action or More/Reference item actually clips or becomes unreachable in the supported portrait target, stop and revise the design/plan before adding toolbar code. Do not implement the previously proposed duplicate compact toolbar.
+**Toolbar stop condition:** if a toolbar action or More/Reference item actually clips or becomes unreachable at the supported portrait target **or any compact multitasking width** (Split View / Slide Over), stop and revise the design/plan before adding toolbar code. The remedy is a single-tree row/column reflow of the existing `GameplayToolbar.svelte` markup — not the previously proposed duplicate compact toolbar, and not opting out of multitasking (the four-orientation plist is the premise that makes outer-page window-size adaptivity reachable).
 
 - [ ] **Step 7: Commit the proven adaptive composition**
 
@@ -819,8 +821,8 @@ Before marking HPA-46 ready for review:
 - [ ] Tray active drag is canceled through the existing `onPieceDragCancel` path when page size changes.
 - [ ] `sessionState.viewport` remains persisted intent; render-clamped `BoardTransform.viewport` is never written back on relayout.
 - [ ] No orientation-specific viewport/schema field exists.
-- [ ] Existing toolbar remains unchanged unless native evidence forced a separately reviewed single-tree reflow.
+- [ ] Existing toolbar remains unchanged unless native evidence at portrait **or compact multitasking width** forced a separately reviewed single-tree reflow.
 - [ ] iPad plist declares all four orientations (portrait, upside-down portrait, both landscapes) to remain multitasking-eligible; no `UIRequiresFullScreen` opt-out.
 - [ ] `bun run --cwd apps/mobile test:unit` passes.
-- [ ] NativeScript iOS build/smoke covers one-tree reflow, portrait toolbar reachability, drawer, pinch after rotate, portrait drag placement, and background/foreground.
+- [ ] NativeScript iOS build/smoke covers one-tree reflow, portrait toolbar reachability, compact Split View / Slide Over toolbar reachability, drawer, pinch after rotate, portrait drag placement, and background/foreground.
 - [ ] PR body records native evidence and any measured deviation from `220`/`360` tray heights.
