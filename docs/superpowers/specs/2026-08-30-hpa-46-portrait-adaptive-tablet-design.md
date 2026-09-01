@@ -143,6 +143,8 @@ Prove this before drawer or gesture work:
 
 If runtime row/column assignment remounts the children, stop there. Use the smallest imperative GridLayout property update on the same native views rather than create separate portrait markup.
 
+**Stop condition fired and resolved (2026-08-31).** The Task 2A native smoke (iPad Pro 11-inch M5 simulator, iOS 26.5) showed that rotating to portrait removes the Canvas and tray from the layout — the reactive `rows`/`columns`/`row`/`col` attribute re-application dropped the children. The same environment also reproduced three pre-existing re-render failures on `main` (Canvas `getContext is not a function`, native view updates not repainting, MissionSetupSheet collapse), so attribution to the reactive mechanism specifically is not fully separable from the iOS 26.5/Svelte-Native runtime. Regardless, the plan's prescribed remedy was adopted: the content grid and tray wrapper are mounted once with the landscape default geometry, and `applyGameplayLayout()` updates the same native `GridLayout` views imperatively (`grid.rows`/`grid.columns` + `GridLayout.setRow`/`GridLayout.setColumn` + `requestLayout()`). No reactive `rows`/`columns`/`row`/`col` bindings remain on the adaptive grid. `gameplayLayout.mode` still drives the tray's `drawerMode` prop reactively (a content prop, not a layout-remounting attribute). Positive native confirmation on a real iPad or non-26.x runtime is still required before merge.
+
 ## Portrait layout
 
 Portrait uses the same child components with the tray below the board:
@@ -336,7 +338,7 @@ Do not claim root `bun run check` validates HPA-46: `apps/mobile` currently has 
 
 ## Risks and stop conditions
 
-1. **Runtime GridLayout row/column reassignment** — prove first, before drawer/cancellation work. If children remount, stop and use the smallest imperative property update.
+1. **Runtime GridLayout row/column reassignment** — prove first, before drawer/cancellation work. If children remount, stop and use the smallest imperative property update. **Fired 2026-08-31:** reactive child-placement re-application dropped the Canvas/tray on portrait rotation; the imperative `applyGameplayLayout()` remedy was adopted. See "Native reflow gate comes first" above.
 2. **False-positive resize cancellation** — pure `nextSurfaceMetrics` tests must prove identical `layoutChanged` events do not reset active pointers.
 3. **Viewport persistence regression** — render-clamped `BoardTransform.viewport` must never replace `sessionState.viewport` because of relayout.
 4. **Toolbar width** — measure before coding, at both full portrait width **and compact multitasking width** (Split View / Slide Over). The four-orientation plist without `UIRequiresFullScreen` makes compact window widths a supported runtime state, and the existing `auto,*,auto,auto,auto,auto,auto,auto` toolbar grid sizes `auto` tracks to content, so fixed actions can overflow a compact window even when full-width portrait fits. If an existing action clips at any supported width, stop and revise around one adaptive markup tree (single-tree row/column reflow) rather than a duplicate toolbar or opting out of multitasking.

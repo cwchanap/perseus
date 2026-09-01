@@ -422,6 +422,8 @@ Keep the existing inner `rows="auto,*"` toolbar/content structure.
 
 - [ ] **Step 4: Make only the content grid adaptive while keeping one Canvas and one tray**
 
+> **Implementation note (2026-08-31):** The reactive `rows={gameplayLayout.rows}` / `columns={gameplayLayout.columns}` / `row={gameplayLayout.trayRow}` / `col={gameplayLayout.trayColumn}` bindings below were the original Step 4 design. The Task 2A native smoke fired the stop condition (rotating to portrait dropped the Canvas/tray from the layout), so the adopted implementation mounts the content grid and tray wrapper once with the landscape default geometry and updates the same native `GridLayout` views imperatively via `applyGameplayLayout()` (`grid.rows`/`grid.columns` + `GridLayout.setRow`/`GridLayout.setColumn` + `requestLayout()`). The code block below is retained as the design intent; the shipped code in `Gameplay.svelte` uses the imperative form. `gameplayLayout.mode` still drives the tray's `drawerMode` prop reactively.
+
 Replace the fixed `columns="*,320"` content grid with:
 
 ```svelte
