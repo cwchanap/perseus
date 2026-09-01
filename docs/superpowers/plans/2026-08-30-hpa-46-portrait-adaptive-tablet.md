@@ -30,16 +30,16 @@
 
 ## File map
 
-| File | Responsibility in HPA-46 |
-| --- | --- |
-| `apps/mobile/app/gameplay/gameplayLayout.ts` | New pure page-size → concrete tablet grid projection and safe initial default. |
-| `apps/mobile/app/gameplay/gameplayLayout.test.ts` | Pins default, landscape/portrait/drawer values, invalid inputs. |
-| `apps/mobile/app/gameplay/boardViewport.ts` | Adds pure `nextSurfaceMetrics()` beside existing backing-size math. |
-| `apps/mobile/app/gameplay/boardViewport.test.ts` | Pins real-resize detection and the missing persisted-vs-render clamp invariants. |
-| `apps/mobile/app/gameplay/Gameplay.svelte` | Outer-page size source, adaptive grid, tray cancellation, drawer state. |
-| `apps/mobile/app/gameplay/PuzzleCanvas.svelte` | Reuses one reset helper on real backing resize without viewport commit. |
-| `apps/mobile/app/gameplay/PuzzleTray.svelte` | Exposes one narrow active-drag cancel seam and portrait drawer affordance. |
-| `apps/mobile/App_Resources/iOS/Info.plist` | Enables portrait on iPad. |
+| File                                              | Responsibility in HPA-46                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `apps/mobile/app/gameplay/gameplayLayout.ts`      | New pure page-size → concrete tablet grid projection and safe initial default.   |
+| `apps/mobile/app/gameplay/gameplayLayout.test.ts` | Pins default, landscape/portrait/drawer values, invalid inputs.                  |
+| `apps/mobile/app/gameplay/boardViewport.ts`       | Adds pure `nextSurfaceMetrics()` beside existing backing-size math.              |
+| `apps/mobile/app/gameplay/boardViewport.test.ts`  | Pins real-resize detection and the missing persisted-vs-render clamp invariants. |
+| `apps/mobile/app/gameplay/Gameplay.svelte`        | Outer-page size source, adaptive grid, tray cancellation, drawer state.          |
+| `apps/mobile/app/gameplay/PuzzleCanvas.svelte`    | Reuses one reset helper on real backing resize without viewport commit.          |
+| `apps/mobile/app/gameplay/PuzzleTray.svelte`      | Exposes one narrow active-drag cancel seam and portrait drawer affordance.       |
+| `apps/mobile/App_Resources/iOS/Info.plist`        | Enables portrait on iPad.                                                        |
 
 Planned HPA-46 work does **not** touch `GameplayToolbar.svelte`, `app.css`, `apps/mobile/package.json`, game-core, API, workflows, web, downloads, or persistence.
 
@@ -50,12 +50,14 @@ If the Task 2A portrait smoke proves a real toolbar clipping defect, stop and re
 ### Task 1: Pin layout, surface-resize, and viewport contracts
 
 **Files:**
+
 - Create: `apps/mobile/app/gameplay/gameplayLayout.ts`
 - Create: `apps/mobile/app/gameplay/gameplayLayout.test.ts`
 - Modify: `apps/mobile/app/gameplay/boardViewport.ts`
 - Modify: `apps/mobile/app/gameplay/boardViewport.test.ts`
 
 **Interfaces:**
+
 - Produces: `DEFAULT_GAMEPLAY_LAYOUT: GameplayLayout`
 - Produces: `createGameplayLayout(widthDip, heightDip, portraitTrayExpanded): GameplayLayout | null`
 - Produces: `nextSurfaceMetrics(layoutWidthDip, layoutHeightDip, density, previous): NextSurfaceMetrics | null`
@@ -68,49 +70,47 @@ Create `apps/mobile/app/gameplay/gameplayLayout.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_GAMEPLAY_LAYOUT,
-  LANDSCAPE_TRAY_WIDTH,
-  PORTRAIT_TRAY_COLLAPSED_HEIGHT,
-  PORTRAIT_TRAY_EXPANDED_HEIGHT,
-  createGameplayLayout
+	DEFAULT_GAMEPLAY_LAYOUT,
+	LANDSCAPE_TRAY_WIDTH,
+	PORTRAIT_TRAY_COLLAPSED_HEIGHT,
+	PORTRAIT_TRAY_EXPANDED_HEIGHT,
+	createGameplayLayout
 } from './gameplayLayout';
 
 describe('createGameplayLayout', () => {
-  it('exports the existing HPA-3 landscape layout as the safe initial default', () => {
-    expect(DEFAULT_GAMEPLAY_LAYOUT).toEqual({
-      mode: 'landscape',
-      rows: '*',
-      columns: `*,${LANDSCAPE_TRAY_WIDTH}`,
-      trayRow: 0,
-      trayColumn: 1
-    });
-  });
+	it('exports the existing HPA-3 landscape layout as the safe initial default', () => {
+		expect(DEFAULT_GAMEPLAY_LAYOUT).toEqual({
+			mode: 'landscape',
+			rows: '*',
+			columns: `*,${LANDSCAPE_TRAY_WIDTH}`,
+			trayRow: 0,
+			trayColumn: 1
+		});
+	});
 
-  it('keeps the right tray in landscape', () => {
-    expect(createGameplayLayout(1194, 834, false)).toEqual(DEFAULT_GAMEPLAY_LAYOUT);
-  });
+	it('keeps the right tray in landscape', () => {
+		expect(createGameplayLayout(1194, 834, false)).toEqual(DEFAULT_GAMEPLAY_LAYOUT);
+	});
 
-  it('uses the collapsed bottom tray in portrait', () => {
-    expect(createGameplayLayout(834, 1194, false)).toEqual({
-      mode: 'portrait',
-      rows: `*,${PORTRAIT_TRAY_COLLAPSED_HEIGHT}`,
-      columns: '*',
-      trayRow: 1,
-      trayColumn: 0
-    });
-  });
+	it('uses the collapsed bottom tray in portrait', () => {
+		expect(createGameplayLayout(834, 1194, false)).toEqual({
+			mode: 'portrait',
+			rows: `*,${PORTRAIT_TRAY_COLLAPSED_HEIGHT}`,
+			columns: '*',
+			trayRow: 1,
+			trayColumn: 0
+		});
+	});
 
-  it('expands only the portrait tray height', () => {
-    expect(createGameplayLayout(834, 1194, true)?.rows).toBe(
-      `*,${PORTRAIT_TRAY_EXPANDED_HEIGHT}`
-    );
-    expect(createGameplayLayout(1194, 834, true)).toEqual(DEFAULT_GAMEPLAY_LAYOUT);
-  });
+	it('expands only the portrait tray height', () => {
+		expect(createGameplayLayout(834, 1194, true)?.rows).toBe(`*,${PORTRAIT_TRAY_EXPANDED_HEIGHT}`);
+		expect(createGameplayLayout(1194, 834, true)).toEqual(DEFAULT_GAMEPLAY_LAYOUT);
+	});
 
-  it('returns null for non-renderable sizes', () => {
-    expect(createGameplayLayout(0, 1194, false)).toBeNull();
-    expect(createGameplayLayout(834, Number.NaN, false)).toBeNull();
-  });
+	it('returns null for non-renderable sizes', () => {
+		expect(createGameplayLayout(0, 1194, false)).toBeNull();
+		expect(createGameplayLayout(834, Number.NaN, false)).toBeNull();
+	});
 });
 ```
 
@@ -136,49 +136,49 @@ export const PORTRAIT_TRAY_EXPANDED_HEIGHT = 360;
 export type GameplayLayoutMode = 'landscape' | 'portrait';
 
 export interface GameplayLayout {
-  mode: GameplayLayoutMode;
-  rows: string;
-  columns: string;
-  trayRow: number;
-  trayColumn: number;
+	mode: GameplayLayoutMode;
+	rows: string;
+	columns: string;
+	trayRow: number;
+	trayColumn: number;
 }
 
 export const DEFAULT_GAMEPLAY_LAYOUT: GameplayLayout = {
-  mode: 'landscape',
-  rows: '*',
-  columns: `*,${LANDSCAPE_TRAY_WIDTH}`,
-  trayRow: 0,
-  trayColumn: 1
+	mode: 'landscape',
+	rows: '*',
+	columns: `*,${LANDSCAPE_TRAY_WIDTH}`,
+	trayRow: 0,
+	trayColumn: 1
 };
 
 export function createGameplayLayout(
-  widthDip: number,
-  heightDip: number,
-  portraitTrayExpanded: boolean
+	widthDip: number,
+	heightDip: number,
+	portraitTrayExpanded: boolean
 ): GameplayLayout | null {
-  if (
-    !Number.isFinite(widthDip) ||
-    !Number.isFinite(heightDip) ||
-    widthDip <= 0 ||
-    heightDip <= 0
-  ) {
-    return null;
-  }
+	if (
+		!Number.isFinite(widthDip) ||
+		!Number.isFinite(heightDip) ||
+		widthDip <= 0 ||
+		heightDip <= 0
+	) {
+		return null;
+	}
 
-  if (heightDip > widthDip) {
-    const trayHeight = portraitTrayExpanded
-      ? PORTRAIT_TRAY_EXPANDED_HEIGHT
-      : PORTRAIT_TRAY_COLLAPSED_HEIGHT;
-    return {
-      mode: 'portrait',
-      rows: `*,${trayHeight}`,
-      columns: '*',
-      trayRow: 1,
-      trayColumn: 0
-    };
-  }
+	if (heightDip > widthDip) {
+		const trayHeight = portraitTrayExpanded
+			? PORTRAIT_TRAY_EXPANDED_HEIGHT
+			: PORTRAIT_TRAY_COLLAPSED_HEIGHT;
+		return {
+			mode: 'portrait',
+			rows: `*,${trayHeight}`,
+			columns: '*',
+			trayRow: 1,
+			trayColumn: 0
+		};
+	}
 
-  return DEFAULT_GAMEPLAY_LAYOUT;
+	return DEFAULT_GAMEPLAY_LAYOUT;
 }
 ```
 
@@ -190,52 +190,52 @@ Extend the import in `boardViewport.test.ts` to include `nextSurfaceMetrics`, th
 
 ```ts
 describe('nextSurfaceMetrics', () => {
-  it('does not treat the first valid layout as a resize', () => {
-    expect(nextSurfaceMetrics(512, 384, 2, null)).toEqual({
-      metrics: {
-        layoutWidthDip: 512,
-        layoutHeightDip: 384,
-        backingWidth: 1024,
-        backingHeight: 768
-      },
-      backingChanged: false
-    });
-  });
+	it('does not treat the first valid layout as a resize', () => {
+		expect(nextSurfaceMetrics(512, 384, 2, null)).toEqual({
+			metrics: {
+				layoutWidthDip: 512,
+				layoutHeightDip: 384,
+				backingWidth: 1024,
+				backingHeight: 768
+			},
+			backingChanged: false
+		});
+	});
 
-  it('does not reset pointers for an identical layoutChanged refire', () => {
-    const previous = {
-      layoutWidthDip: 512,
-      layoutHeightDip: 384,
-      backingWidth: 1024,
-      backingHeight: 768
-    };
+	it('does not reset pointers for an identical layoutChanged refire', () => {
+		const previous = {
+			layoutWidthDip: 512,
+			layoutHeightDip: 384,
+			backingWidth: 1024,
+			backingHeight: 768
+		};
 
-    expect(nextSurfaceMetrics(512, 384, 2, previous)?.backingChanged).toBe(false);
-  });
+		expect(nextSurfaceMetrics(512, 384, 2, previous)?.backingChanged).toBe(false);
+	});
 
-  it('reports a real backing resize after the surface was established', () => {
-    const previous = {
-      layoutWidthDip: 512,
-      layoutHeightDip: 384,
-      backingWidth: 1024,
-      backingHeight: 768
-    };
+	it('reports a real backing resize after the surface was established', () => {
+		const previous = {
+			layoutWidthDip: 512,
+			layoutHeightDip: 384,
+			backingWidth: 1024,
+			backingHeight: 768
+		};
 
-    expect(nextSurfaceMetrics(600, 384, 2, previous)).toEqual({
-      metrics: {
-        layoutWidthDip: 600,
-        layoutHeightDip: 384,
-        backingWidth: 1200,
-        backingHeight: 768
-      },
-      backingChanged: true
-    });
-  });
+		expect(nextSurfaceMetrics(600, 384, 2, previous)).toEqual({
+			metrics: {
+				layoutWidthDip: 600,
+				layoutHeightDip: 384,
+				backingWidth: 1200,
+				backingHeight: 768
+			},
+			backingChanged: true
+		});
+	});
 
-  it('rejects non-renderable surface input', () => {
-    expect(nextSurfaceMetrics(0, 384, 2, null)).toBeNull();
-    expect(nextSurfaceMetrics(512, 384, 0, null)).toBeNull();
-  });
+	it('rejects non-renderable surface input', () => {
+		expect(nextSurfaceMetrics(0, 384, 2, null)).toBeNull();
+		expect(nextSurfaceMetrics(512, 384, 0, null)).toBeNull();
+	});
 });
 ```
 
@@ -253,33 +253,33 @@ In `boardViewport.ts`, add:
 
 ```ts
 export interface NextSurfaceMetrics {
-  metrics: CanvasSurfaceMetrics;
-  backingChanged: boolean;
+	metrics: CanvasSurfaceMetrics;
+	backingChanged: boolean;
 }
 
 export function nextSurfaceMetrics(
-  layoutWidthDip: number,
-  layoutHeightDip: number,
-  density: number,
-  previous: CanvasSurfaceMetrics | null
+	layoutWidthDip: number,
+	layoutHeightDip: number,
+	density: number,
+	previous: CanvasSurfaceMetrics | null
 ): NextSurfaceMetrics | null {
-  const backing = backingSizeFromLayout(layoutWidthDip, layoutHeightDip, density);
-  if (!backing) return null;
+	const backing = backingSizeFromLayout(layoutWidthDip, layoutHeightDip, density);
+	if (!backing) return null;
 
-  const metrics: CanvasSurfaceMetrics = {
-    layoutWidthDip,
-    layoutHeightDip,
-    backingWidth: Math.round(backing.width),
-    backingHeight: Math.round(backing.height)
-  };
+	const metrics: CanvasSurfaceMetrics = {
+		layoutWidthDip,
+		layoutHeightDip,
+		backingWidth: Math.round(backing.width),
+		backingHeight: Math.round(backing.height)
+	};
 
-  return {
-    metrics,
-    backingChanged:
-      previous !== null &&
-      (previous.backingWidth !== metrics.backingWidth ||
-        previous.backingHeight !== metrics.backingHeight)
-  };
+	return {
+		metrics,
+		backingChanged:
+			previous !== null &&
+			(previous.backingWidth !== metrics.backingWidth ||
+				previous.backingHeight !== metrics.backingHeight)
+	};
 }
 ```
 
@@ -291,31 +291,31 @@ Add one test to `boardViewport.test.ts`:
 
 ```ts
 it('keeps persisted pan intent while a narrower aspect clamps only the render projection', () => {
-  const viewport = { zoom: 2, panX: 0, panY: 1 };
-  const puzzle = { gridCols: 4, gridRows: 3, viewport };
+	const viewport = { zoom: 2, panX: 0, panY: 1 };
+	const puzzle = { gridCols: 4, gridRows: 3, viewport };
 
-  const landscape = createBoardTransform({
-    ...puzzle,
-    canvasWidth: 1000,
-    canvasHeight: 700
-  });
-  const portrait = createBoardTransform({
-    ...puzzle,
-    canvasWidth: 700,
-    canvasHeight: 1000
-  });
-  const landscapeAgain = createBoardTransform({
-    ...puzzle,
-    canvasWidth: 1000,
-    canvasHeight: 700
-  });
+	const landscape = createBoardTransform({
+		...puzzle,
+		canvasWidth: 1000,
+		canvasHeight: 700
+	});
+	const portrait = createBoardTransform({
+		...puzzle,
+		canvasWidth: 700,
+		canvasHeight: 1000
+	});
+	const landscapeAgain = createBoardTransform({
+		...puzzle,
+		canvasWidth: 1000,
+		canvasHeight: 700
+	});
 
-  expect(landscape.viewport).toEqual(viewport);
-  expect(portrait.viewport?.zoom).toBe(2);
-  expect(portrait.viewport?.panX).toBe(0);
-  expect(portrait.viewport?.panY).toBeCloseTo(1 / 7);
-  expect(viewport).toEqual({ zoom: 2, panX: 0, panY: 1 });
-  expect(landscapeAgain.viewport).toEqual(viewport);
+	expect(landscape.viewport).toEqual(viewport);
+	expect(portrait.viewport?.zoom).toBe(2);
+	expect(portrait.viewport?.panX).toBe(0);
+	expect(portrait.viewport?.panY).toBeCloseTo(1 / 7);
+	expect(viewport).toEqual({ zoom: 2, panX: 0, panY: 1 });
+	expect(landscapeAgain.viewport).toEqual(viewport);
 });
 ```
 
@@ -346,10 +346,12 @@ git commit -m "test(mobile): pin adaptive surface contracts"
 ### Task 2A: Prove one-tree runtime reflow before building portrait polish
 
 **Files:**
+
 - Modify: `apps/mobile/App_Resources/iOS/Info.plist`
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
 
 **Interfaces:**
+
 - Consumes: `DEFAULT_GAMEPLAY_LAYOUT`, `createGameplayLayout()` from Task 1.
 - Produces: one mounted Canvas/tray tree moving between right-panel landscape and bottom-panel portrait.
 - Does not add the drawer affordance or resize-cancellation code yet.
@@ -361,12 +363,13 @@ In `UISupportedInterfaceOrientations~ipad`, use exactly:
 ```xml
 <array>
   <string>UIInterfaceOrientationPortrait</string>
+  <string>UIInterfaceOrientationPortraitUpsideDown</string>
   <string>UIInterfaceOrientationLandscapeLeft</string>
   <string>UIInterfaceOrientationLandscapeRight</string>
 </array>
 ```
 
-Do not add upside-down portrait and do not alter the existing phone orientation array.
+Declare all four iPad orientations so the app remains eligible for Split View / Slide Over multitasking (no `UIRequiresFullScreen` opt-out), which is what makes the outer-page window-size adaptivity reachable. Upside-down portrait reuses the portrait layout because the grid is dimension-driven, so it needs no separate UX. Do not alter the existing phone orientation array.
 
 - [ ] **Step 2: Seed one safe layout and measure the outer page grid**
 
@@ -374,10 +377,7 @@ In `Gameplay.svelte`, extend the NativeScript import and add the layout helper i
 
 ```ts
 import { Application, Screen } from '@nativescript/core';
-import {
-  DEFAULT_GAMEPLAY_LAYOUT,
-  createGameplayLayout
-} from './gameplayLayout';
+import { DEFAULT_GAMEPLAY_LAYOUT, createGameplayLayout } from './gameplayLayout';
 ```
 
 Add component state:
@@ -387,20 +387,20 @@ let portraitTrayExpanded = false;
 let pageWidthDip = Screen.mainScreen.widthDIPs;
 let pageHeightDip = Screen.mainScreen.heightDIPs;
 let gameplayLayout =
-  createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded) ??
-  DEFAULT_GAMEPLAY_LAYOUT;
+	createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded) ??
+	DEFAULT_GAMEPLAY_LAYOUT;
 
 function onGameplayLayoutChanged(args: any): void {
-  const size = args.object?.getActualSize?.();
-  if (!size || size.width <= 0 || size.height <= 0) return;
-  if (size.width === pageWidthDip && size.height === pageHeightDip) return;
+	const size = args.object?.getActualSize?.();
+	if (!size || size.width <= 0 || size.height <= 0) return;
+	if (size.width === pageWidthDip && size.height === pageHeightDip) return;
 
-  const next = createGameplayLayout(size.width, size.height, portraitTrayExpanded);
-  if (!next) return;
+	const next = createGameplayLayout(size.width, size.height, portraitTrayExpanded);
+	if (!next) return;
 
-  pageWidthDip = size.width;
-  pageHeightDip = size.height;
-  gameplayLayout = next;
+	pageWidthDip = size.width;
+	pageHeightDip = size.height;
+	gameplayLayout = next;
 }
 ```
 
@@ -425,41 +425,37 @@ Keep the existing inner `rows="auto,*"` toolbar/content structure.
 Replace the fixed `columns="*,320"` content grid with:
 
 ```svelte
-<gridLayout
-  row={1}
-  rows={gameplayLayout.rows}
-  columns={gameplayLayout.columns}
->
-  <gridLayout row={0} col={0}>
-    <PuzzleCanvas
-      bind:this={puzzleCanvas}
-      {sessionState}
-      piecePaths={launch.install.piecePaths}
-      referencePath={launch.install.referencePath}
-      referenceMode={sessionState.activeReferenceMode}
-      {hintTarget}
-      {placementFeedback}
-      onAttemptPlacement={attemptPlacement}
-      onViewportCommit={commitViewport}
-    />
-  </gridLayout>
+<gridLayout row={1} rows={gameplayLayout.rows} columns={gameplayLayout.columns}>
+	<gridLayout row={0} col={0}>
+		<PuzzleCanvas
+			bind:this={puzzleCanvas}
+			{sessionState}
+			piecePaths={launch.install.piecePaths}
+			referencePath={launch.install.referencePath}
+			referenceMode={sessionState.activeReferenceMode}
+			{hintTarget}
+			{placementFeedback}
+			onAttemptPlacement={attemptPlacement}
+			onViewportCommit={commitViewport}
+		/>
+	</gridLayout>
 
-  <gridLayout row={gameplayLayout.trayRow} col={gameplayLayout.trayColumn}>
-    <PuzzleTray
-      {sessionState}
-      pieces={spec.pieces}
-      piecePaths={launch.install.piecePaths}
-      {hintPieceId}
-      onSelectPiece={selectPiece}
-      onPieceDragStart={startPieceDrag}
-      onPieceDragMove={movePieceDrag}
-      onPieceDragEnd={endPieceDrag}
-      onPieceDragCancel={cancelPieceDrag}
-      onSetFilter={setTrayFilter}
-      onShuffle={shuffleTray}
-      onRotateSelected={rotateSelected}
-    />
-  </gridLayout>
+	<gridLayout row={gameplayLayout.trayRow} col={gameplayLayout.trayColumn}>
+		<PuzzleTray
+			{sessionState}
+			pieces={spec.pieces}
+			piecePaths={launch.install.piecePaths}
+			{hintPieceId}
+			onSelectPiece={selectPiece}
+			onPieceDragStart={startPieceDrag}
+			onPieceDragMove={movePieceDrag}
+			onPieceDragEnd={endPieceDrag}
+			onPieceDragCancel={cancelPieceDrag}
+			onSetFilter={setTrayFilter}
+			onShuffle={shuffleTray}
+			onRotateSelected={rotateSelected}
+		/>
+	</gridLayout>
 </gridLayout>
 ```
 
@@ -507,11 +503,13 @@ git commit -m "feat(mobile): adapt gameplay grid for portrait"
 ### Task 2B: Cancel stale gesture state only on real resize
 
 **Files:**
+
 - Modify: `apps/mobile/app/gameplay/PuzzleCanvas.svelte`
 - Modify: `apps/mobile/app/gameplay/PuzzleTray.svelte`
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
 
 **Interfaces:**
+
 - Consumes: `nextSurfaceMetrics()` from Task 1.
 - Produces: `PuzzleTray.cancelActiveDrag(): void`.
 - Preserves: no viewport commit on resize, existing screen-DIP drop path, existing native cancel semantics.
@@ -522,10 +520,10 @@ In `PuzzleCanvas.svelte`, replace the duplicated run-change reset body with:
 
 ```ts
 function resetPointerGestureWithoutCommit(): void {
-  gesture = null;
-  transientViewport = undefined;
-  lastPointerPoints = [null, null];
-  activePointerCount = 0;
+	gesture = null;
+	transientViewport = undefined;
+	lastPointerPoints = [null, null];
+	activePointerCount = 0;
 }
 ```
 
@@ -533,8 +531,8 @@ Then keep the existing run-change behavior as:
 
 ```ts
 $: if (sessionState && sessionState.runId !== lastRunId) {
-  resetPointerGestureWithoutCommit();
-  lastRunId = sessionState.runId;
+	resetPointerGestureWithoutCommit();
+	lastRunId = sessionState.runId;
 }
 ```
 
@@ -548,33 +546,33 @@ Replace the local `backingSizeFromLayout`/rounding block in `syncSurface()` with
 
 ```ts
 function syncSurface(args: any): void {
-  const view = args.object ?? canvas;
-  const size = view?.getActualSize?.();
-  const density = Screen.mainScreen.scale || 1;
-  if (!size) return;
+	const view = args.object ?? canvas;
+	const size = view?.getActualSize?.();
+	const density = Screen.mainScreen.scale || 1;
+	if (!size) return;
 
-  const next = nextSurfaceMetrics(size.width, size.height, density, surfaceMetrics);
-  if (!next) return;
+	const next = nextSurfaceMetrics(size.width, size.height, density, surfaceMetrics);
+	if (!next) return;
 
-  if (next.backingChanged) {
-    resetPointerGestureWithoutCommit();
-  }
+	if (next.backingChanged) {
+		resetPointerGestureWithoutCommit();
+	}
 
-  canvas.width = next.metrics.backingWidth;
-  canvas.height = next.metrics.backingHeight;
-  surfaceMetrics = next.metrics;
+	canvas.width = next.metrics.backingWidth;
+	canvas.height = next.metrics.backingHeight;
+	surfaceMetrics = next.metrics;
 
-  rebuildTransform(next.backingChanged ? sessionState.viewport : effectiveViewport);
+	rebuildTransform(next.backingChanged ? sessionState.viewport : effectiveViewport);
 
-  if (!firstPaintScheduled) {
-    firstPaintScheduled = true;
-    setTimeout(() => {
-      surfaceReady = true;
-      draw();
-    }, 0);
-  } else if (surfaceReady) {
-    draw();
-  }
+	if (!firstPaintScheduled) {
+		firstPaintScheduled = true;
+		setTimeout(() => {
+			surfaceReady = true;
+			draw();
+		}, 0);
+	} else if (surfaceReady) {
+		draw();
+	}
 }
 ```
 
@@ -588,9 +586,9 @@ In `PuzzleTray.svelte`, add:
 
 ```ts
 export function cancelActiveDrag(): void {
-  if (!dragArmed) return;
-  dragArmed = false;
-  onPieceDragCancel();
+	if (!dragArmed) return;
+	dragArmed = false;
+	onPieceDragCancel();
 }
 ```
 
@@ -613,27 +611,24 @@ let puzzleTray: any = null;
 ```
 
 ```svelte
-<PuzzleTray
-  bind:this={puzzleTray}
-  ...
-/>
+<PuzzleTray bind:this={puzzleTray} ... />
 ```
 
 Update `onGameplayLayoutChanged` so it cancels the local drag before applying a real new page size:
 
 ```ts
 function onGameplayLayoutChanged(args: any): void {
-  const size = args.object?.getActualSize?.();
-  if (!size || size.width <= 0 || size.height <= 0) return;
-  if (size.width === pageWidthDip && size.height === pageHeightDip) return;
+	const size = args.object?.getActualSize?.();
+	if (!size || size.width <= 0 || size.height <= 0) return;
+	if (size.width === pageWidthDip && size.height === pageHeightDip) return;
 
-  const next = createGameplayLayout(size.width, size.height, portraitTrayExpanded);
-  if (!next) return;
+	const next = createGameplayLayout(size.width, size.height, portraitTrayExpanded);
+	if (!next) return;
 
-  puzzleTray?.cancelActiveDrag?.();
-  pageWidthDip = size.width;
-  pageHeightDip = size.height;
-  gameplayLayout = next;
+	puzzleTray?.cancelActiveDrag?.();
+	pageWidthDip = size.width;
+	pageHeightDip = size.height;
+	gameplayLayout = next;
 }
 ```
 
@@ -675,10 +670,12 @@ git commit -m "fix(mobile): reset gestures on gameplay resize"
 ### Task 2C: Add the portrait bottom drawer and finish acceptance
 
 **Files:**
+
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
 - Modify: `apps/mobile/app/gameplay/PuzzleTray.svelte`
 
 **Interfaces:**
+
 - Reuses `GameplayLayout.mode`; derives portrait/drawer behavior from `mode === 'portrait'`.
 - Adds presentation props: `drawerMode`, `drawerExpanded`, `onToggleDrawer`.
 - Does not change filters, order, tile size, long-press drag ownership, toolbar, or persistence.
@@ -689,9 +686,9 @@ In `Gameplay.svelte`:
 
 ```ts
 function togglePortraitTray(): void {
-  portraitTrayExpanded = !portraitTrayExpanded;
-  const next = createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded);
-  if (next) gameplayLayout = next;
+	portraitTrayExpanded = !portraitTrayExpanded;
+	const next = createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded);
+	if (next) gameplayLayout = next;
 }
 ```
 
@@ -727,28 +724,28 @@ Replace only the header GridLayout with:
 
 ```svelte
 <gridLayout row={0} class="tray-header" columns={headerColumns}>
-  <label
-    col={0}
-    text={`REMAINING ${remainingCount}`}
-    class="tray-count"
-    verticalAlignment="middle"
-  />
-  {#if drawerMode}
-    <button
-      col={2}
-      text={drawerExpanded ? 'LESS PIECES' : 'MORE PIECES'}
-      class="tray-action"
-      on:tap={onToggleDrawer}
-    />
-  {/if}
-  <button col={shuffleColumn} text="SHUFFLE" class="tray-action" on:tap={onShuffle} />
-  <button
-    col={rotateColumn}
-    text="ROTATE"
-    class={canRotate ? 'tray-action' : 'tray-action-disabled'}
-    isEnabled={canRotate}
-    on:tap={onRotateSelected}
-  />
+	<label
+		col={0}
+		text={`REMAINING ${remainingCount}`}
+		class="tray-count"
+		verticalAlignment="middle"
+	/>
+	{#if drawerMode}
+		<button
+			col={2}
+			text={drawerExpanded ? 'LESS PIECES' : 'MORE PIECES'}
+			class="tray-action"
+			on:tap={onToggleDrawer}
+		/>
+	{/if}
+	<button col={shuffleColumn} text="SHUFFLE" class="tray-action" on:tap={onShuffle} />
+	<button
+		col={rotateColumn}
+		text="ROTATE"
+		class={canRotate ? 'tray-action' : 'tray-action-disabled'}
+		isEnabled={canRotate}
+		on:tap={onRotateSelected}
+	/>
 </gridLayout>
 ```
 
@@ -823,7 +820,7 @@ Before marking HPA-46 ready for review:
 - [ ] `sessionState.viewport` remains persisted intent; render-clamped `BoardTransform.viewport` is never written back on relayout.
 - [ ] No orientation-specific viewport/schema field exists.
 - [ ] Existing toolbar remains unchanged unless native evidence forced a separately reviewed single-tree reflow.
-- [ ] iPad plist supports portrait + two landscape orientations, not upside-down portrait.
+- [ ] iPad plist declares all four orientations (portrait, upside-down portrait, both landscapes) to remain multitasking-eligible; no `UIRequiresFullScreen` opt-out.
 - [ ] `bun run --cwd apps/mobile test:unit` passes.
 - [ ] NativeScript iOS build/smoke covers one-tree reflow, portrait toolbar reachability, drawer, pinch after rotate, portrait drag placement, and background/foreground.
 - [ ] PR body records native evidence and any measured deviation from `220`/`360` tray heights.
