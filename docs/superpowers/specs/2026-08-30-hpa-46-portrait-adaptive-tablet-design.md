@@ -82,19 +82,19 @@ Gameplay.svelte
 
 ### Ownership rules
 
-| Concern | Owner |
-| --- | --- |
-| Gameplay rules/state/run identity | existing `PuzzleSession` |
-| Session persistence | existing game-core codec + mobile file adapter |
-| Canonical puzzle coordinates | existing session spec and placement rules |
-| Fit/zoom/pan/cell projection | existing `boardViewport.ts` |
-| Layout DIPs -> Canvas backing metrics and real-size-change detection | `boardViewport.ts` |
-| Native Canvas redraw/gesture wiring | existing `PuzzleCanvas.svelte` |
-| Landscape vs portrait placement | new feature-local `gameplayLayout.ts` |
-| Drawer expanded/collapsed state | ephemeral `Gameplay.svelte` state |
-| Portrait tray affordance | `PuzzleTray.svelte` |
-| Toolbar | existing `GameplayToolbar.svelte`; change only if smoke proves clipping |
-| iPad supported orientations | `App_Resources/iOS/Info.plist` |
+| Concern                                                              | Owner                                                                   |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Gameplay rules/state/run identity                                    | existing `PuzzleSession`                                                |
+| Session persistence                                                  | existing game-core codec + mobile file adapter                          |
+| Canonical puzzle coordinates                                         | existing session spec and placement rules                               |
+| Fit/zoom/pan/cell projection                                         | existing `boardViewport.ts`                                             |
+| Layout DIPs -> Canvas backing metrics and real-size-change detection | `boardViewport.ts`                                                      |
+| Native Canvas redraw/gesture wiring                                  | existing `PuzzleCanvas.svelte`                                          |
+| Landscape vs portrait placement                                      | new feature-local `gameplayLayout.ts`                                   |
+| Drawer expanded/collapsed state                                      | ephemeral `Gameplay.svelte` state                                       |
+| Portrait tray affordance                                             | `PuzzleTray.svelte`                                                     |
+| Toolbar                                                              | existing `GameplayToolbar.svelte`; change only if smoke proves clipping |
+| iPad supported orientations                                          | `App_Resources/iOS/Info.plist`                                          |
 
 No orientation state is written to `PuzzleSession` or persisted files.
 
@@ -112,11 +112,11 @@ The helper returns only distinct state:
 type GameplayLayoutMode = 'landscape' | 'portrait';
 
 interface GameplayLayout {
-  mode: GameplayLayoutMode;
-  rows: string;
-  columns: string;
-  trayRow: number;
-  trayColumn: number;
+	mode: GameplayLayoutMode;
+	rows: string;
+	columns: string;
+	trayRow: number;
+	trayColumn: number;
 }
 ```
 
@@ -276,9 +276,9 @@ No portrait-specific drop math is needed.
 
 ## iOS orientation metadata
 
-HPA-46 adds `UIInterfaceOrientationPortrait` to `UISupportedInterfaceOrientations~ipad` and keeps the two landscape orientations.
+HPA-46 declares all four iPad orientations in `UISupportedInterfaceOrientations~ipad`: portrait, upside-down portrait, and both landscapes. The plist does not set `UIRequiresFullScreen`, so the app is eligible for iPad multitasking (Split View / Slide Over), which is what makes the outer-page window-size adaptivity in this design reachable at all. Omitting `UIInterfaceOrientationPortraitUpsideDown` would opt the app out of multitasking and contradict the adaptive-window premise.
 
-Do not add upside-down portrait. Leave the existing non-iPad orientation list alone; phone-sized UX remains out of scope.
+Upside-down portrait needs no separate UX: the gameplay grid is driven by measured outer-page width/height, and upside-down portrait has the same dimensions as portrait, so it reuses the portrait layout. Leave the existing non-iPad orientation list alone; phone-sized UX remains out of scope.
 
 ## Testing strategy
 
