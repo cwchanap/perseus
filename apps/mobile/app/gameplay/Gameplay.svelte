@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { Application, Screen } from '@nativescript/core';
+	import { Application, GridLayout, Screen } from '@nativescript/core';
 	import {
 		createDefaultClock,
 		createPuzzleSession,
@@ -35,7 +35,11 @@
 		suspendSession
 	} from './gameplaySessionPolicy';
 	import type { BoardCell } from './boardViewModel';
-	import { DEFAULT_GAMEPLAY_LAYOUT, createGameplayLayout } from './gameplayLayout';
+	import {
+		DEFAULT_GAMEPLAY_LAYOUT,
+		createGameplayLayout,
+		type GameplayLayout
+	} from './gameplayLayout';
 
 	export let launch: GameplayLaunch;
 	export let storage: SessionStorageAdapter;
@@ -104,6 +108,25 @@
 		createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded) ??
 		DEFAULT_GAMEPLAY_LAYOUT;
 
+	// The content grid and tray wrapper are mounted once with the landscape
+	// default geometry; orientation/drawer changes update the same native
+	// GridLayout views imperatively instead of through reactive row/col/rows/
+	// columns attributes. The Task 2A native smoke proved reactive child-
+	// placement re-application drops the Canvas/tray from the layout on
+	// portrait rotation, so the plan's stop-condition remedy is applied here:
+	// the smallest imperative GridLayout property update on the same mounted
+	// views, no duplicate portrait markup.
+	function applyGameplayLayout(layout: GameplayLayout): void {
+		const grid = contentGrid?.nativeView;
+		const tray = trayWrapper?.nativeView;
+		if (!grid || !tray) return;
+		grid.rows = layout.rows;
+		grid.columns = layout.columns;
+		GridLayout.setRow(tray, layout.trayRow);
+		GridLayout.setColumn(tray, layout.trayColumn);
+		grid.requestLayout();
+	}
+
 	function onGameplayLayoutChanged(args: any): void {
 		const size = args.object?.getActualSize?.();
 		if (!size || size.width <= 0 || size.height <= 0) return;
@@ -116,6 +139,7 @@
 		pageWidthDip = size.width;
 		pageHeightDip = size.height;
 		gameplayLayout = next;
+		applyGameplayLayout(next);
 	}
 
 	// Ephemeral drawer state: recomputes the layout from the last valid page
@@ -123,7 +147,10 @@
 	function togglePortraitTray(): void {
 		portraitTrayExpanded = !portraitTrayExpanded;
 		const next = createGameplayLayout(pageWidthDip, pageHeightDip, portraitTrayExpanded);
-		if (next) gameplayLayout = next;
+		if (next) {
+			gameplayLayout = next;
+			applyGameplayLayout(next);
+		}
 	}
 
 	function saveCurrentSnapshot(): void {
@@ -226,6 +253,12 @@
 		Application.on(Application.suspendEvent, onSuspend);
 		Application.on(Application.resumeEvent, onResume);
 		Application.on(Application.exitEvent, saveCurrentSnapshot);
+
+		// The content grid is mounted with the landscape default geometry; sync
+		// the native GridLayout to the seed layout so a device that starts in
+		// portrait (or whose seed differs from the default) is correct before
+		// the first layoutChanged event, which the equal-size guard would skip.
+		applyGameplayLayout(gameplayLayout);
 
 		return () => {
 			Application.off(Application.suspendEvent, onSuspend);
@@ -371,6 +404,8 @@
 	let page: any = null;
 	let puzzleCanvas: any = null;
 	let puzzleTray: any = null;
+	let contentGrid: any = null;
+	let trayWrapper: any = null;
 
 	function startPieceDrag(pieceId: number, screenX: number, screenY: number): void {
 		activePieceDrag = { pieceId, screenX, screenY };
@@ -453,7 +488,12 @@
 				onDiscard={requestDiscard}
 				onSetReferenceMode={setReferenceMode}
 			/>
-			<gridLayout row={1} rows={gameplayLayout.rows} columns={gameplayLayout.columns}>
+			<gridLayout
+				bind:this={contentGrid}
+				row={1}
+				rows={DEFAULT_GAMEPLAY_LAYOUT.rows}
+				columns={DEFAULT_GAMEPLAY_LAYOUT.columns}
+			>
 				<gridLayout row={0} col={0}>
 					<PuzzleCanvas
 						bind:this={puzzleCanvas}
@@ -467,7 +507,7 @@
 						onViewportCommit={commitViewport}
 					/>
 				</gridLayout>
-				<gridLayout row={gameplayLayout.trayRow} col={gameplayLayout.trayColumn}>
+				<gridLayout bind:this={trayWrapper} row={0} col={1}>
 					<PuzzleTray
 						bind:this={puzzleTray}
 						{sessionState}
