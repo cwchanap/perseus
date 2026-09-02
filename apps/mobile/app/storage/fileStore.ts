@@ -1,19 +1,20 @@
 import type { SessionKeyValueStore } from '@perseus/game-core';
 
-export interface SessionFileOps {
+export interface FileOps {
 	readText(path: string): string | null;
 	writeText(path: string, content: string): void;
 	replace(fromPath: string, toPath: string): void;
 	remove(path: string): void;
+	list(rootPath: string): string[];
 }
 
 function joinPath(rootPath: string, fileName: string): string {
 	return rootPath ? `${rootPath.replace(/\/+$/, '')}/${fileName}` : fileName;
 }
 
-export function createFileSessionKeyValueStore(options: {
+export function createFileKeyValueStore(options: {
 	rootPath: string;
-	fileOps: SessionFileOps;
+	fileOps: FileOps;
 }): SessionKeyValueStore {
 	const canonical = (id: string) => joinPath(options.rootPath, `${id}.json`);
 

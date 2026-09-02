@@ -16,8 +16,8 @@
 	import { nativeGoogleIdTokenProvider } from './account/nativeGoogleAuth';
 	import { nativeMobileSessionStore } from './account/nativeSessionStore';
 	import Gameplay from './gameplay/Gameplay.svelte';
-	import { createNativeSessionFileOps } from './gameplay/sessionFiles';
-	import { createFileSessionKeyValueStore } from './gameplay/sessionStore';
+	import { createNativeFileOps } from './storage/nativeFileOps';
+	import { createFileKeyValueStore } from './storage/fileStore';
 	import Library from './library/Library.svelte';
 	import {
 		createDownloadStore,
@@ -46,9 +46,9 @@
 	}
 
 	const sessionStorage: SessionStorageAdapter = createSessionStorageAdapter({
-		store: createFileSessionKeyValueStore({
+		store: createFileKeyValueStore({
 			rootPath: sessionsRoot,
-			fileOps: createNativeSessionFileOps()
+			fileOps: createNativeFileOps()
 		})
 	});
 

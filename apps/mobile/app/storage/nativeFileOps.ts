@@ -1,5 +1,5 @@
-import { File } from '@nativescript/core';
-import type { SessionFileOps } from './sessionStore';
+import { File, Folder } from '@nativescript/core';
+import type { FileOps } from './fileStore';
 
 function fileName(path: string): string {
 	return path.slice(path.lastIndexOf('/') + 1);
@@ -25,7 +25,7 @@ function atomicReplace(fromPath: string, toPath: string): void {
 	}
 }
 
-export function createNativeSessionFileOps(): SessionFileOps {
+export function createNativeFileOps(): FileOps {
 	return {
 		readText(path) {
 			if (!File.exists(path)) return null;
@@ -37,6 +37,12 @@ export function createNativeSessionFileOps(): SessionFileOps {
 		replace: atomicReplace,
 		remove(path) {
 			if (File.exists(path)) File.fromPath(path).removeSync();
+		},
+		list(rootPath) {
+			if (!Folder.exists(rootPath)) return [];
+			return (Folder.fromPath(rootPath).getEntitiesSync() ?? [])
+				.filter((entity) => File.exists(entity.path))
+				.map((entity) => entity.path.slice(entity.path.lastIndexOf('/') + 1));
 		}
 	};
 }
