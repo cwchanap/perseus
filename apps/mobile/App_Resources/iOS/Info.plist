@@ -20,18 +20,18 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- HPA-4: operator must replace placeholder OAuth client IDs before the native gate -->
+	<!-- HPA-4: GIDServerClientID placeholder remains — operator must substitute the existing web/server client ID deployed as API GOOGLE_CLIENT_ID -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.REPLACE_WITH_IOS_OAUTH_CLIENT_ID</string>
+				<string>com.googleusercontent.apps.333977657035-9cefoifngbgnvojau6ofm8euj6399b5b</string>
 			</array>
 		</dict>
 	</array>
 	<key>GIDClientID</key>
-	<string>REPLACE_WITH_IOS_OAUTH_CLIENT_ID.apps.googleusercontent.com</string>
+	<string>333977657035-9cefoifngbgnvojau6ofm8euj6399b5b.apps.googleusercontent.com</string>
 	<key>GIDServerClientID</key>
 	<string>REPLACE_WITH_WEB_SERVER_CLIENT_ID.apps.googleusercontent.com</string>
 	<key>LSRequiresIPhoneOS</key>
