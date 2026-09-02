@@ -640,6 +640,17 @@ describe('Worker player auth routes', () => {
 		expect(playerAuth.getPlayerSession).toHaveBeenCalledWith(kv, 'player-session-token');
 	});
 
+	it('returns authenticated user for a valid bearer token', async () => {
+		const res = await auth.fetch(
+			request('/session', { headers: { Authorization: 'Bearer player-session-token' } }),
+			env
+		);
+
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(await res.json()).toEqual({ authenticated: true, user: player });
+		expect(playerAuth.getPlayerSession).toHaveBeenCalledWith(kv, 'player-session-token');
+	});
+
 	it('returns unauthenticated without clearing cookie on KV miss', async () => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(null);
 
@@ -659,6 +670,23 @@ describe('Worker player auth routes', () => {
 			request('/logout', {
 				method: 'POST',
 				headers: { Cookie: 'perseus_player_session=player-session-token' }
+			}),
+			env
+		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(await res.json()).toEqual({ success: true });
+		expect(playerAuth.revokePlayerSession).toHaveBeenCalledWith(kv, 'player-session-token');
+		expect(setCookie).toContain('perseus_player_session=');
+		expect(setCookie).toContain('Max-Age=0');
+	});
+
+	it('revokes a bearer token on logout and still clears the cookie', async () => {
+		const res = await auth.fetch(
+			request('/logout', {
+				method: 'POST',
+				headers: { Authorization: 'Bearer player-session-token' }
 			}),
 			env
 		);

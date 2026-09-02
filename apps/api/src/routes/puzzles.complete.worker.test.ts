@@ -491,6 +491,33 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(res.status).toBe(401);
 	});
 
+	it('accepts bearer credentials with the same completion result as cookie auth', async () => {
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer native-session-token',
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify(VERSIONED_CASES[0].request)
+			},
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(vi.mocked(playerAuth.getPlayerSession).mock.lastCall?.[1]).toBe('native-session-token');
+		expect(recordVersionedCompletion).toHaveBeenCalledWith(
+			workerDb,
+			completionWrites,
+			'p1',
+			PUZZLE_ID,
+			VERSIONED_CASES[0].request,
+			{ familyId: FAMILY_ID, difficulty: 'easy' }
+		);
+	});
+
 	it.each(VERSIONED_CASES)('records $name without rewriting fields', async ({ request }) => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
