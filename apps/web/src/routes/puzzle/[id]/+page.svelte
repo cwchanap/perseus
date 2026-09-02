@@ -39,6 +39,7 @@
 	} from '$lib/services/gameplay/session/store';
 	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
 	import {
+		completionFailureCodeFromHttpStatus,
 		completionRequestFromSeal,
 		createDefaultClock,
 		isFailureRetryable,
@@ -399,33 +400,10 @@
 		code: CompletionFailureCode;
 		retryable: boolean;
 	} {
-		let code: CompletionFailureCode;
-		if (err instanceof ApiError) {
-			switch (err.status) {
-				case 400:
-					code = 'bad_request';
-					break;
-				case 401:
-					code = 'unauthorized';
-					break;
-				case 404:
-					code = 'not_found';
-					break;
-				case 409:
-					code = 'run_id_conflict';
-					break;
-				case 429:
-					code = 'completion_quota_exceeded';
-					break;
-				default:
-					code = 'internal_error';
-					break;
-			}
-		} else {
-			code = 'network_error';
-		}
-		// Derive retryable from the shared policy so the persisted flag stays
-		// consistent with the persistence validator's isFailureRetryable.
+		const code =
+			err instanceof ApiError ? completionFailureCodeFromHttpStatus(err.status) : 'network_error';
+		// Derive code + retryable from the shared policy so the persisted flag
+		// stays consistent with the persistence validator and the mobile drain.
 		return { code, retryable: isFailureRetryable(code) };
 	}
 

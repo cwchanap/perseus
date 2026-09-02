@@ -1,7 +1,13 @@
 // Tests for the portable current-schema PuzzleSession codec
 // (serializeSession / loadPersistedSession / isResumable / cross-field checks).
 import { describe, it, expect } from 'vitest';
-import { serializeSession, loadPersistedSession, isResumable } from './codec';
+import {
+	serializeSession,
+	loadPersistedSession,
+	isResumable,
+	completionFailureCodeFromHttpStatus,
+	isFailureRetryable
+} from './codec';
 import { context } from './codec.test-fixtures';
 import type {
 	PuzzleSessionState,
@@ -206,6 +212,29 @@ describe('isResumable sealed-active guard', () => {
 		)!;
 
 		expect(isResumable(snap)).toBe(false);
+	});
+});
+
+describe('completionFailureCodeFromHttpStatus', () => {
+	it('maps completion HTTP statuses to failure codes', () => {
+		expect(completionFailureCodeFromHttpStatus(400)).toBe('bad_request');
+		expect(completionFailureCodeFromHttpStatus(401)).toBe('unauthorized');
+		expect(completionFailureCodeFromHttpStatus(403)).toBe('bad_request');
+		expect(completionFailureCodeFromHttpStatus(404)).toBe('not_found');
+		expect(completionFailureCodeFromHttpStatus(408)).toBe('network_error');
+		expect(completionFailureCodeFromHttpStatus(409)).toBe('run_id_conflict');
+		expect(completionFailureCodeFromHttpStatus(429)).toBe('completion_quota_exceeded');
+		expect(completionFailureCodeFromHttpStatus(500)).toBe('internal_error');
+		expect(completionFailureCodeFromHttpStatus(503)).toBe('internal_error');
+	});
+
+	it('yields retryable codes for 401/408/5xx and terminal codes for 400/403/404/409/429', () => {
+		for (const status of [401, 408, 500, 502, 503]) {
+			expect(isFailureRetryable(completionFailureCodeFromHttpStatus(status))).toBe(true);
+		}
+		for (const status of [400, 403, 404, 409, 429]) {
+			expect(isFailureRetryable(completionFailureCodeFromHttpStatus(status))).toBe(false);
+		}
 	});
 });
 
