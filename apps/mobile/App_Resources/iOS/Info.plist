@@ -20,7 +20,6 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- HPA-4: GIDServerClientID placeholder remains — operator must substitute the existing web/server client ID deployed as API GOOGLE_CLIENT_ID -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -33,7 +32,7 @@
 	<key>GIDClientID</key>
 	<string>333977657035-9cefoifngbgnvojau6ofm8euj6399b5b.apps.googleusercontent.com</string>
 	<key>GIDServerClientID</key>
-	<string>REPLACE_WITH_WEB_SERVER_CLIENT_ID.apps.googleusercontent.com</string>
+	<string>333977657035-h7noo0ckva7vq65ig0ao058cqvp4b6hh.apps.googleusercontent.com</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
