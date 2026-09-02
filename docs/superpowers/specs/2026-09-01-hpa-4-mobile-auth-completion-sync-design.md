@@ -13,19 +13,21 @@ Signed-out download, play, resume, and completion remain fully local. Signing in
 
 ## Current Baseline
 
-The repository already owns almost all server semantics HPA-4 needs:
+The repository already owns almost all semantics HPA-4 needs:
 
 - `apps/api/src/services/player-auth.shared.ts` verifies Google ID tokens against `GOOGLE_CLIENT_ID`.
-- `apps/api/src/services/player-auth.worker.ts` owns the allowlist, player upsert, opaque player-session creation, validation, and revocation.
-- `apps/api/src/routes/auth.worker.ts` creates the same player session for browser Google OAuth and exposes `GET /api/auth/session` as a `200 PlayerSessionResponse` probe.
+- `apps/api/src/services/player-auth.worker.ts` owns the allowlist, player upsert, opaque player-session creation, validation, revocation, and its isolate-local grace cache.
+- `apps/api/src/routes/auth.worker.ts` creates that player session for browser Google OAuth and exposes `GET /api/auth/session` as a `200 PlayerSessionResponse` probe.
 - `apps/api/src/middleware/player-auth.worker.ts` and `optional-player-auth.worker.ts` currently read only the browser cookie.
 - `apps/api/src/routes/puzzles.complete.worker.ts` already owns the V2 completion write and immutable `runId` replay/conflict behavior.
 - `packages/game-core/src/session/codec.ts` already owns completion failure retryability through `isFailureRetryable()`.
 - `packages/game-core` already exposes `completionRequestFromSeal(seal)`.
 - mobile `Gameplay.svelte` already saves the completed session snapshot immediately when `completion_sealed` fires.
+- `apps/mobile/app/gameplay/sessionStore.ts` + `sessionFiles.ts` already form a generic JSON-by-ID filesystem layer with temp-write + atomic replacement; only directory listing is missing.
+- `apps/mobile/app/api/nativePuzzleHttp.ts` already owns the single NativeScript `Http.request` call site.
 - `apps/mobile/app/App.svelte` is already the composition root for mobile storage, API clients, Library, and Gameplay.
 
-HPA-4 extends these seams rather than creating another account, retry, or synchronization system.
+HPA-4 extends these seams rather than creating another account, retry, HTTP, filesystem, or synchronization system.
 
 ## Selected Architecture
 
@@ -73,11 +75,11 @@ The mobile app needs:
 
 - the iOS OAuth client ID;
 - that client's reversed URL scheme in `Info.plist`;
-- the existing Perseus web/server OAuth client ID as the Google Sign-In `serverClientId`.
+- the existing Perseus web/server OAuth client ID as Google Sign-In `serverClientId`.
 
-`@nativescript/google-signin` 2.1.1 does **not** require `GoogleService-Info.plist` when `configure()` receives an explicit `clientId`; its iOS implementation also accepts `serverClientId` directly. HPA-4 therefore does not create a Firebase project or add `GoogleService-Info.plist`.
+`@nativescript/google-signin` 2.1.1 accepts explicit `clientId` + `serverClientId`, so HPA-4 does not create a Firebase project or add `GoogleService-Info.plist`.
 
-Store the two non-secret client IDs in `Info.plist` as `GIDClientID` and `GIDServerClientID`. The native adapter reads those values and calls:
+Store the two non-secret client IDs in `Info.plist` as `GIDClientID` and `GIDServerClientID`. The native adapter reads them and calls:
 
 ```ts
 await GoogleSignin.configure({
@@ -86,14 +88,14 @@ await GoogleSignin.configure({
 });
 ```
 
-This makes both identities explicit. Google documents the server client ID as the ID-token audience, so the backend continues verifying against the existing `GOOGLE_CLIENT_ID`. If the native gate produces a different `aud`, fix Google configuration and stop; do not add a second backend audience.
+If the native gate produces an ID token the existing API rejects, fix Google configuration and stop. Do not add a second backend audience.
 
 ### 3. One canonical bearer-or-cookie player-session resolver
 
 Move credential extraction behind one function in `apps/api/src/middleware/player-auth.worker.ts`:
 
 - valid explicit `Authorization: Bearer <token>` -> bearer token;
-- any other explicit `Authorization` value -> authentication failure, with **no cookie fallback**;
+- any other explicit `Authorization` value -> authentication failure, with no cookie fallback;
 - no Authorization header -> existing `perseus_player_session` cookie.
 
 Both forms call the existing `getPlayerSession()` and produce the same `PlayerSessionRecord`.
@@ -105,7 +107,7 @@ Reuse this resolver from:
 - `GET /api/auth/session`;
 - `POST /api/auth/logout`.
 
-Keep `GET /api/auth/session` behavior unchanged: an invalid/expired session returns HTTP 200 `{ authenticated: false }`. Mobile parses the body with `isPlayerSessionResponse`; web keeps the same contract.
+Keep `GET /api/auth/session` behavior unchanged: invalid or temporarily unseen sessions return HTTP 200 `{ authenticated: false }`. Do not change web to a 401 contract.
 
 Do not add `/api/mobile/complete`. Bearer support automatically reaches the existing completion route.
 
@@ -134,6 +136,7 @@ interface PersistedMobileSession {
   token: string;
   expiresAt: number;
   user: PlayerUser;
+  consecutiveUnauthenticated: 0 | 1;
 }
 ```
 
@@ -142,27 +145,34 @@ Restore accepts only:
 - `version === 1`;
 - non-empty token;
 - finite future `expiresAt`;
-- `isPlayerUser(user)`.
+- `isPlayerUser(user)`;
+- `consecutiveUnauthenticated` equal to `0` or `1`.
 
 Invalid/expired secure data is cleared. There is no compatibility parser.
 
 The bearer token exists only in memory and `@nativescript/secure-storage`; never under `Documents/perseus` or `ApplicationSettings`.
 
-Library UI remains one small account strip: sign in, signed-in identity, sign out, and transient error text. No global account store, profile route, or provider abstraction.
+Library UI remains one small account strip: sign in, signed-in identity, sign out, and transient error/reconnecting text. No global account store, profile route, or provider abstraction.
 
-### 5. Session validation gates every drain
+The existing server session lifetime remains 30 days with no refresh path. When it expires, mobile signs in again; any pending completion stays bound to its original account until that same account signs in again.
 
-Use one `App.svelte` path for sign-in, foreground resume, and connectivity restoration:
+### 5. A single negative `/session` probe is not authoritative
+
+`auth.worker.ts` deliberately does not clear the browser cookie when `getPlayerSession()` misses KV, because a newly created session can be temporarily invisible on another Worker isolate. Mobile must preserve the same tolerance.
+
+Before any drain trigger:
 
 1. if there is no active local session, do nothing;
-2. call `GET /api/auth/session` with its bearer;
-3. valid `{ authenticated: false }` (or an explicit HTTP 401 auth failure) -> clear secure storage and drop in-memory account state; do not drain;
-4. valid `{ authenticated: true }` -> update the cached `PlayerUser` if needed, then drain pending completions;
-5. transport failure or server `5xx` -> retain the local credential and skip this drain pass.
+2. if local `expiresAt <= now`, clear it immediately without a request;
+3. call `GET /api/auth/session` with the bearer;
+4. `{ authenticated: true }` -> reset `consecutiveUnauthenticated` to `0`, refresh cached `PlayerUser`, then drain;
+5. first valid `{ authenticated: false }` -> persist `consecutiveUnauthenticated: 1`, keep the account credential/label, skip this drain pass;
+6. second consecutive valid `{ authenticated: false }` from a later trigger -> clear secure + in-memory account state and do not drain;
+7. transport failure or server `5xx` -> retain the credential and current counter, skip this pass.
 
-This prevents a dead bearer from becoming a permanent foreground/connectivity retry loop while preserving offline account labeling when the network itself is unavailable.
+Any successful authenticated probe resets the counter. Logout still clears immediately because it is an explicit user action.
 
-Logout remains local-first: attempt server revocation and Google sign-out, but always clear the secure Perseus credential. Downloads, puzzle sessions, and completion files are untouched.
+This avoids random sign-outs from one KV consistency miss without allowing a dead bearer to retry forever.
 
 ### 6. One completion file is both history and queue state
 
@@ -194,13 +204,13 @@ The `accountId` is frozen from the active account at completion time.
 - terminal failure -> update the same record to `terminal`;
 - retryable failure -> leave the same record `pending`.
 
-There is **no second `outbox/` directory or duplicate request file**. Drain lists `completions/`, validates records, filters `syncStatus === 'pending' && accountId === activeSession.user.id`, and sorts by `completedAt` then `runId`.
+There is no second outbox directory or duplicate request file. Drain lists `completions/`, validates records, filters `syncStatus === 'pending' && accountId === activeSession.user.id`, and sorts by `completedAt` then `runId`.
 
-This removes dual-write split-brain risk while keeping recovery trivial for the current scale.
+Do **not** add `attempts` or retry-exhaustion state in HPA-4. A fixed cap would convert a temporary API outage into permanent data loss after enough foreground events. This pre-1.0 project has no compatibility obligation, so the record can be replaced later if real usage proves retry metadata is needed.
 
 ### 7. Reuse the shipped completion-failure policy
 
-Do not invent a mobile HTTP-range retry policy. Extract the existing web status -> `CompletionFailureCode` mapping into `packages/game-core/src/session/codec.ts` beside `isFailureRetryable()`:
+Extract the current web status -> `CompletionFailureCode` mapping into `packages/game-core/src/session/codec.ts` beside `isFailureRetryable()`:
 
 ```ts
 export function completionFailureCodeFromHttpStatus(
@@ -210,20 +220,25 @@ export function completionFailureCodeFromHttpStatus(
 
 Both web and mobile call it.
 
-Expected completion dispositions are:
+Required mapping:
 
 | Wire | Failure code / disposition |
 | --- | --- |
 | 2xx | synced |
-| 401 | `unauthorized` -> auth required; stop pass |
+| 401 | `unauthorized` -> auth-required; stop pass |
 | 400 | `bad_request` -> terminal |
 | 404 | `not_found` -> terminal |
 | 409 | `run_id_conflict` -> terminal |
 | 429 | `completion_quota_exceeded` -> terminal |
-| 408 / 5xx / unknown server error | `internal_error` -> retryable; stop pass |
+| 408 | `network_error` -> retryable; stop pass |
+| other 4xx | `bad_request` -> terminal |
+| 5xx | `internal_error` -> retryable; stop pass |
 | transport rejection | `network_error` -> retryable; stop pass |
+| other unexpected non-2xx | `internal_error` -> retryable; stop pass |
 
-`isFailureRetryable()` remains the single retryability policy. In particular, completion HTTP 429 is the server's quota terminal, not a generic rate-limit retry.
+`isFailureRetryable()` remains the single retryability policy. In particular, 429 is the server's completion quota terminal, not a generic rate limit.
+
+Unknown 4xx is deliberately terminal so a configuration/client error cannot become permanent foreground retry work. Server/transport failures stay retryable because they may recover.
 
 ### 8. Completion file parsing reuses shared validators
 
@@ -236,30 +251,77 @@ A completion file is accepted only when the outer record is valid and:
 - `syncStatus` is one of the four current values;
 - `isRecordPuzzleCompletionV2(request, MAX_COMPLETION_TIME_SECONDS)` passes.
 
-Unknown/corrupt files are removed from the HPA-4 completion directory; no compatibility parser is added. The canonical sealed gameplay session remains independent.
+Unknown/corrupt current-format files are removed from the HPA-4 completion directory; no compatibility parser is added. The canonical sealed gameplay session remains independent.
 
-### 9. Retry remains sequential and active-app only
+### 9. Four explicit active-app drain triggers
 
-`App.svelte` owns one in-memory drain guard. After session validation, process only pending records owned by the active account, one at a time.
+`App.svelte` owns one in-memory drain guard. Every trigger first uses the session-validation policy above; only an authenticated probe may drain.
+
+Triggers are exactly:
+
+1. after successful sign-in;
+2. immediately after a signed-in completion record is durably written;
+3. foreground resume;
+4. connectivity transition from offline to connected.
+
+After validation, process only pending records owned by the active account, one at a time.
 
 - synced -> mark record synced and continue;
 - terminal -> mark record terminal and continue;
 - retryable -> keep pending and stop;
-- unauthorized -> keep pending, clear invalid account through the session-validation path, and stop.
-
-Triggers remain:
-
-- after sign-in;
-- foreground resume;
-- connectivity transition from offline to connected.
+- unauthorized completion response -> keep pending and feed an unauthenticated signal through the same two-strike account policy, then stop.
 
 No background task, daemon, timer, polling loop, push integration, or generic sync framework.
 
-### 10. Native filesystem work stays concrete
+### 10. Promote the existing mobile file layer instead of duplicating it
 
-Extract only the existing iOS `NSFileManager.replaceItemAt...` helper from `apps/mobile/app/gameplay/sessionFiles.ts` into a tiny native atomic-replace utility. Reuse it for session and completion JSON writes.
+The current `gameplay/sessionStore.ts` and `gameplay/sessionFiles.ts` are generic despite their names. HPA-4 promotes them mechanically into `app/storage/`:
 
-Do not add a repository layer. The completion feature owns its one-directory listing/parsing/status updates.
+```ts
+interface FileOps {
+  readText(path: string): string | null;
+  writeText(path: string, content: string): void;
+  replace(fromPath: string, toPath: string): void;
+  remove(path: string): void;
+  list(rootPath: string): string[];
+}
+
+createFileKeyValueStore({ rootPath, fileOps }): SessionKeyValueStore
+createNativeFileOps(): FileOps
+```
+
+`createFileKeyValueStore()` preserves the existing `<root>/<id>.json.tmp` -> atomic replace behavior used by session storage. The new `list()` is the only extra native capability HPA-4 needs.
+
+Completion persistence receives `{ rootPath, fileOps }` and owns only record parsing/filtering/status transitions. It does not create another native file adapter.
+
+Delete the old session-specific filenames after imports/tests move. Do not create `nativeAtomicReplace.ts` or `nativeCompletionFiles.ts`.
+
+### 11. One NativeScript HTTP adapter
+
+Replace the GET-only native transport with one general NativeScript JSON transport:
+
+```ts
+interface PlayerHttpRequest {
+  method: 'GET' | 'POST';
+  url: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+interface PlayerHttpResponse {
+  status: number;
+  body: unknown;
+}
+```
+
+`nativeHttp.ts` is the only module that calls `Http.request`.
+
+It exports:
+
+- the general `PlayerHttpTransport` used by `PlayerApi`;
+- `nativePuzzleJsonRequest`, a thin GET wrapper that preserves existing PuzzleApi behavior by throwing on non-2xx and returning only the response body.
+
+`puzzleApi.ts` remains unchanged apart from its import site in `App.svelte` moving from `nativePuzzleHttp.ts` to `nativeHttp.ts`.
 
 ## Native Delivery Gate
 
@@ -267,11 +329,11 @@ Split mobile account implementation into two reviewable commits.
 
 ### 3A — pure account/API boundary
 
-Add `playerApi.ts` and `mobileAccount.ts` with tests and **no native imports**. This pins response validators, session false-body handling, restore validation, and logout semantics before plugin/config work.
+Add `playerApi.ts` and `mobileAccount.ts` with tests and no native imports. This pins shared validators, the two-strike unauthenticated policy, restore validation, and logout semantics before plugin/config work.
 
 ### 3B — native adapters/UI/config
 
-Add plugin dependencies, secure-storage/Google/native HTTP adapters, Info.plist OAuth values + reversed URL scheme, Library account UI, and `App.svelte` composition. Then prove on the target iPad runtime:
+Add plugin dependencies, the shared native HTTP adapter, secure-storage/Google adapters, Info.plist OAuth values + reversed URL scheme, Library account UI, and `App.svelte` composition. Then prove on the target iPad runtime:
 
 - Google modal completes;
 - the ID token exchanges successfully against existing `GOOGLE_CLIENT_ID`;
@@ -280,6 +342,26 @@ Add plugin dependencies, secure-storage/Google/native HTTP adapters, Info.plist 
 - bearer token is absent from Documents and ApplicationSettings.
 
 A red native gate stops HPA-4 before completion persistence/sync work.
+
+## Risks and Detection
+
+### R1 — KV consistency produces false unauthenticated probes
+
+**Risk:** one cross-isolate KV miss can return `{ authenticated: false }` for a valid new session.
+
+**Mitigation/detection:** two consecutive negative probes are required before credential deletion; authenticated success resets the counter. Task 3A unit tests pin the state machine, and Task 3B's native gate exercises exchange -> immediate bearer probe.
+
+### R2 — Google iOS/server-client configuration produces the wrong audience
+
+**Risk:** the plugin may return an ID token the existing backend rejects if client/server client configuration is wrong.
+
+**Mitigation/detection:** Task 3B is a hard stop gate. Fix Google/iOS configuration; never add a second backend audience.
+
+### R3 — online completion is persisted but never submitted
+
+**Risk:** lifecycle-only retry triggers leave the common signed-in/online completion pending until a later resume/reconnect.
+
+**Mitigation/detection:** durable signed-in completion is an explicit fourth drain trigger. Task 6 includes an online-completion acceptance case requiring `pending -> synced` without any app lifecycle event.
 
 ## Testing Strategy
 
@@ -295,39 +377,55 @@ Cover:
 
 ### Shared completion failure policy
 
-Pin `completionFailureCodeFromHttpStatus()` and `isFailureRetryable()` for 400, 401, 404, 408, 409, 429, 500, and 503. Update web to call the extracted status mapper so web/mobile cannot drift.
+Pin `completionFailureCodeFromHttpStatus()` and `isFailureRetryable()` for 400, 401, 403, 404, 408, 409, 429, 500, and 503. Update web to call the extracted status mapper so web/mobile cannot drift.
 
 ### Mobile pure tests
 
 Cover:
 
 - `PlayerApi.getSession()` parses both authenticated and unauthenticated HTTP-200 bodies with `isPlayerSessionResponse`;
-- secure restore requires version/token/future expiry/`isPlayerUser`;
+- secure restore requires version/token/future expiry/`isPlayerUser`/valid negative-probe counter;
+- first unauthenticated probe increments the counter and retains the credential;
+- authenticated success resets the counter;
+- second consecutive unauthenticated probe clears the credential;
 - signed-out completion writes one `local_only` file;
 - signed-in completion writes one account-owned `pending` file;
 - pending listing filters by account and sorts by `completedAt`, then `runId`;
 - corrupt requests fail `isRecordPuzzleCompletionV2` and are removed;
-- 429 quota is terminal; 401 is auth-required; 5xx/transport are retryable;
+- 429 quota and unknown 4xx are terminal; 401 is auth-required; 5xx/transport are retryable;
 - terminal continues sequential drain; retryable/auth-required stops it;
-- session probe false clears the bearer and prevents drain;
 - account B never submits or mutates account A's pending record;
-- later login never changes anonymous `local_only` work to pending.
+- later login never changes anonymous `local_only` work to pending;
+- generic file-store tests preserve existing temp-write/replace semantics and cover direct listing;
+- PuzzleApi's GET wrapper retains current non-2xx/empty-response behavior over the shared native transport.
+
+### Native iPad acceptance
+
+Before merge, prove:
+
+1. allowlisted Google sign-in exchanges and survives terminate/relaunch from secure storage;
+2. signed-out offline completion remains `local_only` after later sign-in;
+3. signed-in **online** completion becomes `synced` without background/resume/reconnect;
+4. signed-in offline completion stays `pending`, then reconnect submits it;
+5. pending account A work is skipped under account B and later drains under A;
+6. one simulated first unauthenticated session probe does not delete the secure credential; a later authenticated probe resets the counter.
 
 ## Explicitly Out of Scope
 
 - gameplay-session/cloud-save sync;
 - retroactive upload of logged-out completions;
 - Firebase/Firebase Auth;
-- `GoogleService-Info.plist` unless a future plugin change proves it is actually required;
+- `GoogleService-Info.plist`;
 - Sign in with Apple/provider-neutral identity abstraction;
 - mobile profile/upload parity;
 - App Store submission/compliance work;
 - Android auth/release work;
-- background execution, push, daemon, timers, or generic sync/job frameworks;
+- background execution, push, daemon, timers, polling, or generic sync/job frameworks;
+- retry-attempt caps/telemetry until actual usage demonstrates a need;
 - D1/KV/Workflow schema changes;
 - alternate completion routes;
 - redesign of browser Google OAuth.
 
 ## Success Criteria
 
-HPA-4 is complete when a personal/TestFlight iPad build can optionally sign in with an allowlisted Google account, keep the existing Perseus player session only in secure storage, record every completion locally before network work, retry only same-account pending completion records through the existing V2 endpoint using the same failure policy as web, clear dead bearers through the existing session probe, and preserve signed-out offline gameplay unchanged.
+HPA-4 is complete when a personal/TestFlight iPad build can optionally sign in with an allowlisted Google account, keep the existing Perseus player session only in secure storage, tolerate one non-authoritative KV miss, record every completion locally before network work, submit signed-in online completions immediately, retry only same-account pending records through the existing V2 endpoint using the same failure policy as web, and preserve signed-out offline gameplay unchanged.
