@@ -1145,7 +1145,7 @@ rg -n "createNativeSessionFileOps|createFileSessionKeyValueStore|SessionFileOps"
 
 Expected final production shape:
 
-- no Firebase/plist/outbox/duplicate native file modules/background/timer/refresh-token work;
+- no Firebase `GoogleService-Info.plist`, outbox directory, duplicate native file modules, background/timer work, or refresh-token system;
 - one `Http.request` owner in `app/api/nativeHttp.ts`;
 - old session-specific file-op names are gone after their mechanical promotion;
 - HPA-4 remains one PR.
