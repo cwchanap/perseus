@@ -19,13 +19,16 @@ import type { GoogleIdentityClaims } from '../services/player-auth.shared';
 import {
 	createPlayerSession,
 	getAllowlistEntry,
-	getPlayerSession,
 	revokePlayerSession,
 	upsertPlayer
 } from '../services/player-auth.worker';
 import { oauthRateLimit } from '../middleware/rate-limit.worker';
+import {
+	PLAYER_SESSION_COOKIE,
+	playerSessionTokenFromRequest,
+	resolvePlayerSession
+} from '../middleware/player-auth.worker';
 
-const PLAYER_SESSION_COOKIE = 'perseus_player_session';
 const OAUTH_STATE_COOKIE = 'perseus_oauth_state';
 const OAUTH_DATA_COOKIE = 'perseus_oauth_data';
 const OAUTH_STATE_COOKIE_MAX_AGE_SECONDS = OAUTH_STATE_TTL_SECONDS;
@@ -293,25 +296,18 @@ auth.post('/mobile/google', async (c) => {
 });
 
 auth.get('/session', async (c) => {
-	const token = getCookie(c, PLAYER_SESSION_COOKIE);
-	if (!token) {
-		return withNoStore(c.json({ authenticated: false }));
-	}
-
-	const session = await getPlayerSession(c.env.PUZZLE_METADATA, token);
-	if (!session) {
-		// Don't clear the cookie on a KV miss — the session may have been just
-		// created and KV eventual consistency hasn't propagated yet. A grace
-		// period in player-auth.worker covers same-isolate reads; for cross-
-		// isolate misses the cookie persists so a page reload retries naturally.
-		return withNoStore(c.json({ authenticated: false }));
-	}
-
-	return withNoStore(c.json({ authenticated: true, user: session.user }));
+	// Don't clear the cookie on a KV miss — the session may have been just
+	// created and KV eventual consistency hasn't propagated yet. A grace
+	// period in player-auth.worker covers same-isolate reads; for cross-
+	// isolate misses the cookie persists so a page reload retries naturally.
+	const session = await resolvePlayerSession(c);
+	return withNoStore(
+		c.json(session ? { authenticated: true, user: session.user } : { authenticated: false })
+	);
 });
 
 auth.post('/logout', async (c) => {
-	const token = getCookie(c, PLAYER_SESSION_COOKIE);
+	const token = playerSessionTokenFromRequest(c);
 	if (token) {
 		await revokePlayerSession(c.env.PUZZLE_METADATA, token);
 	}
