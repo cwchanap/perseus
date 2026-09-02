@@ -681,4 +681,109 @@ describe('Worker player auth routes', () => {
 		expect(setCookie).toContain('perseus_player_session=');
 		expect(setCookie).toContain('Max-Age=0');
 	});
+
+	it('exchanges a mobile Google id token for a player session without a cookie', async () => {
+		const res = await auth.fetch(
+			request('/mobile/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ idToken: 'native-google-id-token' })
+			}),
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(res.headers.get('set-cookie')).toBeNull();
+		expect(await res.json()).toEqual({
+			token: 'player-session-token',
+			expiresAt: 1_719_092_000_000,
+			user: player
+		});
+		expect(sharedAuth.verifyGoogleIdToken).toHaveBeenCalledWith(
+			'native-google-id-token',
+			'google-client-id'
+		);
+		expect(playerAuth.getAllowlistEntry).toHaveBeenCalledWith(kv, 'player@example.com');
+		expect(playerAuth.upsertPlayer).toHaveBeenCalledWith(kv, claims);
+		expect(playerAuth.createPlayerSession).toHaveBeenCalledWith(kv, player);
+	});
+
+	it('returns 400 for malformed JSON or a missing mobile id token', async () => {
+		const malformed = await auth.fetch(
+			request('/mobile/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: 'not-json'
+			}),
+			env
+		);
+		const missing = await auth.fetch(
+			request('/mobile/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ idToken: '   ' })
+			}),
+			env
+		);
+
+		for (const res of [malformed, missing]) {
+			expect(res.status).toBe(400);
+			expect(await res.json()).toMatchObject({ error: 'bad_request' });
+		}
+		expect(sharedAuth.verifyGoogleIdToken).not.toHaveBeenCalled();
+	});
+
+	it('returns 401 when Google verification rejects the mobile id token', async () => {
+		vi.mocked(sharedAuth.verifyGoogleIdToken).mockRejectedValue(new Error('invalid token'));
+
+		const res = await auth.fetch(
+			request('/mobile/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ idToken: 'native-google-id-token' })
+			}),
+			env
+		);
+
+		expect(res.status).toBe(401);
+		expect(await res.json()).toMatchObject({ error: 'unauthorized' });
+		expect(playerAuth.getAllowlistEntry).not.toHaveBeenCalled();
+	});
+
+	it('returns 403 for a non-allowlisted mobile identity', async () => {
+		vi.mocked(playerAuth.getAllowlistEntry).mockResolvedValue(null);
+
+		const res = await auth.fetch(
+			request('/mobile/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ idToken: 'native-google-id-token' })
+			}),
+			env
+		);
+
+		expect(res.status).toBe(403);
+		expect(await res.json()).toMatchObject({ error: 'forbidden' });
+		expect(playerAuth.upsertPlayer).not.toHaveBeenCalled();
+	});
+
+	it('returns a structured 500 when GOOGLE_CLIENT_ID is missing for mobile exchange', async () => {
+		const res = await auth.fetch(
+			request('/mobile/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ idToken: 'native-google-id-token' })
+			}),
+			{ ...productionEnv, GOOGLE_CLIENT_ID: '' }
+		);
+
+		expect(res.status).toBe(500);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(await res.json()).toEqual({
+			error: 'server_misconfigured',
+			message: 'Server configuration error'
+		});
+		expect(sharedAuth.verifyGoogleIdToken).not.toHaveBeenCalled();
+	});
 });
