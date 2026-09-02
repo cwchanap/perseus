@@ -28,6 +28,7 @@
 	} from './account/mobileAccount';
 	import { createCompletionStore } from './completion/completionStore';
 	import { drainPendingCompletions } from './completion/completionSync';
+	import { createDrainScheduler } from './completion/drainScheduler';
 	import { nativeGoogleIdTokenProvider } from './account/nativeGoogleAuth';
 	import { nativeMobileSessionStore } from './account/nativeSessionStore';
 	import Gameplay from './gameplay/Gameplay.svelte';
@@ -103,6 +104,11 @@
 	let accountBusy = false;
 	let accountStatus: 'idle' | 'reconnecting' = 'idle';
 	let accountError: string | null = null;
+	// Bumped whenever the active session identity changes (sign-in, sign-out,
+	// clear). Async results captured under an older epoch are discarded instead
+	// of applied, so a stale account can never rewrite state or secure storage
+	// after a logout or account switch.
+	let accountEpoch = 0;
 
 	// Application + connectivity listeners run for the app's lifetime and are
 	// removed on teardown; no timer is involved.
@@ -144,15 +150,16 @@
 			if (raw !== null) nativeMobileSessionStore.clear();
 			return;
 		}
+		const epoch = accountEpoch;
 		accountSession = restored;
 		accountStatus = 'reconnecting';
 		try {
 			const response = await playerApi.getSession(restored.token);
+			// A sign-in/out during the probe makes this restore stale: discard it.
+			if (epoch !== accountEpoch) return;
 			const decision = applySessionProbe(restored, response);
 			if (decision.kind === 'cleared') {
-				nativeMobileSessionStore.clear();
-				accountSession = null;
-				accountStatus = 'idle';
+				clearAccountSession();
 			} else {
 				accountSession = decision.session;
 				nativeMobileSessionStore.write(JSON.stringify(decision.session));
@@ -165,25 +172,24 @@
 
 	// --- Completion syncing -------------------------------------------------------
 
-	// One in-memory pass guard: overlapping triggers (sign-in, completion,
-	// resume, connectivity) share a single in-flight validate+drain pass.
-	let drainPass: Promise<void> | null = null;
+	// Single-flight pass scheduling (sign-in, completion, resume, connectivity
+	// triggers share one validate+drain pass) with a trailing-edge requeue: a
+	// trigger arriving mid-pass queues exactly one follow-up pass, so records
+	// that landed after the pass's pending snapshot still drain immediately.
+	const drainScheduler = createDrainScheduler({
+		startPass: (epoch) => validateAndDrain(epoch),
+		currentEpoch: () => accountEpoch,
+		onError: (error) => {
+			console.error('completion_drain_failed', error);
+		}
+	});
 
 	function validateAndDrainGuarded(): Promise<void> {
-		if (drainPass !== null) return drainPass;
-		drainPass = validateAndDrain()
-			.catch((error) => {
-				// A failed pass never crashes the app; records stay pending for
-				// the next trigger.
-				console.error('completion_drain_failed', error);
-			})
-			.finally(() => {
-				drainPass = null;
-			});
-		return drainPass;
+		return drainScheduler.trigger();
 	}
 
 	function clearAccountSession(): void {
+		accountEpoch += 1;
 		nativeMobileSessionStore.clear();
 		accountSession = null;
 		accountStatus = 'idle';
@@ -195,8 +201,10 @@
 	}
 
 	// Apply a probe decision to secure storage + memory: persist the returned
-	// session (strike-1 or refreshed), or clear on a cleared decision.
-	function applyProbeDecision(decision: SessionProbeDecision): void {
+	// session (strike-1 or refreshed), or clear on a cleared decision. Stale
+	// results (epoch moved on mid-pass) are discarded.
+	function applyProbeDecision(epoch: number, decision: SessionProbeDecision): void {
+		if (epoch !== accountEpoch) return;
 		if (decision.kind === 'cleared') {
 			clearAccountSession();
 			return;
@@ -206,8 +214,10 @@
 	}
 
 	// The single validated drain path: probe the session before every pass,
-	// then drain this account's pending completions.
-	async function validateAndDrain(): Promise<void> {
+	// then drain this account's pending completions. `epoch` is captured when
+	// the pass starts; every application point re-checks it so a logout or
+	// account switch mid-pass discards the stale result.
+	async function validateAndDrain(epoch: number): Promise<void> {
 		const session = accountSession;
 		if (!session) return;
 
@@ -224,9 +234,10 @@
 			// Transport/5xx from the probe: keep account + counter, skip this pass.
 			return;
 		}
+		if (epoch !== accountEpoch) return;
 
 		const decision = applySessionProbe(session, response);
-		applyProbeDecision(decision);
+		applyProbeDecision(epoch, decision);
 		if (decision.kind !== 'authenticated') return;
 
 		const disposition = await drainPendingCompletions({
@@ -234,12 +245,13 @@
 			api: playerApi,
 			store: completionStore
 		});
+		if (epoch !== accountEpoch) return;
 		if (disposition !== 'auth_required') return;
 
 		// A 401 from the completion POST is only one strike: feed it through
 		// the same two-strike probe policy once. The bearer is never deleted on
 		// a single 401 — only a second consecutive unauthenticated result clears.
-		applyProbeDecision(applySessionProbe(decision.session, { authenticated: false }));
+		applyProbeDecision(epoch, applySessionProbe(decision.session, { authenticated: false }));
 	}
 
 	function onGameplayCompletion(puzzleId: string, seal: SealedCompletion): void {
@@ -258,11 +270,18 @@
 		accountBusy = true;
 		accountError = null;
 		try {
-			accountSession = await signInMobileAccount({
+			const session = await signInMobileAccount({
 				provider: nativeGoogleIdTokenProvider,
 				api: playerApi,
 				store: nativeMobileSessionStore
 			});
+			// Publish atomically: bumping with the assignment makes every
+			// in-flight restore/pass for the previous session stale before any
+			// of its results can overwrite the new account's state. The old
+			// session stays active if the exchange fails.
+			accountEpoch += 1;
+			accountSession = session;
+			accountStatus = 'idle';
 			// Freshly validated credential: drain anything signed in earlier.
 			void validateAndDrainGuarded();
 		} catch (error) {
@@ -272,20 +291,29 @@
 		}
 	}
 
-	// signOutMobileAccount never throws: remote failures still clear locally.
+	// signOutMobileAccount never throws on remote failures, but a secure-store
+	// clear failure does propagate: surface it instead of pretending the
+	// bearer is gone. The session is dropped from memory and the epoch is
+	// bumped immediately, so in-flight account work goes inert right away.
 	async function handleSignOut(): Promise<void> {
 		if (accountBusy || !accountSession) return;
 		accountBusy = true;
 		const token = accountSession.token;
-		await signOutMobileAccount({
-			provider: nativeGoogleIdTokenProvider,
-			api: playerApi,
-			store: nativeMobileSessionStore,
-			token
-		});
+		accountEpoch += 1;
 		accountSession = null;
 		accountStatus = 'idle';
-		accountBusy = false;
+		try {
+			await signOutMobileAccount({
+				provider: nativeGoogleIdTokenProvider,
+				api: playerApi,
+				store: nativeMobileSessionStore,
+				token
+			});
+		} catch (error) {
+			accountError = error instanceof Error ? error.message : 'sign_out_failed';
+		} finally {
+			accountBusy = false;
+		}
 	}
 
 	async function startDownload(puzzleId: string): Promise<void> {
