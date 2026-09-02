@@ -48,6 +48,8 @@ function parseRecord(runId: string, raw: string): MobileCompletionRecordV1 | nul
 	if (record.runId !== runId) return null;
 	if (!isPuzzleId(record.puzzleId)) return null;
 	if (!isRecordPuzzleCompletionV2(record.request, MAX_COMPLETION_TIME_SECONDS)) return null;
+	if (record.runId !== record.request.runId) return null;
+	if (!Number.isFinite(record.completedAt)) return null;
 	if (
 		record.accountId !== null &&
 		(typeof record.accountId !== 'string' || record.accountId === '')

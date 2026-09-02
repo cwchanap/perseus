@@ -131,8 +131,20 @@ describe('current-format validation', () => {
 		expectRejected(RUN_A, { ...validRecord(RUN_A), version: 2 });
 	});
 
-	it('removes records whose runId does not match the request', () => {
+	it('removes records whose runId does not match the file name', () => {
 		expectRejected(RUN_A, validRecord(RUN_B));
+	});
+
+	it('removes records whose runId does not match the request runId', () => {
+		expectRejected(RUN_A, {
+			...validRecord(RUN_A),
+			request: completionRequestFromSeal(seal(RUN_B, 1_000))
+		});
+	});
+
+	it('removes records with a non-finite completedAt', () => {
+		expectRejected(RUN_A, { ...validRecord(RUN_A), completedAt: 'abc' });
+		expectRejected(RUN_B, { ...validRecord(RUN_B), completedAt: Number.NaN });
 	});
 
 	it('removes records whose puzzleId is not a puzzle id', () => {
