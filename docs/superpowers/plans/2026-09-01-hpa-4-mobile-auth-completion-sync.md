@@ -2,81 +2,93 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add optional native Google sign-in to the NativeScript iPad app and sync only account-owned mobile completions through the existing idempotent Perseus completion endpoint, while preserving signed-out offline play.
+**Goal:** Add optional native Google sign-in to the NativeScript iPad app and submit only completions created while that account was active, using the existing Perseus player session, completion endpoint, and retry policy while preserving signed-out offline play.
 
-**Architecture:** Reuse the existing Google verifier, allowlist/player upsert, opaque KV player session, `requirePlayerAuth`, and V2 completion route. Mobile stores that same player-session token in iOS secure storage, writes every completion to an app-private filesystem record before any network work, and uses a small account-tagged sequential outbox that `App.svelte` drains on sign-in, foreground resume, or connectivity restoration. No cloud-save model, second auth/session type, alternate completion route, global mobile store, or generic sync/job framework is introduced.
+**Architecture:** Native Google Sign-In exchanges an ID token for the existing opaque KV player session. Bearer and browser cookie credentials share one server resolver. Mobile stores that bearer only in secure storage and writes one `completions/<runId>.json` record per run; `syncStatus: 'pending'` is the queue, so there is no second outbox directory. `App.svelte` validates the bearer through the existing `GET /api/auth/session` probe before each active-app drain, and web/mobile share the same completion HTTP-status -> failure-code -> retryability policy.
 
-**Tech Stack:** TypeScript 5.9, Hono/Cloudflare Workers, Vitest 4, NativeScript 9, Svelte Native 1.0, `@nativescript/google-signin` 2.1, `@nativescript/secure-storage` 4.0, existing `@perseus/types` and `@perseus/game-core`.
+**Tech Stack:** TypeScript 5.9, Hono/Cloudflare Workers, Vitest 4, NativeScript 9, Svelte Native 1.0, `@nativescript/google-signin` 2.1.1, `@nativescript/secure-storage` 4.0, existing `@perseus/types` and `@perseus/game-core`.
 
 **Spec:** `docs/superpowers/specs/2026-09-01-hpa-4-mobile-auth-completion-sync-design.md`
 
 ## Global Constraints
 
-- One HPA-4 PR only. Continue implementation on `docs/hpa-4-mobile-auth-completion-sync-plan`; do not create a second implementation PR.
-- Review each task as a separate green commit inside this PR.
-- Signed-out mobile download/play/resume/completion must remain network-independent.
-- Reuse the existing `GOOGLE_CLIENT_ID` as the Google Sign-In **server client ID** and backend ID-token audience. Do not add a second backend Google audience variable.
-- Reuse the existing KV player session and `getPlayerSession()` validation. Do not mint a mobile JWT/session type or add a refresh-token system.
-- Browser cookie auth remains supported and behaviorally unchanged.
+- One HPA-4 PR only. Continue on `docs/hpa-4-mobile-auth-completion-sync-plan`; do not create another implementation PR.
+- Each task/stop gate below is a reviewable green commit inside the same PR.
+- Signed-out mobile download/play/resume/completion remains network-independent.
+- Reuse the existing `GOOGLE_CLIENT_ID` as Google Sign-In's server client ID and backend ID-token audience. Do not add a second backend audience.
+- Do not create Firebase/Firebase Auth or commit `GoogleService-Info.plist`; plugin 2.1.1 accepts explicit `clientId` + `serverClientId`.
+- Reuse the existing opaque KV player session and `getPlayerSession()` validation. No mobile JWT/session format or refresh-token system.
+- Browser cookie auth remains behaviorally unchanged.
+- `GET /api/auth/session` remains HTTP 200 with `PlayerSessionResponse`, including `{ authenticated: false }` for an invalid/expired session.
 - The existing `POST /api/puzzles/:id/complete` remains the only server completion write route.
-- Every HPA-4 mobile completion record is durable before submission is attempted.
-- A completion created while signed out is permanently local-only; later login must not manufacture an outbox entry for it.
-- A signed-in completion/outbox item is permanently tagged with the account ID active at completion time; another account must never submit or delete it.
-- The Perseus bearer token may exist only in memory and `@nativescript/secure-storage`, never ordinary app JSON/ApplicationSettings.
-- Outbox drain is sequential and active-app only; no background task, polling loop, daemon, generic queue framework, or push work.
+- Reuse `completionRequestFromSeal()` and the existing completion failure policy; do not invent a generic HTTP retry classifier.
+- Every HPA-4 completion record is durable before network submission starts.
+- Signed-out completion records are permanently `local_only`; later login never promotes them to pending.
+- `accountId` is frozen at completion time. Another account never submits or mutates that record.
+- One `Documents/perseus/completions/<runId>.json` file is both local record and queue state. No `outbox/` directory.
+- Bearer tokens may exist only in memory and `@nativescript/secure-storage`, never ordinary JSON or `ApplicationSettings`.
+- Draining is sequential and active-app only: sign-in, foreground resume, connectivity restoration. No background task, timer, polling loop, daemon, push, or generic sync framework.
 - No D1 migration, KV schema change, Workflow change, gameplay-session schema change, or cloud-save work.
-- HPA-4 is iOS/iPad only. Do not add Android auth/configuration work.
-- Package-local mobile TypeScript remains authoritative: `cd apps/mobile && bunx tsc --noEmit`.
+- iOS/iPad only. No Android auth/release work.
+- Package-local mobile TypeScript is authoritative: `cd apps/mobile && bunx tsc --noEmit`.
 
-## Operator Prerequisite Before Task 3
+## Operator Prerequisite Before Task 3B
 
-Create one Google **iOS OAuth client** in the same Google Cloud project as the existing Perseus web/server OAuth client, with bundle ID `org.perseus.mobile`. Record its exact iOS client ID and reversed URL scheme. Task 3 adds those exact non-secret identifiers to `apps/mobile/App_Resources/iOS/Info.plist` together with the existing backend/web client ID as `GIDServerClientID`.
+Before native configuration work begins, create an iOS OAuth client for bundle `org.perseus.mobile` in the same Google Cloud project as the existing Perseus web/server OAuth client. Record:
 
-If the iOS client does not exist or Google Sign-In cannot return an ID token whose `aud` is the existing `GOOGLE_CLIENT_ID`, stop HPA-4 at the Task 3 native gate. Do not add a second backend audience to work around a configuration error.
+1. the exact iOS OAuth client ID;
+2. its exact reversed URL scheme;
+3. the existing Perseus web/server client ID used as API `GOOGLE_CLIENT_ID`.
+
+Task 3B writes the first and third values to `Info.plist` as `GIDClientID` / `GIDServerClientID`, adds the reversed URL scheme, then reads those Info.plist values and passes both explicitly to `GoogleSignin.configure({ clientId, serverClientId })`.
+
+If the ID token cannot exchange successfully against the existing API `GOOGLE_CLIENT_ID`, stop at the Task 3B gate and fix Google configuration. Do not add another backend audience.
 
 ## Final File Ownership
 
-### Shared/API contracts
+### Shared/API auth
 
-- Modify `packages/types/src/core.ts` — add the successful mobile player-session exchange response.
-- Modify `apps/api/src/routes/auth.worker.ts` — one mobile Google ID-token exchange; session/logout reuse canonical player-session credential resolution.
-- Modify `apps/api/src/routes/__tests__/auth.worker.test.ts` — mobile exchange + bearer session/logout + browser regression coverage.
-- Modify `apps/api/src/middleware/player-auth.worker.ts` + `.test.ts` — canonical bearer-or-cookie credential/session resolution.
-- Modify `apps/api/src/middleware/optional-player-auth.worker.ts` — reuse the same resolver; no second cookie-only validation path.
-- Modify the existing completion-route test that owns authenticated completion behavior — pin bearer parity without changing the route implementation.
+- Modify `packages/types/src/core.ts` + `packages/types/src/index.test.ts` — `MobilePlayerSessionResponse` plus `isMobilePlayerSessionResponse`.
+- Modify `apps/api/src/routes/auth.worker.ts` + existing auth tests — mobile exchange, bearer `/session`, bearer `/logout`, browser regression.
+- Modify `apps/api/src/middleware/player-auth.worker.ts` + test — canonical bearer-or-cookie token/session resolver.
+- Modify `apps/api/src/middleware/optional-player-auth.worker.ts` — reuse canonical resolver.
+- Modify the existing completion Worker route test — bearer reaches the unchanged completion route.
 
-### Mobile account boundary
+### Shared completion failure policy
 
-- Modify `apps/mobile/package.json` and `bun.lock` — add Google Sign-In + secure storage plugins.
-- Modify `apps/mobile/App_Resources/iOS/Info.plist` — actual iOS Google client/server client/reversed URL-scheme configuration.
-- Create `apps/mobile/app/api/playerApi.ts` + `.test.ts` — exchange/session/logout/completion HTTP contract over an injected JSON transport.
-- Create `apps/mobile/app/api/nativePlayerHttp.ts` — NativeScript `Http.request` adapter only.
-- Create `apps/mobile/app/account/mobileAccount.ts` + `.test.ts` — pure account session orchestration and persisted-session validation.
-- Create `apps/mobile/app/account/nativeGoogleAuth.ts` — `GoogleSignin.configure({})`, sign-in, ID-token retrieval, sign-out.
+- Modify `packages/game-core/src/session/codec.ts` + `codec.test.ts` — extract `completionFailureCodeFromHttpStatus()` beside `isFailureRetryable()`.
+- Modify `apps/web/src/routes/puzzle/[id]/+page.svelte` + existing route test — use the shared status mapper; preserve current behavior including terminal quota 429.
+
+### Mobile account
+
+- Create `apps/mobile/app/api/playerApi.ts` + `.test.ts` — auth/session/logout/completion contract over injected transport.
+- Create `apps/mobile/app/account/mobileAccount.ts` + `.test.ts` — pure restore/sign-in/sign-out validation; no native imports.
+- Modify `apps/mobile/package.json`, `bun.lock`, `apps/mobile/App_Resources/iOS/Info.plist` — native dependencies/config only in Task 3B.
+- Create `apps/mobile/app/api/nativePlayerHttp.ts` — NativeScript HTTP adapter.
+- Create `apps/mobile/app/account/nativeGoogleAuth.ts` — explicit client/server client configuration, sign-in/token/sign-out.
 - Create `apps/mobile/app/account/nativeSessionStore.ts` — one secure-storage key.
-- Create `apps/mobile/app/account/AccountBar.svelte` — minimal sign-in/signed-in/sign-out surface.
-- Modify `apps/mobile/app/App.svelte` — composition root owns active account state.
+- Create `apps/mobile/app/account/AccountBar.svelte`; modify `App.svelte` + `app.css` — minimal account UI/composition.
 
-### Mobile completion/outbox
+### Mobile completion
 
-- Create `apps/mobile/app/storage/nativeAtomicReplace.ts` — extract only the existing iOS same-file atomic replace helper.
-- Modify `apps/mobile/app/gameplay/sessionFiles.ts` — call that helper; keep the existing session file interface unchanged.
-- Create `apps/mobile/app/completion/completionStore.ts` + `.test.ts` — v1 completion/outbox records and file-state transitions over injected file ops.
-- Create `apps/mobile/app/completion/nativeCompletionFiles.ts` — concrete `Documents/perseus/completions` + `outbox` mechanics/listing.
-- Create `apps/mobile/app/completion/completionSync.ts` + `.test.ts` — submission classification and same-account sequential drain.
-- Modify `apps/mobile/app/gameplay/Gameplay.svelte` — call injected completion sink only after the completed session snapshot is saved.
-- Modify `apps/mobile/app/App.svelte` — create completion store, run immediate account-bound sync, and trigger guarded drain on sign-in/resume/connectivity restoration.
+- Create `apps/mobile/app/storage/nativeAtomicReplace.ts`; modify `gameplay/sessionFiles.ts` — extract/reuse the existing iOS atomic replacement primitive.
+- Create `apps/mobile/app/completion/completionStore.ts` + `.test.ts` — one-directory record validation/listing/status transitions.
+- Create `apps/mobile/app/completion/nativeCompletionFiles.ts` — `Documents/perseus/completions` mechanics only.
+- Create `apps/mobile/app/completion/completionSync.ts` + `.test.ts` — shared-policy disposition and sequential same-account drain.
+- Modify `Gameplay.svelte` — call injected completion sink only after its existing completed-session save.
+- Modify `App.svelte` — durable record first, validated-session drain triggers second.
 
 ---
 
-## Task 1: Add one native Google ID-token exchange that reuses the current player session
+## Task 1: Add the native Google ID-token exchange and validate its response contract
 
 **Files:**
 - Modify: `packages/types/src/core.ts`
+- Modify: `packages/types/src/index.test.ts`
 - Modify: `apps/api/src/routes/auth.worker.ts`
 - Modify: `apps/api/src/routes/__tests__/auth.worker.test.ts`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export interface MobilePlayerSessionResponse {
@@ -84,6 +96,10 @@ export interface MobilePlayerSessionResponse {
   expiresAt: number;
   user: PlayerUser;
 }
+
+export function isMobilePlayerSessionResponse(
+  value: unknown
+): value is MobilePlayerSessionResponse;
 ```
 
 HTTP:
@@ -94,121 +110,79 @@ POST /api/auth/mobile/google
 -> 200 MobilePlayerSessionResponse
 ```
 
-- [ ] **Step 1: Add failing route tests for the successful exchange and audience reuse**
+- [ ] **Step 1: Add failing shared validator tests**
 
-Extend the existing mocked auth test instead of creating a second route harness:
-
-```ts
-it('exchanges a native Google ID token for the existing Perseus player session', async () => {
-  const res = await auth.fetch(
-    request('/mobile/google', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken: 'native-google-id-token' })
-    }),
-    env
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.headers.get('Cache-Control')).toBe('no-store');
-  expect(sharedAuth.verifyGoogleIdToken).toHaveBeenCalledWith(
-    'native-google-id-token',
-    'google-client-id'
-  );
-  expect(playerAuth.getAllowlistEntry).toHaveBeenCalledWith(kv, 'player@example.com');
-  expect(playerAuth.upsertPlayer).toHaveBeenCalledWith(kv, claims);
-  expect(playerAuth.createPlayerSession).toHaveBeenCalledWith(kv, player);
-  expect(await res.json()).toEqual({
-    token: 'player-session-token',
-    expiresAt: 1_719_092_000_000,
-    user: player
-  });
-});
-```
-
-Add explicit cases for invalid body, verifier rejection, and valid-but-not-allowlisted identity:
+Pin valid response plus malformed token/expiry/user cases:
 
 ```ts
-expect((await invalidBody.json()).error).toBe('bad_request');
-expect(invalidToken.status).toBe(401);
-expect(notAllowed.status).toBe(403);
+expect(isMobilePlayerSessionResponse({
+  token: 'player-session-token',
+  expiresAt: 1_719_092_000_000,
+  user: player
+})).toBe(true);
+
+expect(isMobilePlayerSessionResponse({ token: '', expiresAt: 123, user: player })).toBe(false);
+expect(isMobilePlayerSessionResponse({ token: 'x', expiresAt: Number.NaN, user: player })).toBe(false);
+expect(isMobilePlayerSessionResponse({ token: 'x', expiresAt: 123, user: { id: 'partial' } })).toBe(false);
 ```
 
-- [ ] **Step 2: Run the focused test red**
+- [ ] **Step 2: Add failing mobile-exchange route tests**
+
+Extend the existing auth Worker test harness. Pin:
+
+- success calls `verifyGoogleIdToken(idToken, GOOGLE_CLIENT_ID)`;
+- success calls existing allowlist/upsert/session functions;
+- response is no-store and matches the new response type;
+- malformed body -> 400;
+- verifier rejection -> 401;
+- valid non-allowlisted identity -> 403;
+- missing `GOOGLE_CLIENT_ID` -> structured 500.
+
+Keep the route outside `/google/*` so it does not require `GOOGLE_CLIENT_SECRET` / `AUTH_REDIRECT_BASE_URL`.
+
+- [ ] **Step 3: Run red**
 
 ```bash
-bun run --cwd apps/api test:unit -- src/routes/__tests__/auth.worker.test.ts
-```
-
-Expected: FAIL because `/mobile/google` and `MobilePlayerSessionResponse` do not exist.
-
-- [ ] **Step 3: Add the shared response and the minimal route**
-
-Add the response next to `PlayerSessionResponse` in `packages/types/src/core.ts`.
-
-In `auth.worker.ts`, keep the mobile route outside `/google/*` because native exchange does not require `GOOGLE_CLIENT_SECRET` or `AUTH_REDIRECT_BASE_URL`:
-
-```ts
-auth.use('/mobile/google', oauthRateLimit);
-
-auth.post('/mobile/google', async (c) => {
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return withNoStore(c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400));
-  }
-
-  const idToken =
-    typeof body === 'object' && body !== null &&
-    typeof (body as { idToken?: unknown }).idToken === 'string'
-      ? (body as { idToken: string }).idToken.trim()
-      : '';
-  if (!idToken) {
-    return withNoStore(c.json({ error: 'bad_request', message: 'Google ID token required' }, 400));
-  }
-  if (!c.env.GOOGLE_CLIENT_ID) return serverMisconfigured();
-
-  let claims;
-  try {
-    claims = await verifyGoogleIdToken(idToken, c.env.GOOGLE_CLIENT_ID);
-  } catch {
-    return withNoStore(c.json({ error: 'invalid_google_token', message: 'Invalid Google identity' }, 401));
-  }
-
-  const allowlisted = await getAllowlistEntry(c.env.PUZZLE_METADATA, claims.email);
-  if (!allowlisted) {
-    return withNoStore(c.json({ error: 'not_allowed', message: 'Account is not allowed' }, 403));
-  }
-
-  const user = await upsertPlayer(c.env.PUZZLE_METADATA, claims);
-  const session = await createPlayerSession(c.env.PUZZLE_METADATA, user);
-  const response: MobilePlayerSessionResponse = { ...session, user };
-  return withNoStore(c.json(response));
-});
-```
-
-Do not set a cookie on this route and do not change the browser callback.
-
-- [ ] **Step 4: Run focused auth + types checks**
-
-```bash
-bun run --cwd apps/api test:unit -- src/routes/__tests__/auth.worker.test.ts
 bun run --cwd packages/types test:unit
+bun run --cwd apps/api test:unit -- src/routes/__tests__/auth.worker.test.ts
 ```
 
-Expected: PASS.
+Expected: new guard/route tests fail.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Implement the minimal guard and route**
+
+In `core.ts`, reuse existing `isNonEmptyString`, `isFiniteNumber`, and `isPlayerUser`:
+
+```ts
+export function isMobilePlayerSessionResponse(
+  value: unknown
+): value is MobilePlayerSessionResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const response = value as Record<string, unknown>;
+  return (
+    isNonEmptyString(response.token) &&
+    isFiniteNumber(response.expiresAt) &&
+    isPlayerUser(response.user)
+  );
+}
+```
+
+The route parses `idToken`, verifies against `c.env.GOOGLE_CLIENT_ID`, reuses `getAllowlistEntry`, `upsertPlayer`, and `createPlayerSession`, and returns `{ ...session, user }`. Do not set a cookie and do not change browser callback behavior.
+
+- [ ] **Step 5: Run focused gates and commit**
 
 ```bash
-git add packages/types/src/core.ts apps/api/src/routes/auth.worker.ts apps/api/src/routes/__tests__/auth.worker.test.ts
+bun run --cwd packages/types test:unit
+bun run --cwd apps/api test:unit -- src/routes/__tests__/auth.worker.test.ts
+
+git add packages/types/src/core.ts packages/types/src/index.test.ts \
+  apps/api/src/routes/auth.worker.ts apps/api/src/routes/__tests__/auth.worker.test.ts
 git commit -m "feat(api): exchange mobile Google identity for player session"
 ```
 
 ---
 
-## Task 2: Make bearer and cookie credentials share one player-session validation path
+## Task 2: Make bearer and cookie credentials share one player-session resolver
 
 **Files:**
 - Modify: `apps/api/src/middleware/player-auth.worker.ts`
@@ -216,9 +190,9 @@ git commit -m "feat(api): exchange mobile Google identity for player session"
 - Modify: `apps/api/src/middleware/optional-player-auth.worker.ts`
 - Modify: `apps/api/src/routes/auth.worker.ts`
 - Modify: `apps/api/src/routes/__tests__/auth.worker.test.ts`
-- Modify: the existing API completion-route Worker test that exercises `POST /api/puzzles/:id/complete`
+- Modify: existing Worker completion-route test for `POST /api/puzzles/:id/complete`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export function playerSessionTokenFromRequest(c: PlayerAuthContext): string | null;
@@ -228,54 +202,22 @@ export async function resolvePlayerSession(c: PlayerAuthContext): Promise<Player
 Rules:
 
 ```text
-Authorization present + valid Bearer -> bearer token
-Authorization present + malformed/other scheme -> null, no cookie fallback
-Authorization absent -> perseus_player_session cookie
+explicit valid Bearer -> bearer
+explicit malformed/other Authorization -> null, never cookie fallback
+Authorization absent -> existing player cookie
 ```
 
-- [ ] **Step 1: Pin credential precedence in the existing middleware test**
+- [ ] **Step 1: Add failing precedence tests**
 
-Add table coverage:
+Pin bearer-over-cookie, malformed-header-no-fallback, cookie-only regression, invalid bearer -> unauthorized.
 
-```ts
-it('uses bearer auth when Authorization is present', async () => {
-  const res = await app.request('/protected', {
-    headers: {
-      Authorization: 'Bearer native-session-token',
-      Cookie: 'perseus_player_session=browser-session-token'
-    }
-  }, env);
-
-  expect(playerAuth.getPlayerSession).toHaveBeenCalledWith(kv, 'native-session-token');
-  expect(res.status).toBe(200);
-});
-
-it('does not fall back to a cookie for an explicit malformed Authorization header', async () => {
-  const res = await app.request('/protected', {
-    headers: {
-      Authorization: 'Basic nope',
-      Cookie: 'perseus_player_session=browser-session-token'
-    }
-  }, env);
-
-  expect(playerAuth.getPlayerSession).not.toHaveBeenCalled();
-  expect(res.status).toBe(401);
-});
-```
-
-Keep/add a cookie-only case proving existing web behavior remains green.
-
-- [ ] **Step 2: Run middleware tests red**
+- [ ] **Step 2: Run red**
 
 ```bash
 bun run --cwd apps/api test:unit -- src/middleware/player-auth.worker.test.ts
 ```
 
-Expected: bearer cases fail because middleware is cookie-only.
-
-- [ ] **Step 3: Implement the single resolver and reuse it from required + optional auth**
-
-In `player-auth.worker.ts`:
+- [ ] **Step 3: Implement the canonical resolver**
 
 ```ts
 export function playerSessionTokenFromRequest(c: PlayerAuthContext): string | null {
@@ -291,42 +233,34 @@ export async function resolvePlayerSession(
   c: PlayerAuthContext
 ): Promise<PlayerSessionRecord | null> {
   const token = playerSessionTokenFromRequest(c);
-  if (!token) return null;
-  return getPlayerSession(c.env.PUZZLE_METADATA, token);
+  return token ? getPlayerSession(c.env.PUZZLE_METADATA, token) : null;
 }
 ```
 
-`requirePlayerAuth` becomes a thin status wrapper around `resolvePlayerSession()`.
+`requirePlayerAuth` and `optionalPlayerAuth` both delegate to it.
 
-Change `optional-player-auth.worker.ts` to call the same resolver and set `playerSession` only when it resolves. Delete its direct `getCookie()` + `getPlayerSession()` duplication.
+- [ ] **Step 4: Reuse extraction/resolution from `/session` and `/logout`**
 
-- [ ] **Step 4: Make `/session` and `/logout` reuse the same credential extraction**
-
-`GET /session` calls `resolvePlayerSession(c)` and returns the existing `PlayerSessionResponse` shape.
-
-`POST /logout` calls `playerSessionTokenFromRequest(c)` for revocation, then keeps the existing browser cookie clear operation. A bearer request therefore revokes the same KV session; a browser request still clears the cookie exactly as before.
-
-Add auth-route tests for bearer `/session`, bearer `/logout`, and cookie regression.
-
-- [ ] **Step 5: Pin unchanged completion-route behavior over bearer**
-
-In the existing completion Worker route test, send:
+Preserve `/session` exactly as a 200 probe:
 
 ```ts
-headers: {
-  Authorization: 'Bearer native-session-token',
-  'Content-Type': 'application/json'
-}
+const session = await resolvePlayerSession(c);
+return withNoStore(c.json(
+  session
+    ? { authenticated: true, user: session.user }
+    : { authenticated: false }
+));
 ```
 
-Assert the same `recordVersionedCompletion(...)` arguments and response as the cookie-authenticated case. Do not add a mobile completion route or fork the route handler.
+`/logout` revokes the extracted token if present and still clears the browser cookie. Add bearer + cookie regression tests.
 
-- [ ] **Step 6: Run the API gate and commit**
+- [ ] **Step 5: Pin bearer parity on the existing completion route**
+
+Send an authenticated completion using `Authorization: Bearer native-session-token` and assert the same `recordVersionedCompletion` arguments/result as cookie auth. Do not change `puzzles.complete.worker.ts` beyond middleware behavior.
+
+- [ ] **Step 6: Run API gate and commit**
 
 ```bash
-bun run --cwd apps/api test:unit -- \
-  src/middleware/player-auth.worker.test.ts \
-  src/routes/__tests__/auth.worker.test.ts
 bun run --cwd apps/api test:unit
 
 git add apps/api/src/middleware/player-auth.worker.ts \
@@ -335,32 +269,52 @@ git add apps/api/src/middleware/player-auth.worker.ts \
   apps/api/src/routes/auth.worker.ts \
   apps/api/src/routes/__tests__/auth.worker.test.ts \
   apps/api/src/routes
-
+git diff --cached --name-only
 git commit -m "feat(api): accept player sessions as bearer credentials"
 ```
 
-Before committing, confirm the broad `apps/api/src/routes` add contains only the intended completion test change.
+Before commit, confirm the broad routes add contains only the intended completion test change.
 
 ---
 
-## Task 3: Add native Google sign-in and secure Perseus account storage
+## Task 3A: Add the pure mobile PlayerApi and account/session validation
 
 **Files:**
-- Modify: `apps/mobile/package.json`
-- Modify: `bun.lock`
-- Modify: `apps/mobile/App_Resources/iOS/Info.plist`
 - Create: `apps/mobile/app/api/playerApi.ts`
 - Create: `apps/mobile/app/api/playerApi.test.ts`
-- Create: `apps/mobile/app/api/nativePlayerHttp.ts`
 - Create: `apps/mobile/app/account/mobileAccount.ts`
 - Create: `apps/mobile/app/account/mobileAccount.test.ts`
-- Create: `apps/mobile/app/account/nativeGoogleAuth.ts`
-- Create: `apps/mobile/app/account/nativeSessionStore.ts`
-- Create: `apps/mobile/app/account/AccountBar.svelte`
-- Modify: `apps/mobile/app/App.svelte`
-- Modify: `apps/mobile/app/app.css`
 
 **Interfaces:**
+
+```ts
+export interface PlayerHttpRequest {
+  method: 'GET' | 'POST';
+  url: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+export interface PlayerHttpResponse {
+  status: number;
+  body: unknown;
+}
+
+export type PlayerHttpTransport = (
+  request: PlayerHttpRequest
+) => Promise<PlayerHttpResponse>;
+
+export interface PlayerApi {
+  exchangeGoogleIdToken(idToken: string): Promise<MobilePlayerSessionResponse>;
+  getSession(token: string): Promise<PlayerSessionResponse>;
+  logout(token: string): Promise<void>;
+  submitCompletion(
+    puzzleId: string,
+    request: RecordPuzzleCompletionV2,
+    token: string
+  ): Promise<PlayerHttpResponse>;
+}
+```
 
 ```ts
 export interface PersistedMobileSession {
@@ -370,221 +324,189 @@ export interface PersistedMobileSession {
   user: PlayerUser;
 }
 
-export interface MobileSessionStore {
-  read(): PersistedMobileSession | null;
-  write(session: PersistedMobileSession): void;
-  clear(): void;
-}
-
 export interface GoogleIdTokenProvider {
   signIn(): Promise<string>;
   signOut(): Promise<void>;
 }
-```
 
-```ts
-export interface PlayerApi {
-  exchangeGoogleIdToken(idToken: string): Promise<MobilePlayerSessionResponse>;
-  getSession(token: string): Promise<PlayerSessionResponse>;
-  logout(token: string): Promise<void>;
-  submitCompletion(
-    puzzleId: string,
-    request: RecordPuzzleCompletionV2,
-    token: string
-  ): Promise<{ status: number; body: unknown }>;
+export interface MobileSessionStore {
+  read(): string | null;
+  write(raw: string): void;
+  clear(): void;
 }
 ```
 
-- [ ] **Step 1: Add the two native dependencies**
+- [ ] **Step 1: Write failing PlayerApi tests**
+
+Pin exact URLs and bearer headers. `exchangeGoogleIdToken()` accepts only a 2xx body passing `isMobilePlayerSessionResponse`.
+
+`getSession()` must accept both valid HTTP-200 shapes:
+
+```ts
+expect(await api.getSession('token')).toEqual({ authenticated: false });
+expect(await api.getSession('token')).toEqual({ authenticated: true, user: player });
+```
+
+Both are parsed with `isPlayerSessionResponse`; `{ authenticated: false }` is not an exception.
+
+`submitCompletion()` returns `{ status, body }` for the existing endpoint; transport errors reject.
+
+- [ ] **Step 2: Write failing account restore/sign-out tests**
+
+Pin restore validity:
+
+```ts
+const restored = restoreMobileAccount(JSON.stringify({
+  version: 1,
+  token: 'player-token',
+  expiresAt: now + 60_000,
+  user: player
+}), now);
+expect(restored?.user).toEqual(player);
+```
+
+Reject/clear:
+
+- wrong version;
+- empty token;
+- expired/non-finite expiry;
+- partial/invalid user failing `isPlayerUser`;
+- malformed JSON.
+
+Pin local-first sign-out: secure credential clears even if API logout or Google sign-out fails.
+
+- [ ] **Step 3: Run red**
+
+```bash
+bun run --cwd apps/mobile test:unit -- \
+  app/api/playerApi.test.ts \
+  app/account/mobileAccount.test.ts
+```
+
+- [ ] **Step 4: Implement the pure modules only**
+
+No `@nativescript/*` imports in this task.
+
+`restoreMobileAccount(raw, now)` uses `isPlayerUser` and returns null on any invalid current-format record. `signInMobileAccount()` persists only after Google exchange returns a guarded `MobilePlayerSessionResponse`.
+
+- [ ] **Step 5: Run mobile pure gate and commit**
+
+```bash
+bun run --cwd apps/mobile test:unit -- \
+  app/api/playerApi.test.ts \
+  app/account/mobileAccount.test.ts
+cd apps/mobile && bunx tsc --noEmit
+cd ../..
+
+git add apps/mobile/app/api/playerApi.ts apps/mobile/app/api/playerApi.test.ts \
+  apps/mobile/app/account/mobileAccount.ts apps/mobile/app/account/mobileAccount.test.ts
+git commit -m "feat(mobile): define validated player account boundary"
+```
+
+---
+
+## Task 3B: Add native Google/secure-storage adapters and pass the iPad auth gate
+
+**Files:**
+- Modify: `apps/mobile/package.json`
+- Modify: `bun.lock`
+- Modify: `apps/mobile/App_Resources/iOS/Info.plist`
+- Create: `apps/mobile/app/api/nativePlayerHttp.ts`
+- Create: `apps/mobile/app/account/nativeGoogleAuth.ts`
+- Create: `apps/mobile/app/account/nativeSessionStore.ts`
+- Create: `apps/mobile/app/account/AccountBar.svelte`
+- Modify: `apps/mobile/app/App.svelte`
+- Modify: `apps/mobile/app/app.css`
+
+- [ ] **Step 1: Add only the two native dependencies**
 
 ```bash
 cd apps/mobile
 bun add @nativescript/google-signin@^2.1.1 @nativescript/secure-storage@^4.0.2
 ```
 
-Expected: `apps/mobile/package.json` and root `bun.lock` change; no Firebase dependency is added.
+No Firebase package and no `GoogleService-Info.plist`.
 
-- [ ] **Step 2: Add failing pure API/account tests before importing native plugins**
+- [ ] **Step 2: Add exact iOS OAuth values to Info.plist**
 
-`playerApi.test.ts` uses an injected transport and pins paths/headers:
+Using the operator-prerequisite values, add:
 
-```ts
-expect(request).toHaveBeenCalledWith({
-  method: 'POST',
-  url: 'https://api.example.com/api/auth/mobile/google',
-  headers: { 'Content-Type': 'application/json' },
-  body: { idToken: 'google-id-token' }
-});
+- `GIDClientID` = exact `org.perseus.mobile` iOS OAuth client ID;
+- `GIDServerClientID` = exact existing Perseus API `GOOGLE_CLIENT_ID`;
+- `CFBundleURLTypes` containing the exact reversed iOS client URL scheme.
 
-expect(completionRequest.headers.Authorization).toBe('Bearer player-token');
-```
+Do not commit example/bracket values. Verify the built plist contains the registered values before the native gate.
 
-`mobileAccount.test.ts` pins restore/sign-in/logout boundaries:
+- [ ] **Step 3: Implement the native Google adapter with explicit configuration**
+
+Read the two Info.plist strings via `NSBundle.mainBundle.objectForInfoDictionaryKey` and configure once:
 
 ```ts
-it('persists a Perseus session only after Google exchange succeeds', async () => {
-  const session = await signInMobileAccount({ google, api, store });
-  expect(store.write).toHaveBeenCalledWith(session);
-});
-
-it('clears the secure Perseus credential even when remote logout fails', async () => {
-  api.logout.mockRejectedValue(new Error('offline'));
-  await signOutMobileAccount({ current: saved, google, api, store });
-  expect(store.clear).toHaveBeenCalledTimes(1);
-});
-
-it('drops an already-expired secure record without a network request', () => {
-  expect(restoreMobileAccount(store, now)).toBeNull();
-  expect(store.clear).toHaveBeenCalledTimes(1);
+await GoogleSignin.configure({
+  clientId: readInfoString('GIDClientID'),
+  serverClientId: readInfoString('GIDServerClientID')
 });
 ```
 
-- [ ] **Step 3: Run mobile tests red**
+Then `signIn()` + `getTokens()` must return a non-empty ID token. `signOut()` delegates to the plugin. Do not load a Google service plist.
 
-```bash
-bun run --cwd apps/mobile test:unit -- app/api/playerApi.test.ts app/account/mobileAccount.test.ts
-```
+- [ ] **Step 4: Implement native secure-storage + HTTP adapters**
 
-Expected: FAIL because the modules do not exist.
-
-- [ ] **Step 4: Implement the injected `PlayerApi` and native HTTP adapter**
-
-`playerApi.ts` owns URL/status parsing; `nativePlayerHttp.ts` owns only NativeScript `Http.request` conversion. Keep this separate from public `puzzleApi.ts` rather than widening its GET-only contract.
-
-For auth/session methods, non-2xx responses throw typed/status-bearing errors. `submitCompletion` returns `{ status, body }` for Task 5 classification instead of throwing on HTTP status; only transport failure rejects.
-
-- [ ] **Step 5: Implement the pure account functions**
-
-```ts
-export async function signInMobileAccount(deps: {
-  google: GoogleIdTokenProvider;
-  api: PlayerApi;
-  store: MobileSessionStore;
-}): Promise<PersistedMobileSession> {
-  const idToken = await deps.google.signIn();
-  const response = await deps.api.exchangeGoogleIdToken(idToken);
-  const session: PersistedMobileSession = { version: 1, ...response };
-  deps.store.write(session);
-  return session;
-}
-```
-
-`restoreMobileAccount(store, now)` accepts only `version: 1`, non-empty token, finite future `expiresAt`, and a structurally present user ID/email; invalid/expired data is cleared. There is no compatibility parser.
-
-`signOutMobileAccount()` attempts API logout and Google sign-out but clears the secure store in a `finally` path.
-
-- [ ] **Step 6: Add the concrete secure-storage and Google adapters**
-
-`nativeSessionStore.ts` uses exactly one key:
+Use one secure key:
 
 ```ts
 const PLAYER_SESSION_KEY = 'perseus_player_session_v1';
-const secureStorage = new SecureStorage();
 ```
 
-Use `getSync`, `setSync`, and `removeSync`; JSON parse/validation stays in `mobileAccount.ts`. Do not enable `useLessSecureStorage`.
+The adapter stores raw current-format JSON only. Validation stays in `mobileAccount.ts`. Do not enable `useLessSecureStorage`.
 
-`nativeGoogleAuth.ts`:
+`nativePlayerHttp.ts` converts NativeScript `Http.request` to the pure `PlayerHttpResponse` contract only.
 
-```ts
-let configured = false;
+- [ ] **Step 5: Add minimal account UI and compose it in App.svelte**
 
-async function ensureConfigured(): Promise<void> {
-  if (configured) return;
-  await GoogleSignin.configure({});
-  configured = true;
-}
+`AccountBar.svelte` gets only current session/busy/error and sign-in/sign-out callbacks. No profile navigation or global store.
 
-export const nativeGoogleIdTokenProvider: GoogleIdTokenProvider = {
-  async signIn() {
-    await ensureConfigured();
-    await GoogleSignin.signIn();
-    const { idToken } = await GoogleSignin.getTokens();
-    if (!idToken) throw new Error('google_id_token_missing');
-    return idToken;
-  },
-  async signOut() {
-    await ensureConfigured();
-    await GoogleSignin.signOut();
-  }
-};
-```
+Boot may show a valid unexpired secure account immediately. Online validity is confirmed through `PlayerApi.getSession()` before any completion drain is allowed; Task 5 owns that common validation/drain path.
 
-- [ ] **Step 7: Configure iOS with the actual OAuth identifiers**
-
-After the operator prerequisite is satisfied, modify `Info.plist` using the actual values from the same Google Cloud project:
-
-```xml
-<key>GIDClientID</key>
-<string>[actual org.perseus.mobile iOS client ID]</string>
-<key>GIDServerClientID</key>
-<string>[actual existing Perseus GOOGLE_CLIENT_ID]</string>
-<key>CFBundleURLTypes</key>
-<array>
-  <dict>
-    <key>CFBundleURLSchemes</key>
-    <array>
-      <string>[actual reversed iOS client ID]</string>
-    </array>
-  </dict>
-</array>
-```
-
-The bracketed values above are instructions to copy the exact registered identifiers, not values to commit literally. Before continuing, inspect the built plist and confirm no bracketed/example value remains.
-
-- [ ] **Step 8: Add the concrete Library account strip and compose it in `App.svelte`**
-
-`AccountBar.svelte` receives only:
-
-```ts
-export let session: PersistedMobileSession | null;
-export let busy: boolean;
-export let error: string | null;
-export let onSignIn: () => void;
-export let onSignOut: () => void;
-```
-
-Do not add account navigation/profile state. `App.svelte` restores secure state at boot and owns sign-in/sign-out mutations.
-
-When online and a restored secure session exists, call `api.getSession(token)` once during boot/foreground validation; an unauthenticated response clears only the secure account state.
-
-- [ ] **Step 9: Run pure gates, then the native auth stop gate**
+- [ ] **Step 6: Run automated mobile gates**
 
 ```bash
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
 ```
 
-Then run the existing mobile app against a Worker configured with the same `GOOGLE_CLIENT_ID`, sign in on the target iPad simulator/device, and record all of these before Task 4:
+- [ ] **Step 7: Run the native auth stop gate before completion work**
+
+On the target iPad simulator/device, prove all of:
 
 ```text
 Google native modal completes
-GoogleSignin.getTokens() returns a non-empty idToken
+Google getTokens returns a non-empty ID token
 POST /api/auth/mobile/google returns 200 for an allowlisted account
-GET /api/auth/session with Bearer returns the same PlayerUser
-terminate/relaunch restores the Perseus account from secure storage
+GET /api/auth/session with Bearer returns authenticated:true for the same PlayerUser
+terminate/relaunch restores the account from secure storage
 Documents/perseus contains no bearer token
 ApplicationSettings contains no bearer token
 ```
 
-If the ID token audience is not the existing server `GOOGLE_CLIENT_ID`, fix Google client/server-client configuration and repeat. Do not change backend audience logic.
+The successful backend exchange is the audience gate. If it fails because `aud` is not the existing `GOOGLE_CLIENT_ID`, fix iOS/server client configuration and repeat; do not change backend verification.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 8: Commit only after the native gate is green**
 
 ```bash
 git add apps/mobile/package.json bun.lock \
   apps/mobile/App_Resources/iOS/Info.plist \
-  apps/mobile/app/api/playerApi.ts apps/mobile/app/api/playerApi.test.ts \
   apps/mobile/app/api/nativePlayerHttp.ts \
-  apps/mobile/app/account \
+  apps/mobile/app/account/nativeGoogleAuth.ts \
+  apps/mobile/app/account/nativeSessionStore.ts \
+  apps/mobile/app/account/AccountBar.svelte \
   apps/mobile/app/App.svelte apps/mobile/app/app.css
-
-git commit -m "feat(mobile): add secure optional Google account"
+git commit -m "feat(mobile): add secure native Google account"
 ```
 
 ---
 
-## Task 4: Add durable local completion records and an account-owned outbox
+## Task 4: Persist one validated completion record per run
 
 **Files:**
 - Create: `apps/mobile/app/storage/nativeAtomicReplace.ts`
@@ -593,7 +515,7 @@ git commit -m "feat(mobile): add secure optional Google account"
 - Create: `apps/mobile/app/completion/completionStore.test.ts`
 - Create: `apps/mobile/app/completion/nativeCompletionFiles.ts`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export type CompletionSyncStatus = 'local_only' | 'pending' | 'synced' | 'terminal';
@@ -607,162 +529,122 @@ export interface MobileCompletionRecordV1 {
   request: RecordPuzzleCompletionV2;
   syncStatus: CompletionSyncStatus;
 }
-
-export interface CompletionOutboxItemV1 {
-  version: 1;
-  runId: string;
-  puzzleId: string;
-  accountId: string;
-  createdAt: number;
-  request: RecordPuzzleCompletionV2;
-}
 ```
-
-```ts
-export interface CompletionFileOps {
-  readText(path: string): string | null;
-  writeTextAtomic(path: string, content: string): void;
-  remove(path: string): void;
-  listFileNames(directory: string): string[];
-}
-```
-
-Store API:
 
 ```ts
 recordCompletion(input): MobileCompletionRecordV1;
-listOutbox(): CompletionOutboxItemV1[];
+listPendingForAccount(accountId: string): MobileCompletionRecordV1[];
 markSynced(runId: string): void;
 markTerminal(runId: string): void;
 ```
 
-- [ ] **Step 1: Write failing store tests for the two ownership paths**
+- [ ] **Step 1: Write failing signed-out/signed-in tests**
 
-Signed out:
+Signed out creates exactly one file and never becomes pending:
 
 ```ts
 const record = store.recordCompletion({ puzzleId, seal, accountId: null });
 expect(record.syncStatus).toBe('local_only');
-expect(files.namesUnder('completions')).toEqual([`${seal.runId}.json`]);
-expect(files.namesUnder('outbox')).toEqual([]);
+expect(record.accountId).toBeNull();
+expect(store.listPendingForAccount('account-a')).toEqual([]);
 ```
 
-Signed in:
+Signed in creates the same single record as pending:
 
 ```ts
 const record = store.recordCompletion({ puzzleId, seal, accountId: 'account-a' });
 expect(record.syncStatus).toBe('pending');
-expect(store.listOutbox()).toEqual([
-  expect.objectContaining({ runId: seal.runId, accountId: 'account-a' })
-]);
-expect(outboxWriteOrder).toBeGreaterThan(completionWriteOrder);
+expect(record.request).toEqual(completionRequestFromSeal(seal));
+expect(store.listPendingForAccount('account-a').map((x) => x.runId)).toEqual([seal.runId]);
 ```
 
-Pin `request` to exact `completionRequestFromSeal(seal)` and `completedAt` to `seal.completedAt`.
+Pin account filtering and `completedAt`, then `runId` sort.
 
-Add transitions:
+- [ ] **Step 2: Pin current-format parsing with shared validators**
 
-```ts
-store.markSynced(runId);
-expect(readRecord(runId).syncStatus).toBe('synced');
-expect(store.listOutbox()).toEqual([]);
+A record is valid only if:
 
-store.markTerminal(runId);
-expect(readRecord(runId).syncStatus).toBe('terminal');
-expect(store.listOutbox()).toEqual([]);
+```text
+version === 1
+runId is valid
+puzzleId is valid
+request passes isRecordPuzzleCompletionV2(request, MAX_COMPLETION_TIME_SECONDS)
+request.runId === runId
+completedAt is finite
+accountId is null or non-empty
+syncStatus is current enum
 ```
 
-Also pin deterministic `createdAt`/`runId` sort and corrupt-outbox removal without deleting the completion/session/download data.
+Add corrupt JSON, invalid request, run-ID mismatch, invalid account, and unknown status cases. Invalid current-format files are removed; no compatibility parser.
 
-- [ ] **Step 2: Run red**
+- [ ] **Step 3: Run red**
 
 ```bash
 bun run --cwd apps/mobile test:unit -- app/completion/completionStore.test.ts
 ```
 
-Expected: FAIL because completion persistence does not exist.
+- [ ] **Step 4: Extract only the existing native atomic replacement helper**
 
-- [ ] **Step 3: Extract only the existing atomic-replace primitive**
-
-Move the current iOS `NSFileManager.replaceItemAtURLWithItemAtURLBackupItemNameOptionsResultingItemURLError` implementation from `sessionFiles.ts` into:
+Move the existing `NSFileManager.replaceItemAt...` implementation from `gameplay/sessionFiles.ts` to:
 
 ```ts
 export function atomicReplaceNativeFile(fromPath: string, toPath: string): void;
 ```
 
-`sessionFiles.ts` imports this helper and otherwise keeps its current `SessionFileOps` surface unchanged. Run the existing session-store tests immediately to prove this is a mechanical extraction.
+`sessionFiles.ts` imports it; its public `SessionFileOps` contract stays unchanged.
 
-- [ ] **Step 4: Implement the pure completion store**
+Run existing session store tests immediately after the mechanical extraction.
 
-`recordCompletion()` must perform this order:
+- [ ] **Step 5: Implement the one-directory completion store**
 
-```ts
-const request = completionRequestFromSeal(seal);
-const record: MobileCompletionRecordV1 = {
-  version: 1,
-  runId: seal.runId,
-  puzzleId,
-  completedAt: seal.completedAt,
-  accountId,
-  request,
-  syncStatus: accountId === null ? 'local_only' : 'pending'
-};
-writeCompletion(record);
-
-if (accountId !== null) {
-  writeOutbox({
-    version: 1,
-    runId: seal.runId,
-    puzzleId,
-    accountId,
-    createdAt: seal.completedAt,
-    request
-  });
-}
-return record;
-```
-
-Do not inspect other local completion files to create outbox entries later.
-
-- [ ] **Step 5: Implement concrete native completion file mechanics**
-
-Create/ensure:
+Path only:
 
 ```text
-Documents/perseus/completions
-Documents/perseus/outbox
+Documents/perseus/completions/<runId>.json
 ```
 
-Use temp file + `atomicReplaceNativeFile()` for all record/outbox writes. `listFileNames()` returns only direct `.json` filenames from the requested directory. No recursive scan/index/database.
+`recordCompletion()` atomically writes one record. `listPendingForAccount()` lists `completions/`, parses/validates current records, filters `pending` + exact account, and sorts by `completedAt` then `runId`.
 
-- [ ] **Step 6: Run mobile persistence gates and commit**
+`markSynced` / `markTerminal` rewrite that same record atomically. There is no `outbox` type, parser, directory, or dual write.
+
+- [ ] **Step 6: Run persistence gates and commit**
 
 ```bash
 bun run --cwd apps/mobile test:unit -- \
   app/gameplay/sessionStore.test.ts \
   app/completion/completionStore.test.ts
 cd apps/mobile && bunx tsc --noEmit
+cd ../..
 
 git add apps/mobile/app/storage/nativeAtomicReplace.ts \
   apps/mobile/app/gameplay/sessionFiles.ts \
   apps/mobile/app/completion/completionStore.ts \
   apps/mobile/app/completion/completionStore.test.ts \
   apps/mobile/app/completion/nativeCompletionFiles.ts
-
-git commit -m "feat(mobile): persist account-owned completion outbox"
+git commit -m "feat(mobile): persist account-owned completions"
 ```
 
 ---
 
-## Task 5: Submit after local persistence and drain only the active account's outbox
+## Task 5: Reuse the shipped completion failure policy and validate the bearer before draining
 
 **Files:**
+- Modify: `packages/game-core/src/session/codec.ts`
+- Modify: `packages/game-core/src/session/codec.test.ts`
+- Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - Create: `apps/mobile/app/completion/completionSync.ts`
 - Create: `apps/mobile/app/completion/completionSync.test.ts`
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
 - Modify: `apps/mobile/app/App.svelte`
 
-**Interfaces:**
+**Produces:**
+
+```ts
+export function completionFailureCodeFromHttpStatus(
+  status: number
+): CompletionFailureCode;
+```
 
 ```ts
 export type SubmissionDisposition =
@@ -770,100 +652,64 @@ export type SubmissionDisposition =
   | 'retryable'
   | 'auth_required'
   | 'terminal';
-
-export function classifyCompletionSubmission(status: number): SubmissionDisposition;
-
-export async function submitRecordedCompletion(args: {
-  item: CompletionOutboxItemV1;
-  token: string;
-  api: PlayerApi;
-  store: CompletionStore;
-}): Promise<SubmissionDisposition>;
-
-export async function drainCompletionOutbox(args: {
-  activeSession: PersistedMobileSession;
-  api: PlayerApi;
-  store: CompletionStore;
-}): Promise<void>;
 ```
 
-Gameplay prop:
+- [ ] **Step 1: Add failing shared status-mapping tests**
+
+Pin exact existing semantics:
 
 ```ts
-export let onCompletion: (puzzleId: string, seal: SealedCompletion) => void;
+expect(completionFailureCodeFromHttpStatus(400)).toBe('bad_request');
+expect(completionFailureCodeFromHttpStatus(401)).toBe('unauthorized');
+expect(completionFailureCodeFromHttpStatus(404)).toBe('not_found');
+expect(completionFailureCodeFromHttpStatus(409)).toBe('run_id_conflict');
+expect(completionFailureCodeFromHttpStatus(429)).toBe('completion_quota_exceeded');
+expect(completionFailureCodeFromHttpStatus(408)).toBe('internal_error');
+expect(completionFailureCodeFromHttpStatus(500)).toBe('internal_error');
+expect(completionFailureCodeFromHttpStatus(503)).toBe('internal_error');
+
+expect(isFailureRetryable('completion_quota_exceeded')).toBe(false);
+expect(isFailureRetryable('unauthorized')).toBe(true);
+expect(isFailureRetryable('internal_error')).toBe(true);
 ```
 
-- [ ] **Step 1: Write failing classification and account-isolation tests**
+- [ ] **Step 2: Extract the current web mapping without changing behavior**
+
+Move only the HTTP-status -> failure-code switch from `+page.svelte` to `codec.ts`. Web keeps transport -> `network_error`, then derives retryability with `isFailureRetryable`.
+
+Run the existing web completion tests, especially quota 429 and unauthorized retry behavior.
+
+- [ ] **Step 3: Add failing mobile disposition/drain tests**
+
+Pin:
+
+```text
+2xx -> synced
+401 -> auth_required, pending preserved, stop
+400/404/409/429 -> terminal, mark terminal, continue
+408/5xx -> retryable, pending preserved, stop
+transport -> retryable, pending preserved, stop
+```
+
+The 429 fixture must use `{ error: 'completion_quota_exceeded', message: ... }` to document that this route's 429 is quota, not generic throttling.
+
+Pin same-account filtering, deterministic sequential order, and account B never mutating account A's record.
+
+- [ ] **Step 4: Implement mobile disposition from the shared policy**
+
+For a non-2xx response:
 
 ```ts
-it.each([
-  [200, 'synced'],
-  [201, 'synced'],
-  [408, 'retryable'],
-  [429, 'retryable'],
-  [500, 'retryable'],
-  [503, 'retryable'],
-  [401, 'auth_required'],
-  [400, 'terminal'],
-  [404, 'terminal'],
-  [409, 'terminal'],
-  [410, 'terminal']
-])('classifies HTTP %s as %s', (status, expected) => {
-  expect(classifyCompletionSubmission(status)).toBe(expected);
-});
+const code = completionFailureCodeFromHttpStatus(response.status);
+if (code === 'unauthorized') return 'auth_required';
+return isFailureRetryable(code) ? 'retryable' : 'terminal';
 ```
 
-Account ownership:
+Transport rejection is `network_error` and therefore retryable. Do not add status ranges such as `status === 429 || status >= 500` in mobile.
 
-```ts
-store.listOutbox.mockReturnValue([
-  makeItem({ runId: 'a-1', accountId: 'account-a', createdAt: 1 }),
-  makeItem({ runId: 'b-1', accountId: 'account-b', createdAt: 2 }),
-  makeItem({ runId: 'a-2', accountId: 'account-a', createdAt: 3 })
-]);
+- [ ] **Step 5: Wire completion persistence after the existing completed-session save**
 
-await drainCompletionOutbox({
-  activeSession: makeSession('account-b'),
-  api,
-  store
-});
-
-expect(api.submitCompletion).toHaveBeenCalledTimes(1);
-expect(api.submitCompletion).toHaveBeenCalledWith(
-  expect.any(String),
-  expect.objectContaining({ runId: 'b-1' }),
-  'token-account-b'
-);
-expect(store.markSynced).toHaveBeenCalledWith('b-1');
-expect(store.markSynced).not.toHaveBeenCalledWith('a-1');
-```
-
-Add tests that drain is sequential, terminal continues, and retryable/401 stops without removing the pending item.
-
-- [ ] **Step 2: Run red**
-
-```bash
-bun run --cwd apps/mobile test:unit -- app/completion/completionSync.test.ts
-```
-
-- [ ] **Step 3: Implement the minimal classification/drain**
-
-```ts
-export function classifyCompletionSubmission(status: number): SubmissionDisposition {
-  if (status >= 200 && status < 300) return 'synced';
-  if (status === 401) return 'auth_required';
-  if (status === 408 || status === 429 || status >= 500) return 'retryable';
-  return 'terminal';
-}
-```
-
-Transport rejection is treated as `retryable`.
-
-`drainCompletionOutbox()` filters by exact `accountId`, keeps the store-provided deterministic order, awaits each request before starting the next, and stops on `retryable` or `auth_required`.
-
-- [ ] **Step 4: Wire gameplay completion after the existing local session save**
-
-Preserve this order in `completion_sealed`:
+Keep this ordering in `Gameplay.svelte`:
 
 ```ts
 } else if (event.type === 'completion_sealed') {
@@ -873,80 +719,81 @@ Preserve this order in `completion_sealed`:
 }
 ```
 
-`Gameplay.svelte` still does not know account state, HTTP, or outbox paths.
+`Gameplay.svelte` knows no account/HTTP/filesystem queue details.
 
-- [ ] **Step 5: Compose local-first immediate submission in `App.svelte`**
+`App.svelte` captures `accountSession?.user.id ?? null`, writes the completion record synchronously, then may start the guarded validation/drain path. If persistence fails, do not submit that run.
 
-`App.svelte` completion handler:
+- [ ] **Step 6: Implement one session-validation-before-drain path**
+
+Use the same function after sign-in, foreground resume, and offline -> online connectivity transition:
 
 ```ts
-function onGameplayCompletion(puzzleId: string, seal: SealedCompletion): void {
-  const accountId = accountSession?.user.id ?? null;
-  const record = completionStore.recordCompletion({ puzzleId, seal, accountId });
-  if (record.accountId !== null && accountSession?.user.id === record.accountId) {
-    void drainOutboxGuarded();
+async function validateAccountAndDrain(): Promise<void> {
+  const current = accountSession;
+  if (!current) return;
+
+  let response: PlayerSessionResponse;
+  try {
+    response = await playerApi.getSession(current.token);
+  } catch (error) {
+    if (isExplicitUnauthorized(error)) {
+      clearAccountSession();
+    }
+    return; // transport/5xx keeps the local credential and skips drain
   }
+
+  if (!response.authenticated) {
+    clearAccountSession();
+    return;
+  }
+
+  accountSession = { ...current, user: response.user };
+  await drainPendingForSession(accountSession);
 }
 ```
 
-`recordCompletion()` is synchronous/durable before `drainOutboxGuarded()` starts. If persistence throws, catch/surface/log that failure and do not submit the run.
+`clearAccountSession()` clears secure storage + in-memory account only. It never touches completion files, sessions, or downloads.
 
-- [ ] **Step 6: Add exactly three active-app retry triggers**
+`PlayerApi.getSession()` already returns valid `{ authenticated: false }`; it must not throw for that 200 response.
 
-In `App.svelte`:
+- [ ] **Step 7: Add exactly three active-app validation/drain triggers**
 
 1. after successful sign-in;
-2. on `Application.resumeEvent` when an account is active and `Connectivity.getConnectionType() !== Connectivity.connectionType.none`;
-3. `Connectivity.startMonitoring()` when connection changes from `none` to any connected type.
+2. `Application.resumeEvent` when an account exists and connectivity is not none;
+3. connectivity transition from none -> connected.
 
-Use one in-memory guard:
+Use one in-memory promise guard so overlapping triggers collapse to one pass. No timer.
 
-```ts
-let outboxDrainPromise: Promise<void> | null = null;
-
-function drainOutboxGuarded(): Promise<void> {
-  if (!accountSession) return Promise.resolve();
-  if (outboxDrainPromise) return outboxDrainPromise;
-  const session = accountSession;
-  outboxDrainPromise = drainCompletionOutbox({ activeSession: session, api: playerApi, store: completionStore })
-    .finally(() => {
-      outboxDrainPromise = null;
-    });
-  return outboxDrainPromise;
-}
-```
-
-Before each item submission, `drainCompletionOutbox()` still checks the immutable item account against the supplied session. A later account switch cannot reuse this pass to submit the other account's item.
-
-Stop connectivity monitoring and remove the resume listener during component teardown. Do not add a timer.
-
-- [ ] **Step 7: Run mobile gates and commit**
+- [ ] **Step 8: Run shared/web/mobile gates and commit**
 
 ```bash
+bun run --cwd packages/game-core test:unit -- src/session/codec.test.ts
+bun run --cwd apps/web test:unit -- 'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
+cd ../..
 
-git add apps/mobile/app/completion/completionSync.ts \
+git add packages/game-core/src/session/codec.ts packages/game-core/src/session/codec.test.ts \
+  'apps/web/src/routes/puzzle/[id]/+page.svelte' \
+  'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts' \
+  apps/mobile/app/completion/completionSync.ts \
   apps/mobile/app/completion/completionSync.test.ts \
-  apps/mobile/app/gameplay/Gameplay.svelte \
-  apps/mobile/app/App.svelte
-
-git commit -m "feat(mobile): sync same-account completions when online"
+  apps/mobile/app/gameplay/Gameplay.svelte apps/mobile/app/App.svelte
+git commit -m "feat(mobile): retry validated account completions"
 ```
 
 ---
 
-## Task 6: Prove the offline/account boundary on iPad and run the single-PR final gate
+## Task 6: Prove anonymous/offline/account-switch boundaries on iPad and run the single-PR gate
 
 **Files:**
-- No planned production files. Fix only defects discovered by this acceptance pass on the same HPA-4 branch.
+- No planned production files. Fix only defects discovered by acceptance on the same HPA-4 branch.
 
-**Produces:** recorded acceptance evidence in the HPA-4 PR body/comment; no second PR.
-
-- [ ] **Step 1: Run focused and repository automated gates**
+- [ ] **Step 1: Run automated gates**
 
 ```bash
 bun run --cwd packages/types test:unit
+bun run --cwd packages/game-core test:unit
 bun run --cwd apps/api test:unit
 bun run --cwd apps/mobile test:unit
 cd apps/mobile && bunx tsc --noEmit
@@ -957,106 +804,81 @@ bun run lint
 
 All must pass or the PR remains draft with the exact unrelated/pre-existing blocker documented.
 
-- [ ] **Step 2: Prove signed-out completion never becomes future upload work**
+- [ ] **Step 2: Prove signed-out completion stays local-only forever**
 
 On iPad:
 
-1. Ensure Perseus account is signed out.
-2. Disable networking.
-3. Complete a downloaded puzzle.
-4. Inspect `Documents/perseus/completions/<runId>.json`:
-   - `accountId` is `null`;
-   - `syncStatus` is `local_only`.
-5. Confirm no `outbox/<runId>.json` exists.
-6. Restore networking and sign in.
-7. Confirm that run still has no outbox item and no completion request for that `runId` reaches the API.
+1. sign out;
+2. disable networking;
+3. complete a downloaded puzzle;
+4. inspect `Documents/perseus/completions/<runId>.json` and verify `accountId: null`, `syncStatus: 'local_only'`;
+5. restore network and sign in;
+6. verify that record remains local-only and no request for that `runId` reaches the completion endpoint.
 
-This is the hard fence against retroactive anonymous upload.
+- [ ] **Step 3: Prove signed-in offline completion becomes one pending record and drains on reconnect**
 
-- [ ] **Step 3: Prove signed-in offline -> reconnect -> idempotent drain**
+1. sign in as account A;
+2. disable networking;
+3. complete another puzzle;
+4. verify exactly one completion file exists for the run with account A + `pending`;
+5. verify there is no `Documents/perseus/outbox` directory;
+6. restore connectivity;
+7. session probe must return authenticated true before completion POST;
+8. completion POST succeeds/replays and the same record becomes `synced`.
 
-1. Sign in as allowlisted account A.
-2. Disable networking.
-3. Complete a different downloaded puzzle.
-4. Confirm completion JSON is `pending`, `accountId` equals A's `PlayerUser.id`, and `outbox/<runId>.json` exists.
-5. Confirm completion UI remains usable while offline.
-6. Restore connectivity while the app is active.
-7. Confirm exactly the existing `/api/puzzles/:id/complete` route receives the same `runId`/V2 request.
-8. Confirm completion JSON becomes `synced` and the outbox file is removed.
-9. Replay the same request once manually/test-side and confirm existing server idempotency reports replay rather than a duplicate logical completion.
+- [ ] **Step 4: Prove quota/conflict are terminal and do not poison later work**
 
-- [ ] **Step 4: Prove account-switch ownership**
+Using controlled API/test data, exercise:
 
-1. Create another pending completion while signed in as account A.
-2. Sign out offline; confirm local content/outbox remains.
-3. Sign in as allowlisted account B.
-4. Restore networking/trigger foreground.
-5. Confirm A's outbox file remains untouched and no request for A's run is made with B's bearer token.
-6. Sign out B and sign back in as A.
-7. Confirm A's pending run drains and the outbox item is removed only then.
+- 429 `completion_quota_exceeded` -> current record becomes terminal and the drain continues to the next same-account pending record;
+- 409 `run_id_conflict` -> terminal and continue;
+- 5xx -> current record remains pending and later items are not attempted in that pass.
 
-- [ ] **Step 5: Prove secure storage boundary and logout scope**
+- [ ] **Step 5: Prove dead bearer is cleared before retry work**
 
-Before/after terminate + relaunch and logout, inspect:
+Invalidate/revoke the current Perseus session, then trigger foreground/connectivity validation:
 
 ```text
-Documents/perseus/sessions       preserved
-Documents/perseus/downloads      preserved
-Documents/perseus/completions    preserved
-Documents/perseus/outbox         preserved except items legitimately drained
-ApplicationSettings              contains no Perseus bearer token
+GET /api/auth/session with bearer -> 200 { authenticated:false }
+secure storage record removed
+in-memory account removed
+no completion POST attempted in that pass
+pending completion files remain unchanged
 ```
 
-After logout, `GET /api/auth/session` with the old bearer must no longer authenticate when server revocation succeeded; regardless of network, the app must no longer load that bearer from secure storage.
+- [ ] **Step 6: Prove account isolation**
 
-- [ ] **Step 6: Run the scope fence**
+1. create a pending completion as account A;
+2. sign out and sign in as account B;
+3. trigger foreground/connectivity validation and verify A's record is neither submitted nor mutated;
+4. sign back in as account A;
+5. validate session, drain, and verify replay-safe completion sync.
 
-```bash
-git diff --name-only main...HEAD
-rg "perseus_player_session_v1|Authorization: Bearer|Bearer " apps/mobile/app
-rg "ApplicationSettings" apps/mobile/app/account apps/mobile/app/completion
-rg "POST /api/auth/mobile/google|/api/auth/mobile/google" apps/api apps/mobile
-rg "mobile.*complete|/api/mobile" apps/api apps/mobile
+- [ ] **Step 7: Prove credential storage boundary**
+
+After sign-in, terminate/relaunch, and logout, inspect:
+
+```text
+Documents/perseus/** -> no bearer token
+ApplicationSettings -> no bearer token
+secure storage -> current bearer present only while signed in
+logout -> secure bearer removed; downloads/sessions/completions preserved
 ```
 
-Expected:
+- [ ] **Step 8: Final scope/diff review**
 
-- changed files are limited to HPA-4 auth/account/completion work plus the two planning docs;
-- secure token references are limited to secure-account/API code;
-- no `ApplicationSettings` token storage;
-- one mobile Google exchange route;
-- no alternate mobile completion route.
+Confirm:
 
-- [ ] **Step 7: Update the draft PR with acceptance evidence; do not create another PR**
+```text
+one HPA-4 PR only
+no Firebase dependency
+no GoogleService-Info.plist
+no outbox directory/type/parser
+no second backend Google audience
+no alternate completion endpoint
+no D1/KV/Workflow/schema migration
+no background/timer sync
+web completion retry behavior unchanged
+```
 
-Record exact automated results and the three native scenarios (anonymous local-only, same-account offline retry, account switching) in the existing HPA-4 PR. Keep the PR draft until failures are resolved and the evidence is complete.
-
----
-
-## Plan Self-Review
-
-### Spec coverage
-
-- Native Google sign-in + ID-token exchange: Task 1 + Task 3.
-- Existing allowlist/player/session reuse: Task 1.
-- One bearer/cookie session validator with web compatibility: Task 2.
-- Secure mobile credential storage: Task 3.
-- Local-first completion record: Task 4 + Task 5.
-- Logged-out completions never retro-upload: Task 4 + Task 6.
-- Same-account pending outbox and sequential retry: Task 4 + Task 5.
-- Foreground/connectivity retry only: Task 5.
-- Account-switch safety/logout preservation: Task 5 + Task 6.
-- Existing completion endpoint/runId idempotency: Task 2 + Task 6.
-- No cloud save/background framework/provider abstraction: global constraints + scope fence.
-
-### Placeholder scan
-
-The only bracketed strings are in the Task 3 `Info.plist` example, where they explicitly mean “copy the actual registered external OAuth identifiers and verify no bracketed/example value is committed.” They are not source placeholders to ship.
-
-### Type consistency
-
-- Server exchange returns `MobilePlayerSessionResponse`.
-- `PersistedMobileSession` adds only `version: 1` around that response.
-- `PlayerApi.submitCompletion()` consumes the existing `RecordPuzzleCompletionV2` projected by `completionRequestFromSeal()`.
-- `CompletionOutboxItemV1.accountId` is always non-null and is compared to `PersistedMobileSession.user.id` before submission.
-- `Gameplay.svelte` emits only `{ puzzleId, SealedCompletion }`; account/network/storage ownership stays in `App.svelte` and completion modules.
+Update the PR body with actual gate results and leave HPA-4 In Progress until the native acceptance ledger is green.
