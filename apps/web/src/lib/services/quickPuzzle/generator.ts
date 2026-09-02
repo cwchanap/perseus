@@ -137,10 +137,19 @@ function buildPieceMeta(rows: number, cols: number, pieceCount: number): QuickPi
 
 function generateId(): string {
 	const uuid =
-		typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-			? crypto.randomUUID()
-			: Math.random().toString(36).slice(2) + Date.now().toString(36);
+		typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : randomUuidFromRandomValues();
 	return `${QUICK_PUZZLE_ID_PREFIX}${uuid}`;
+}
+
+// ponytail: getRandomValues is not secure-context-gated, so this replaces the
+// Math.random fallback CodeQL flags (js/insecure-randomness) while keeping
+// pre-randomUUID browsers working.
+function randomUuidFromRandomValues(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	bytes[6] = (bytes[6] & 0x0f) | 0x40;
+	bytes[8] = (bytes[8] & 0x3f) | 0x80;
+	const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export async function generateQuickPuzzle(

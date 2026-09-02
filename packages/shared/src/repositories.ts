@@ -40,7 +40,8 @@ export async function getProfileOverride(
 export function isPublicSafeDisplayName(name: string): boolean {
 	const trimmed = name.trim();
 	if (!trimmed) return false;
-	if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(trimmed)) return false;
+	// ponytail: length guard caps ReDoS backtracking (CodeQL js/polynomial-redos); RFC max email is 320
+	if (trimmed.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(trimmed)) return false;
 	return true;
 }
 
