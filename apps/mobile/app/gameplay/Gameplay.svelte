@@ -44,6 +44,10 @@
 	export let launch: GameplayLaunch;
 	export let storage: SessionStorageAdapter;
 	export let onExit: () => void;
+	// Composition-root notification that this run just sealed completion.
+	// Gameplay knows nothing about accounts, sessions, APIs, or storage — the
+	// parent owns all completion syncing.
+	export let onCompletion: (puzzleId: string, seal: SealedCompletion) => void;
 
 	const spec = sessionSpecFromManifest(launch.install.manifest);
 	const context = validationContextFrom(spec);
@@ -89,6 +93,7 @@
 						// immediate save contains the completed snapshot.
 						saveCurrentSnapshot();
 						completionSeal = event.seal;
+						onCompletion(spec.puzzleId, event.seal);
 					}
 				}
 			});

@@ -2318,6 +2318,21 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	);
 
+	it('keeps a 429 quota failure terminal through the shared status mapper', async () => {
+		// The shared completionFailureCodeFromHttpStatus maps 429 to
+		// completion_quota_exceeded, which isFailureRetryable treats as terminal:
+		// no manual retry affordance may appear, unlike the retryable 500.
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(429, 'quota_exceeded', 'Too many requests')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+	});
+
 	it('handles server submission failure with a non-ApiError (network_error)', async () => {
 		vi.mocked(recordCompletion).mockRejectedValueOnce(new Error('Network failure'));
 		await renderPuzzlePage();

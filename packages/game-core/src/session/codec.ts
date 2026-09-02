@@ -68,6 +68,36 @@ export function isFailureRetryable(code: CompletionFailureCode): boolean {
 }
 
 /**
+ * Shared projection of a completion-submission HTTP status onto the persisted
+ * failure-code vocabulary. Both the web route's mapCompletionError and the
+ * mobile completion drain derive their codes from this single mapping so a
+ * given status can never be retryable on one platform and terminal on the
+ * other. 401 maps to `unauthorized` (retryable: the caller decides whether a
+ * re-authenticated retry is allowed), 408 maps to `network_error`, and any
+ * other 4xx collapses to `bad_request` while 5xx and unrecognized statuses
+ * collapse to `internal_error`.
+ */
+export function completionFailureCodeFromHttpStatus(status: number): CompletionFailureCode {
+	switch (status) {
+		case 400:
+			return 'bad_request';
+		case 401:
+			return 'unauthorized';
+		case 404:
+			return 'not_found';
+		case 408:
+			return 'network_error';
+		case 409:
+			return 'run_id_conflict';
+		case 429:
+			return 'completion_quota_exceeded';
+		default:
+			if (status >= 400 && status < 500) return 'bad_request';
+			return 'internal_error';
+	}
+}
+
+/**
  * Allowlisted projection of runtime state to the persisted schema. Fields are
  * constructed explicitly — runtime state is never spread. Returns null for a
  * disposed session (the serializer never writes a restorable `disposed`).
