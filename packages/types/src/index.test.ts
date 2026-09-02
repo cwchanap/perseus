@@ -16,6 +16,7 @@ import {
 	PUZZLE_CATEGORIES,
 	isPlayerSessionResponse,
 	isPlayerUser,
+	isMobilePlayerSessionResponse,
 	isPlayerAllowlistEntry,
 	isPlayerProfile,
 	isPlayerPuzzleSummary,
@@ -25,6 +26,7 @@ import {
 	isValidCompletionRunFields,
 	isRecordPuzzleCompletionV2,
 	type PlayerSessionResponse,
+	type PlayerUser,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
 	type PlayerPuzzleSummary,
@@ -497,6 +499,43 @@ describe('player auth contracts', () => {
 				createdAt: 1716500000000,
 				addedBy: 'admin'
 			})
+		).toBe(false);
+	});
+});
+
+describe('mobile player session response contract', () => {
+	const player: PlayerUser = {
+		id: 'google-sub-123',
+		email: 'player@example.com',
+		name: 'Player One',
+		picture: 'https://example.com/avatar.png',
+		createdAt: 1_716_500_000_000,
+		lastLoginAt: 1_716_500_000_000
+	};
+
+	it('accepts a mobile session response with a token, expiry, and user', () => {
+		expect(
+			isMobilePlayerSessionResponse({
+				token: 'player-session-token',
+				expiresAt: 1_719_092_000_000,
+				user: player
+			})
+		).toBe(true);
+	});
+
+	it('rejects a mobile session response with an empty token', () => {
+		expect(isMobilePlayerSessionResponse({ token: '', expiresAt: 123, user: player })).toBe(false);
+	});
+
+	it('rejects a mobile session response with a non-finite expiry', () => {
+		expect(isMobilePlayerSessionResponse({ token: 'x', expiresAt: Number.NaN, user: player })).toBe(
+			false
+		);
+	});
+
+	it('rejects a mobile session response with an invalid user', () => {
+		expect(
+			isMobilePlayerSessionResponse({ token: 'x', expiresAt: 123, user: { id: 'partial' } })
 		).toBe(false);
 	});
 });

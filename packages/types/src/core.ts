@@ -150,6 +150,12 @@ export type PlayerSessionResponse =
 	| { authenticated: true; user: PlayerUser }
 	| { authenticated: false; user?: undefined };
 
+export interface MobilePlayerSessionResponse {
+	token: string;
+	expiresAt: number;
+	user: PlayerUser;
+}
+
 export interface PlayerAllowlistEntry {
 	email: string;
 	createdAt: number;
@@ -362,6 +368,18 @@ export function isPlayerSessionResponse(value: unknown): value is PlayerSessionR
 	if (typeof response.authenticated !== 'boolean') return false;
 	if (response.authenticated) return isPlayerUser(response.user);
 	return response.user === undefined;
+}
+
+export function isMobilePlayerSessionResponse(
+	value: unknown
+): value is MobilePlayerSessionResponse {
+	if (typeof value !== 'object' || value === null) return false;
+	const response = value as Record<string, unknown>;
+	return (
+		isNonEmptyString(response.token) &&
+		isFiniteNumber(response.expiresAt) &&
+		isPlayerUser(response.user)
+	);
 }
 
 export function isPlayerAllowlistEntry(value: unknown): value is PlayerAllowlistEntry {

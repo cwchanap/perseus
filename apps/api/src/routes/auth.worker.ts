@@ -15,6 +15,7 @@ import {
 	resolveAllowedOrigins,
 	verifyGoogleIdToken
 } from '../services/player-auth.shared';
+import type { GoogleIdentityClaims } from '../services/player-auth.shared';
 import {
 	createPlayerSession,
 	getAllowlistEntry,
@@ -254,6 +255,41 @@ auth.get('/google/callback', async (c) => {
 		console.error('Player Google auth callback failed:', error);
 		return redirectToLogin(c, 'google_error', webOrigin);
 	}
+});
+
+auth.post('/mobile/google', async (c) => {
+	if (!c.env.GOOGLE_CLIENT_ID) {
+		return serverMisconfigured();
+	}
+
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		body = null;
+	}
+	const idToken =
+		typeof body === 'object' && body !== null ? (body as Record<string, unknown>).idToken : null;
+	if (typeof idToken !== 'string' || idToken.trim().length === 0) {
+		return c.json({ error: 'bad_request', message: 'A Google idToken is required' }, 400);
+	}
+
+	let claims: GoogleIdentityClaims;
+	try {
+		claims = await verifyGoogleIdToken(idToken, c.env.GOOGLE_CLIENT_ID);
+	} catch (error) {
+		console.error('Mobile Google auth failed:', error);
+		return c.json({ error: 'unauthorized', message: 'Google identity verification failed' }, 401);
+	}
+
+	const allowlistEntry = await getAllowlistEntry(c.env.PUZZLE_METADATA, claims.email);
+	if (!allowlistEntry) {
+		return c.json({ error: 'forbidden', message: 'Email is not allowlisted' }, 403);
+	}
+
+	const player = await upsertPlayer(c.env.PUZZLE_METADATA, claims);
+	const session = await createPlayerSession(c.env.PUZZLE_METADATA, player);
+	return withNoStore(c.json({ ...session, user: player }));
 });
 
 auth.get('/session', async (c) => {
