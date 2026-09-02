@@ -329,6 +329,12 @@ export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as c
 // Validation functions
 
 const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_LENGTH = 320;
+
+// ponytail: length guard caps ReDoS backtracking (CodeQL js/polynomial-redos); RFC max email is 320
+function isSimpleEmail(value: string): boolean {
+	return value.length <= MAX_EMAIL_LENGTH && SIMPLE_EMAIL_PATTERN.test(value);
+}
 
 function isNonEmptyString(value: unknown): value is string {
 	return typeof value === 'string' && value.trim().length > 0;
@@ -342,7 +348,7 @@ export function isPlayerUser(value: unknown): value is PlayerUser {
 	if (typeof value !== 'object' || value === null) return false;
 	const user = value as Record<string, unknown>;
 	if (!isNonEmptyString(user.id)) return false;
-	if (!isNonEmptyString(user.email) || !SIMPLE_EMAIL_PATTERN.test(user.email)) return false;
+	if (!isNonEmptyString(user.email) || !isSimpleEmail(user.email)) return false;
 	if (!isFiniteNumber(user.createdAt)) return false;
 	if (!isFiniteNumber(user.lastLoginAt)) return false;
 	if (user.name !== undefined && !isNonEmptyString(user.name)) return false;
@@ -361,7 +367,7 @@ export function isPlayerSessionResponse(value: unknown): value is PlayerSessionR
 export function isPlayerAllowlistEntry(value: unknown): value is PlayerAllowlistEntry {
 	if (typeof value !== 'object' || value === null) return false;
 	const entry = value as Record<string, unknown>;
-	if (!isNonEmptyString(entry.email) || !SIMPLE_EMAIL_PATTERN.test(entry.email)) return false;
+	if (!isNonEmptyString(entry.email) || !isSimpleEmail(entry.email)) return false;
 	if (!isFiniteNumber(entry.createdAt)) return false;
 	if (!isNonEmptyString(entry.addedBy)) return false;
 	if (entry.player !== undefined && !isPlayerUser(entry.player)) return false;

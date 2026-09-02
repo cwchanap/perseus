@@ -15,6 +15,7 @@ import {
 	THUMBNAIL_SIZE,
 	PUZZLE_CATEGORIES,
 	isPlayerSessionResponse,
+	isPlayerUser,
 	isPlayerAllowlistEntry,
 	isPlayerProfile,
 	isPlayerPuzzleSummary,
@@ -363,6 +364,17 @@ describe('versioned puzzle completion contract', () => {
 });
 
 describe('player auth contracts', () => {
+	it('rejects player users with over-length emails (ReDoS length guard)', () => {
+		expect(
+			isPlayerUser({
+				id: 'google-sub-123',
+				email: 'a'.repeat(250) + '@' + 'b'.repeat(100) + '.com',
+				createdAt: 1716500000000,
+				lastLoginAt: 1716500100000
+			})
+		).toBe(false);
+	});
+
 	it('validates an authenticated player session response', () => {
 		const response: PlayerSessionResponse = {
 			authenticated: true,

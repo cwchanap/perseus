@@ -174,7 +174,7 @@ describe('generateQuickPuzzle', () => {
 		try {
 			const result = await generateQuickPuzzle(file, 4, 'Fallback');
 			expect(result.stored.id).toMatch(/^q-/);
-			expect(result.stored.id).not.toMatch(
+			expect(result.stored.id).toMatch(
 				/^q-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 			);
 		} finally {
@@ -230,13 +230,14 @@ describe('generateQuickPuzzle', () => {
 		try {
 			vi.stubGlobal('crypto', {
 				...crypto,
-				randomUUID: undefined
+				randomUUID: undefined,
+				getRandomValues: crypto.getRandomValues.bind(crypto)
 			});
 
 			const result = await generateQuickPuzzle(file, 4, 'Fallback');
 
 			expect(result.stored.id).toMatch(/^q-/);
-			expect(result.stored.id).not.toMatch(
+			expect(result.stored.id).toMatch(
 				/^q-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 			);
 		} finally {
