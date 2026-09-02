@@ -266,4 +266,21 @@ describe('signOutMobileAccount', () => {
 
 		expect(store.read()).toBeNull();
 	});
+
+	it('propagates a secure-store clear failure instead of reporting success', async () => {
+		const store = memoryStore();
+		store.write('{"version":1}');
+		store.clear = () => {
+			throw new Error('secure_storage_remove_failed');
+		};
+
+		await expect(
+			signOutMobileAccount({
+				provider: fakeProvider({ signOut: async () => undefined }),
+				api: fakeApi({ logout: async () => undefined }),
+				store,
+				token: 'player-token'
+			})
+		).rejects.toThrow('secure_storage_remove_failed');
+	});
 });

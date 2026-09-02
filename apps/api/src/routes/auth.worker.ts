@@ -172,6 +172,9 @@ auth.use('/google/*', async (c, next) => {
 
 auth.use('/google/start', oauthRateLimit);
 auth.use('/google/callback', oauthRateLimit);
+// The public mobile token exchange faces the same unauthenticated JWKS-
+// refresh amplification as the browser routes, so it shares their limiter.
+auth.use('/mobile/google', oauthRateLimit);
 
 auth.get('/google/start', async (c) => {
 	const state = createOAuthState();
