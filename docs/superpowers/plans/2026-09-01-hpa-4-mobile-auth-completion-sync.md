@@ -650,14 +650,12 @@ If the native ID token is rejected, stop Task 3B and fix Google configuration. D
 - [ ] **Step 9: Commit only after the native gate is green**
 
 ```bash
-git add apps/mobile/package.json bun.lock apps/mobile/App_Resources/iOS/Info.plist \
-  apps/mobile/app/api/nativeHttp.ts apps/mobile/app/api/nativePuzzleHttp.ts \
+git add -A apps/mobile/app/api/nativePuzzleHttp.ts apps/mobile/app/api/nativeHttp.ts \
+  apps/mobile/package.json bun.lock apps/mobile/App_Resources/iOS/Info.plist \
   apps/mobile/app/account/nativeGoogleAuth.ts apps/mobile/app/account/nativeSessionStore.ts \
   apps/mobile/app/account/AccountBar.svelte apps/mobile/app/App.svelte apps/mobile/app/app.css
 git commit -m "feat(mobile): add secure native Google account"
 ```
-
-The old `nativePuzzleHttp.ts` path is staged as a deletion by the rename.
 
 ---
 
@@ -737,13 +735,11 @@ bunx vitest run app/storage/fileStore.test.ts
 bunx tsc --noEmit
 cd ../..
 
-git add apps/mobile/app/storage apps/mobile/app/gameplay/sessionStore.ts \
+git add -A apps/mobile/app/storage apps/mobile/app/gameplay/sessionStore.ts \
   apps/mobile/app/gameplay/sessionStore.test.ts apps/mobile/app/gameplay/sessionFiles.ts \
   apps/mobile/app/App.svelte
 git commit -m "refactor(mobile): promote shared file storage primitives"
 ```
-
-Old gameplay paths are staged as deletions by the renames.
 
 ---
 
@@ -860,7 +856,7 @@ git commit -m "feat(mobile): persist account-bound completion records"
 - Modify: `packages/game-core/src/session/codec.ts`
 - Modify: `packages/game-core/src/session/codec.test.ts`
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
-- Modify: existing web puzzle route test
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - Create: `apps/mobile/app/completion/completionSync.ts`
 - Create: `apps/mobile/app/completion/completionSync.test.ts`
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
