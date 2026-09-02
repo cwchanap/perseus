@@ -1153,3 +1153,18 @@ Expected final production shape:
 - [ ] **Step 9: Record acceptance evidence in PR #76**
 
 Update the PR body/checklist with actual command results and native evidence. Keep the PR draft if any required stop gate remains red.
+
+## Review Resolution: 2026-09-02 Reuse/Retry Review
+
+Accepted after verification:
+
+- tolerate one `{ authenticated:false }` because Worker KV session lookup is explicitly non-authoritative on a single cross-isolate miss;
+- add completion-written as the fourth drain trigger and cover signed-in/online completion in native acceptance;
+- promote the existing session file primitives to one generic `app/storage/` layer with only `list()` added;
+- replace the GET-only native HTTP module with one general `Http.request` adapter and retain PuzzleApi as a thin wrapper;
+- use direct `bunx vitest run <files>` commands for focused red/green gates, add `bun install --frozen-lockfile` baseline, and stage the completion test by explicit path;
+- carry named KV/plugin/online-drain risks with explicit detection points.
+
+Not accepted:
+
+- `attempts` / five-attempt terminal cap on `MobileCompletionRecordV1`. Five transient server failures can permanently discard valid work, while this pre-release project intentionally has no backward-compatibility obligation. HPA-4 instead maps unknown 4xx to terminal immediately and retains only 5xx/transport as retryable. Add retry metadata later only if real usage demonstrates a need.
