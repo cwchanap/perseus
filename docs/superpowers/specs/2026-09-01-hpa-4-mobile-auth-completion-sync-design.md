@@ -269,7 +269,7 @@ After validation, process only pending records owned by the active account, one 
 - synced -> mark record synced and continue;
 - terminal -> mark record terminal and continue;
 - retryable -> keep pending and stop;
-- unauthorized completion response -> keep pending and feed an unauthenticated signal through the same two-strike account policy, then stop.
+- unauthorized -> keep pending, feed one unauthenticated signal through the same two-strike account policy, and stop.
 
 No background task, daemon, timer, polling loop, push integration, or generic sync framework.
 
@@ -405,7 +405,7 @@ Before merge, prove:
 
 1. allowlisted Google sign-in exchanges and survives terminate/relaunch from secure storage;
 2. signed-out offline completion remains `local_only` after later sign-in;
-3. signed-in **online** completion becomes `synced` without background/resume/reconnect;
+3. signed-in online completion becomes `synced` without background/resume/reconnect;
 4. signed-in offline completion stays `pending`, then reconnect submits it;
 5. pending account A work is skipped under account B and later drains under A;
 6. one simulated first unauthenticated session probe does not delete the secure credential; a later authenticated probe resets the counter.
