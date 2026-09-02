@@ -426,6 +426,20 @@ Before merge, prove:
 - alternate completion routes;
 - redesign of browser Google OAuth.
 
+## Review Resolution: 2026-09-02 Reuse/Retry Review
+
+Accepted after verification:
+
+- tolerate one `{ authenticated:false }` because Worker KV lookup is explicitly non-authoritative on one cross-isolate miss;
+- add completion-written as the fourth drain trigger and acceptance-test the signed-in/online path;
+- promote the existing generic session file code into one `app/storage/` layer with only `list()` added;
+- replace the GET-only native HTTP adapter with one general `Http.request` adapter and keep PuzzleApi as a wrapper;
+- fix focused Vitest commands, add workspace installation before baseline gates, use explicit git-add paths, and carry named risks.
+
+Not accepted:
+
+- `attempts` / five-attempt terminal cap. A retry cap can permanently discard a valid run during a temporary server outage. This pre-release project does not need to preserve current completion-file schema compatibility, so retry metadata can be added later if actual usage justifies it. Unknown 4xx is terminal now; 5xx/transport remains retryable.
+
 ## Success Criteria
 
 HPA-4 is complete when a personal/TestFlight iPad build can optionally sign in with an allowlisted Google account, keep the existing Perseus player session only in secure storage, tolerate one non-authoritative KV miss, record every completion locally before network work, submit signed-in online completions immediately, retry only same-account pending records through the existing V2 endpoint using the same failure policy as web, and preserve signed-out offline gameplay unchanged.
