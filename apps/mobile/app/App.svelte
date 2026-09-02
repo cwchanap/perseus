@@ -2,8 +2,19 @@
 	import { onMount } from 'svelte';
 	import { Folder, knownFolders, path } from '@nativescript/core';
 	import { createSessionStorageAdapter, type SessionStorageAdapter } from '@perseus/game-core';
-	import { nativePuzzleJsonRequest } from './api/nativePuzzleHttp';
+	import { createPlayerApi } from './api/playerApi';
 	import { createPuzzleApi } from './api/puzzleApi';
+	import { nativePuzzleJsonRequest, nativePlayerHttpTransport } from './api/nativeHttp';
+	import AccountBar from './account/AccountBar.svelte';
+	import {
+		applySessionProbe,
+		restoreMobileAccount,
+		signInMobileAccount,
+		signOutMobileAccount,
+		type PersistedMobileSession
+	} from './account/mobileAccount';
+	import { nativeGoogleIdTokenProvider } from './account/nativeGoogleAuth';
+	import { nativeMobileSessionStore } from './account/nativeSessionStore';
 	import Gameplay from './gameplay/Gameplay.svelte';
 	import { createNativeSessionFileOps } from './gameplay/sessionFiles';
 	import { createFileSessionKeyValueStore } from './gameplay/sessionStore';
@@ -46,6 +57,11 @@
 		requestJson: nativePuzzleJsonRequest
 	});
 
+	const playerApi = createPlayerApi({
+		baseUrl: __PERSEUS_API_BASE__,
+		transport: nativePlayerHttpTransport
+	});
+
 	const downloadStore: DownloadStore = createDownloadStore({
 		rootPath: downloadsRoot,
 		fileOps: createNativeDownloadFileOps(),
@@ -61,6 +77,11 @@
 	let downloadRevision = 0;
 	let downloadError: string | null = null;
 
+	let accountSession: PersistedMobileSession | null = null;
+	let accountBusy = false;
+	let accountStatus: 'idle' | 'reconnecting' = 'idle';
+	let accountError: string | null = null;
+
 	onMount(async () => {
 		try {
 			await downloadStore.cleanupStaleStaging();
@@ -70,6 +91,67 @@
 			bootReady = true;
 		}
 	});
+
+	// Restore is independent of library boot: a slow or failed session probe
+	// must not block the offline library.
+	onMount(async () => {
+		const raw = nativeMobileSessionStore.read();
+		const restored = raw !== null ? restoreMobileAccount(raw, Date.now()) : null;
+		if (!restored) {
+			if (raw !== null) nativeMobileSessionStore.clear();
+			return;
+		}
+		accountSession = restored;
+		accountStatus = 'reconnecting';
+		try {
+			const response = await playerApi.getSession(restored.token);
+			const decision = applySessionProbe(restored, response);
+			if (decision.kind === 'cleared') {
+				nativeMobileSessionStore.clear();
+				accountSession = null;
+				accountStatus = 'idle';
+			} else {
+				accountSession = decision.session;
+				nativeMobileSessionStore.write(JSON.stringify(decision.session));
+				if (decision.kind === 'authenticated') accountStatus = 'idle';
+			}
+		} catch {
+			// Probe failed (offline/server error): keep the session and stay reconnecting.
+		}
+	});
+
+	async function handleSignIn(): Promise<void> {
+		if (accountBusy) return;
+		accountBusy = true;
+		accountError = null;
+		try {
+			accountSession = await signInMobileAccount({
+				provider: nativeGoogleIdTokenProvider,
+				api: playerApi,
+				store: nativeMobileSessionStore
+			});
+		} catch (error) {
+			accountError = error instanceof Error ? error.message : 'google_sign_in_failed';
+		} finally {
+			accountBusy = false;
+		}
+	}
+
+	// signOutMobileAccount never throws: remote failures still clear locally.
+	async function handleSignOut(): Promise<void> {
+		if (accountBusy || !accountSession) return;
+		accountBusy = true;
+		const token = accountSession.token;
+		await signOutMobileAccount({
+			provider: nativeGoogleIdTokenProvider,
+			api: playerApi,
+			store: nativeMobileSessionStore,
+			token
+		});
+		accountSession = null;
+		accountStatus = 'idle';
+		accountBusy = false;
+	}
 
 	async function startDownload(puzzleId: string): Promise<void> {
 		if (downloadJob !== null) return;
@@ -111,17 +193,29 @@
 				<label text={bootError} color="#f6e05e" textWrap="true" />
 			</stackLayout>
 		{:else if screen.kind === 'library'}
-			<Library
-				{puzzleApi}
-				{downloadStore}
-				{sessionStorage}
-				{downloadJob}
-				{downloadRevision}
-				{downloadError}
-				onDownload={startDownload}
-				onCancelDownload={cancelDownload}
-				onLaunch={(launch) => (screen = { kind: 'gameplay', launch })}
-			/>
+			<gridLayout rows="*,auto">
+				<Library
+					row={0}
+					{puzzleApi}
+					{downloadStore}
+					{sessionStorage}
+					{downloadJob}
+					{downloadRevision}
+					{downloadError}
+					onDownload={startDownload}
+					onCancelDownload={cancelDownload}
+					onLaunch={(launch) => (screen = { kind: 'gameplay', launch })}
+				/>
+				<AccountBar
+					row={1}
+					session={accountSession}
+					busy={accountBusy}
+					status={accountStatus}
+					error={accountError}
+					onSignIn={handleSignIn}
+					onSignOut={handleSignOut}
+				/>
+			</gridLayout>
 		{:else}
 			<Gameplay
 				launch={screen.launch}

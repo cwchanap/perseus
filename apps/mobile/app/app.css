@@ -282,3 +282,42 @@
 	background-color: #b7791f;
 	margin: 4;
 }
+
+.account {
+	background-color: #0d1520;
+}
+
+.account-row {
+	padding: 6 8;
+}
+
+.account-name {
+	color: #f7fafc;
+	font-size: 14;
+	font-weight: 700;
+}
+
+.account-email {
+	color: #cbd5e0;
+	font-size: 12;
+}
+
+.account-button {
+	background-color: #2b6cb0;
+	color: #f7fafc;
+	font-size: 12;
+	margin: 2;
+	padding: 6 10;
+}
+
+.account-status {
+	color: #f6e05e;
+	font-size: 12;
+	margin: 0 8 4 8;
+}
+
+.account-error {
+	color: #fc8181;
+	font-size: 12;
+	margin: 0 8 4 8;
+}

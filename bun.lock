@@ -60,6 +60,8 @@
         "@nativescript-community/svelte-native": "~1.0.30",
         "@nativescript/canvas": "^2.1.18",
         "@nativescript/core": "^9.0.0",
+        "@nativescript/google-signin": "^2.1.1",
+        "@nativescript/secure-storage": "^4.0.2",
         "@perseus/game-core": "workspace:*",
         "@perseus/types": "workspace:*",
         "tslib": "^2.8.1",
@@ -449,9 +451,13 @@
 
     "@nativescript/font-manager": ["@nativescript/font-manager@1.0.14", "", {}, "sha512-CzAz0QxT0UInjooQ700zFI6Nrzi5qfLLdVG1yJu7pTKoIjJPFR70iXXfw3LIgYUAZo8Vft47HlzvBtMqk4sBgQ=="],
 
+    "@nativescript/google-signin": ["@nativescript/google-signin@2.1.1", "", {}, "sha512-pC1IvFWuqoPG57/LsIaI9QjgZEz2P2/1BnFFD+ldDZHpvAWo/TmRs1S/C+AjLiK+M9nqF/8r+W+s2HOFqtynhQ=="],
+
     "@nativescript/hook": ["@nativescript/hook@3.0.5", "", {}, "sha512-MzL7R/nPZU2qnvDWWuJ8RB7H3luEwANgFX/d/ILdg7bSYxl6uANCfzlueHnWgrQmBxu6dTkvPsFW2WNVUxlhUg=="],
 
     "@nativescript/ios": ["@nativescript/ios@9.0.3", "", {}, "sha512-1IE9OIkBac4D8IPeFZ7kNxQRUr9s7BgFwOoS8XwhX5RvJHE/oSqjbSp+ag9A7MennpyDs/qxduGkwpS1EmmxOg=="],
+
+    "@nativescript/secure-storage": ["@nativescript/secure-storage@4.0.2", "", {}, "sha512-4sWU4tmvGjh9ZfuApt0enwcT3tGN88dR5IeOuQsYqUSeUQbxK7Xo2JTF1dy7KIxnh0Fnxrs5O61x7hp9JBn/kw=="],
 
     "@nativescript/types": ["@nativescript/types@9.0.0", "", { "dependencies": { "@nativescript/types-android": "9.0.0", "@nativescript/types-ios": "9.0.0" } }, "sha512-fR9ot7Si9L0StcsOZpAEThggeQb8cQxCL0BwRKuWHbm+SdlinuOWSl6lS3bKuIIcCzJem2cWP3UrzgweRnOe/A=="],
 
