@@ -47,7 +47,12 @@ function looksLikeEmail(value: string): boolean {
 	if (at <= 0) return false; // no '@' or empty local part
 	if (value.indexOf('@', at + 1) !== -1) return false; // more than one '@'
 	if (/\s/u.test(value)) return false; // no whitespace anywhere (linear, no quantifier)
-	const dot = value.indexOf('.', at + 1);
+	// Search for the separator dot starting one char into the domain (at + 2):
+	// a dot immediately after '@' (e.g. "a@.b.c") is not a valid TLD separator,
+	// but the old `^[^\s@]+@[^\s@]+\.[^\s@]+$` matcher accepted it by using a
+	// later dot. Skipping at+1 preserves that semantics so leading-dot
+	// email-shaped input is still rejected by the privacy filter.
+	const dot = value.indexOf('.', at + 2);
 	return dot > at + 1 && dot < value.length - 1; // non-empty domain label and TLD
 }
 

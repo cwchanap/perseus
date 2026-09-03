@@ -216,6 +216,15 @@ describe('player profiles against real D1', () => {
 		expect(await getProfileOverride(db, 'p1')).toBeNull();
 	});
 
+	it('ensurePublicDisplayName ignores leading-dot email-shaped candidates', async () => {
+		// Regression: a linear check that finds the first dot right after '@'
+		// (e.g. "a@.b.c") would return false and let the value leak as a display
+		// name. The old `^[^\s@]+@[^\s@]+\.[^\s@]+$` matcher rejected it by using
+		// a later dot as the TLD separator; the linear check must preserve that.
+		await ensurePublicDisplayName(db, 'p1', 'a@.b.c');
+		expect(await getProfileOverride(db, 'p1')).toBeNull();
+	});
+
 	it('ensurePublicDisplayName fills null override from OAuth name', async () => {
 		await updateProfileDisplayName(db, 'p1', null);
 		await ensurePublicDisplayName(db, 'p1', 'OAuth Player');
