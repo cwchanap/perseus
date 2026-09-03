@@ -37,11 +37,24 @@ export async function getProfileOverride(
 	return rows[0] ?? null;
 }
 
+// Linear (non-backtracking) email-shape check — safe on arbitrary-length input
+// (CodeQL js/polynomial-redos). Mirrors SIMPLE_EMAIL_PATTERN semantics:
+// local@domain.tld with no whitespace and exactly one '@'. Unlike a length-capped
+// regex guard, this preserves the privacy contract for over-length email-shaped
+// candidates (they are still rejected) without running a backtracking pattern.
+function looksLikeEmail(value: string): boolean {
+	const at = value.indexOf('@');
+	if (at <= 0) return false; // no '@' or empty local part
+	if (value.indexOf('@', at + 1) !== -1) return false; // more than one '@'
+	if (/\s/u.test(value)) return false; // no whitespace anywhere (linear, no quantifier)
+	const dot = value.indexOf('.', at + 1);
+	return dot > at + 1 && dot < value.length - 1; // non-empty domain label and TLD
+}
+
 export function isPublicSafeDisplayName(name: string): boolean {
 	const trimmed = name.trim();
 	if (!trimmed) return false;
-	// ponytail: length guard caps ReDoS backtracking (CodeQL js/polynomial-redos); RFC max email is 320
-	if (trimmed.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(trimmed)) return false;
+	if (looksLikeEmail(trimmed)) return false;
 	return true;
 }
 

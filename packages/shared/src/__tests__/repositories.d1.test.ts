@@ -206,6 +206,16 @@ describe('player profiles against real D1', () => {
 		expect(await getProfileOverride(db, 'p1')).toBeNull();
 	});
 
+	it('ensurePublicDisplayName ignores over-length email-shaped candidates', async () => {
+		// Regression: a naive length cap on the email regex lets over-length
+		// email-shaped input skip the privacy filter and leak as a display
+		// name. The linear email-shape check must reject it regardless of length.
+		const overLengthEmail = `${'a'.repeat(320)}@example.com`;
+		expect(overLengthEmail.length).toBeGreaterThan(320);
+		await ensurePublicDisplayName(db, 'p1', overLengthEmail);
+		expect(await getProfileOverride(db, 'p1')).toBeNull();
+	});
+
 	it('ensurePublicDisplayName fills null override from OAuth name', async () => {
 		await updateProfileDisplayName(db, 'p1', null);
 		await ensurePublicDisplayName(db, 'p1', 'OAuth Player');
