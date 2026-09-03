@@ -36,6 +36,11 @@ export const nativePuzzleJsonRequest: PuzzleJsonRequest = async (url) => {
 	if (response.status < 200 || response.status >= 300) {
 		throw new Error(`puzzle_api_http_${response.status}`);
 	}
-	if (response.body === null) throw new Error('puzzle_api_empty_response');
+	if (
+		response.body === null ||
+		(typeof response.body === 'string' && response.body.trim() === '')
+	) {
+		throw new Error('puzzle_api_empty_response');
+	}
 	return response.body;
 };
