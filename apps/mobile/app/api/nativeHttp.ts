@@ -11,7 +11,12 @@ export const nativePlayerHttpTransport: PlayerHttpTransport = async (request) =>
 		method: request.method,
 		headers: request.headers,
 		// Task 3A contract: bodies arrive already stringified (string | undefined).
-		content: request.body as string | undefined
+		content: request.body as string | undefined,
+		// Never follow redirects: the Authorization header must not be
+		// forwarded to a different origin or protocol by the native HTTP
+		// client. API endpoints return 2xx/4xx/5xx directly; a 3xx here
+		// is surfaced as a non-2xx status for the caller to handle.
+		dontFollowRedirects: true
 	});
 
 	let body: unknown = null;
