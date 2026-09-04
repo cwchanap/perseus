@@ -70,6 +70,16 @@ export function applySessionProbe(
 	return { kind: 'cleared' };
 }
 
+/**
+ * Whether a cold-launch restore should schedule a completion drain after
+ * applying `decision`. Only a confirmed-authenticated restore has a live
+ * credential worth draining with this pass; `uncertain` re-probes on the
+ * next trigger (resume/connectivity) and `cleared` has no session to drain.
+ */
+export function shouldDrainAfterRestore(decision: SessionProbeDecision): boolean {
+	return decision.kind === 'authenticated';
+}
+
 export async function signInMobileAccount(options: {
 	provider: GoogleIdTokenProvider;
 	api: PlayerApi;
