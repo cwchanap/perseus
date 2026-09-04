@@ -1,0 +1,11 @@
+# Xcode 26 dropped libarclite; several pods (SAMKeychain 8.0, AppAuth 9.0,
+# GTMSessionFetcher 10.0) declare deployment targets below 12 that need it.
+# NativeScript merges this into the generated platforms/ios/Podfile and wires
+# the post_install hook automatically.
+post_install do |installer|
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |c|
+      c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+    end
+  end
+end

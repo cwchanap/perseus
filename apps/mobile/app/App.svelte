@@ -1,13 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		Application,
-		Connectivity,
-		ConnectionType,
-		Folder,
-		knownFolders,
-		path
-	} from '@nativescript/core';
+	import { Application, Connectivity, Folder, knownFolders, path } from '@nativescript/core';
 	import {
 		createSessionStorageAdapter,
 		type SealedCompletion,
@@ -119,9 +112,9 @@
 		};
 		Application.on(Application.resumeEvent, onAppResume);
 
-		let wasOffline = Connectivity.getConnectionType() === ConnectionType.none;
+		let wasOffline = Connectivity.getConnectionType() === Connectivity.connectionType.none;
 		Connectivity.startMonitoring((connectionType) => {
-			const connected = connectionType !== ConnectionType.none;
+			const connected = connectionType !== Connectivity.connectionType.none;
 			if (wasOffline && connected) void validateAndDrainGuarded();
 			wasOffline = !connected;
 		});
