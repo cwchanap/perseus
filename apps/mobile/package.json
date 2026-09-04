@@ -17,9 +17,6 @@
 		"@perseus/types": "file:../../packages/types",
 		"tslib": "^2.8.1"
 	},
-	"overrides": {
-		"@perseus/types": "file:../../packages/types"
-	},
 	"devDependencies": {
 		"@nativescript-community/svelte-native-preprocessor": "^1.0.1",
 		"@nativescript/android": "9.0.5",
@@ -41,6 +38,7 @@
 	},
 	"overrides": {
 		"@nativescript/core": "^9.0.0",
+		"@perseus/types": "file:../../packages/types",
 		"svelte": "~4.2.20"
 	}
 }

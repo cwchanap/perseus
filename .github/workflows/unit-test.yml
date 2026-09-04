@@ -60,6 +60,17 @@ jobs:
       - name: Run unit tests with coverage
         run: bun run test:unit
 
+      - name: Install mobile dependencies
+        # apps/mobile is a standalone bun project (not in root workspaces),
+        # so root `bun install` and `turbo test:unit` do not cover it. Install
+        # and test it separately to keep the 185 mobile unit tests in PR CI.
+        run: bun install --frozen-lockfile
+        working-directory: apps/mobile
+
+      - name: Run mobile unit tests
+        run: bun run test:unit
+        working-directory: apps/mobile
+
       - name: Run web bun:test invariants
         run: bun test apps/web/vite-plugins apps/web/scripts apps/web/e2e/gameplay-fixtures/builder.test.ts apps/web/e2e/gameplay-fixtures/catalog.test.ts apps/web/e2e/gameplay-fixtures/assets.test.ts
 
