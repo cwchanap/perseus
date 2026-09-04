@@ -13,9 +13,12 @@
 		"@nativescript/core": "^9.0.0",
 		"@nativescript/google-signin": "^2.1.1",
 		"@nativescript/secure-storage": "^4.0.2",
-		"@perseus/game-core": "workspace:*",
-		"@perseus/types": "workspace:*",
+		"@perseus/game-core": "file:../../packages/game-core",
+		"@perseus/types": "file:../../packages/types",
 		"tslib": "^2.8.1"
+	},
+	"overrides": {
+		"@perseus/types": "file:../../packages/types"
 	},
 	"devDependencies": {
 		"@nativescript-community/svelte-native-preprocessor": "^1.0.1",

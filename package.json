@@ -5,7 +5,9 @@
 	"type": "module",
 	"packageManager": "bun@1.3.14",
 	"workspaces": [
-		"apps/*",
+		"apps/api",
+		"apps/web",
+		"apps/workflows",
 		"packages/*"
 	],
 	"scripts": {
