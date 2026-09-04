@@ -4,11 +4,13 @@ export default {
 	id: 'org.perseus.mobile',
 	appPath: 'app',
 	appResourcesPath: 'App_Resources',
-	// bun (the repo PM) resolves apps/mobile deps into its isolated node_modules
-	// layout, which NS's bundler cannot consume with --preserve-symlinks. NS skips
-	// that flag for pnpm, so ns install steps run through pnpm locally.
+	// Use the repo package manager directly. bun installs workspace deps as
+	// hoisted symlinks under the root node_modules, which NS's webpack bundler
+	// resolves fine. (NS only drops --preserve-symlinks for pnpm, but that flag
+	// is harmless with bun's hoisted layout — symlinks resolve from node_modules
+	// where the deps actually live.)
 	cli: {
-		packageManager: 'pnpm'
+		packageManager: 'bun'
 	},
 	android: {
 		v8Flags: '--expose_gc',
