@@ -4,6 +4,7 @@ import type { PlayerApi } from '../api/playerApi';
 import {
 	applySessionProbe,
 	restoreMobileAccount,
+	shouldDrainAfterRestore,
 	signInMobileAccount,
 	signOutMobileAccount,
 	type GoogleIdTokenProvider,
@@ -165,6 +166,35 @@ describe('applySessionProbe', () => {
 			kind: 'authenticated',
 			session: { ...saved0, consecutiveUnauthenticated: 0 }
 		});
+	});
+});
+
+describe('shouldDrainAfterRestore', () => {
+	it('schedules a drain after an authenticated cold-launch restore', () => {
+		const decision = applySessionProbe(savedSession({ consecutiveUnauthenticated: 1 }), {
+			authenticated: true,
+			user: playerUser()
+		});
+
+		expect(shouldDrainAfterRestore(decision)).toBe(true);
+	});
+
+	it('skips the drain after an uncertain restore (re-probes on the next trigger)', () => {
+		const decision = applySessionProbe(savedSession({ consecutiveUnauthenticated: 0 }), {
+			authenticated: false
+		});
+
+		expect(decision.kind).toBe('uncertain');
+		expect(shouldDrainAfterRestore(decision)).toBe(false);
+	});
+
+	it('skips the drain after a cleared restore (no session to drain with)', () => {
+		const decision = applySessionProbe(savedSession({ consecutiveUnauthenticated: 1 }), {
+			authenticated: false
+		});
+
+		expect(decision.kind).toBe('cleared');
+		expect(shouldDrainAfterRestore(decision)).toBe(false);
 	});
 });
 

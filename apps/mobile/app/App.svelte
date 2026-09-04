@@ -21,6 +21,7 @@
 	import {
 		applySessionProbe,
 		restoreMobileAccount,
+		shouldDrainAfterRestore,
 		signInMobileAccount,
 		signOutMobileAccount,
 		type PersistedMobileSession,
@@ -163,7 +164,13 @@
 			} else {
 				accountSession = decision.session;
 				nativeMobileSessionStore.write(JSON.stringify(decision.session));
-				if (decision.kind === 'authenticated') accountStatus = 'idle';
+				if (shouldDrainAfterRestore(decision)) {
+					accountStatus = 'idle';
+					// Cold launch while already online: resume/connectivity triggers
+					// don't fire on a fresh launch, so drain here instead of leaving
+					// pending records stranded until an unrelated later event.
+					void validateAndDrainGuarded();
+				}
 			}
 		} catch {
 			// Probe failed (offline/server error): keep the session and stay reconnecting.

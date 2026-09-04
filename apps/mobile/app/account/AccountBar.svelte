@@ -7,9 +7,10 @@
 	export let error: string | null;
 	export let onSignIn: () => void;
 	export let onSignOut: () => void;
+	export let row: number | string;
 </script>
 
-<stackLayout class="account">
+<stackLayout class="account" {row}>
 	<gridLayout class="account-row" columns="*,auto">
 		{#if session}
 			<stackLayout col={0}>
