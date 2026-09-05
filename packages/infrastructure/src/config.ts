@@ -20,7 +20,12 @@ export const accountId = config.require('cloudflareAccountId');
 
 export const naming = {
 	workerApi: 'perseus',
-	workerWorkflows: 'perseus-workflows',
+	// Must match `script_name = "workflows"` in apps/{api,workflows}/wrangler.production.toml.
+	// A mismatch on 2026-08-29 deployed the cutover code only to an orphan
+	// 'perseus-workflows' script while the live API kept invoking the stale
+	// June-28 'workflows' upload — every post-cutover puzzle create errored
+	// with "Invalid workflow parameters: puzzleId must be a valid UUID".
+	workerWorkflows: 'workflows',
 	r2Bucket: 'perseus',
 	kvNamespace: 'perseus-kv-production',
 	d1Database: 'perseus-player-data',
