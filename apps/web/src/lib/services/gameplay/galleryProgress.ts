@@ -10,6 +10,7 @@ import {
 import type { Puzzle } from '$lib/types/puzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
+import type { PuzzleDifficulty } from '@perseus/types';
 import { createSessionStorageAdapter } from './session/persistence';
 import type {
 	PuzzleSourceType,
@@ -21,6 +22,8 @@ export interface GalleryProgress {
 	puzzleId: string;
 	name: string;
 	source: PuzzleSourceType;
+	/** Server-family variants only: the difficulty this save belongs to. */
+	difficulty?: PuzzleDifficulty;
 	placedCount: number;
 	pieceCount: number;
 	lastUpdated: number;
@@ -35,6 +38,16 @@ export interface GalleryProgressDiscoveryResult {
 	rows: GalleryProgress[];
 	/** `false` when at least one off-page detail fetch failed transiently (network/5xx). */
 	complete: boolean;
+}
+
+export const DIFFICULTY_LABELS: Record<PuzzleDifficulty, string> = {
+	easy: 'Easy',
+	normal: 'Normal',
+	hard: 'Hard'
+};
+
+export function getDifficultyLabel(difficulty: PuzzleDifficulty): string {
+	return DIFFICULTY_LABELS[difficulty];
 }
 
 /**
@@ -59,6 +72,7 @@ interface GalleryCandidate {
 	puzzleId: string;
 	name: string;
 	source: PuzzleSourceType;
+	difficulty?: PuzzleDifficulty;
 	pieceCount: number;
 	context: SessionValidationContext;
 }
@@ -174,6 +188,7 @@ function progressFromCandidate(
 		puzzleId: candidate.puzzleId,
 		name: candidate.name,
 		source: candidate.source,
+		...(candidate.difficulty ? { difficulty: candidate.difficulty } : {}),
 		placedCount: result.snapshot.placedPieces.length,
 		pieceCount: candidate.pieceCount,
 		lastUpdated: result.snapshot.lastUpdated
@@ -191,6 +206,7 @@ function familyCandidates(family: PuzzleFamilySummary): GalleryCandidate[] {
 			puzzleId: variant.id,
 			name: family.name,
 			source: 'api',
+			difficulty: variant.difficulty,
 			pieceCount: variant.pieceCount,
 			context
 		});
@@ -278,6 +294,7 @@ export async function discoverAllSavedProgress(options: {
 							puzzleId,
 							name: catalogMatch.family.name,
 							source: 'api',
+							difficulty: catalogMatch.variant.difficulty,
 							pieceCount: catalogMatch.variant.pieceCount,
 							context
 						}
@@ -297,7 +314,14 @@ export async function discoverAllSavedProgress(options: {
 					pieces: puzzle.pieces
 				});
 				return context
-					? { puzzleId, name: puzzle.name, source: 'api', pieceCount: puzzle.pieceCount, context }
+					? {
+							puzzleId,
+							name: puzzle.name,
+							source: 'api',
+							difficulty: puzzle.difficulty,
+							pieceCount: puzzle.pieceCount,
+							context
+						}
 					: null;
 			} catch (error) {
 				// 400 (malformed id) is authoritative: purge the dead persisted
@@ -343,6 +367,7 @@ export async function discoverAllSavedProgress(options: {
 					puzzleId: candidate.puzzleId,
 					name: candidate.name,
 					source: candidate.source,
+					...(candidate.difficulty ? { difficulty: candidate.difficulty } : {}),
 					placedCount: result.snapshot.placedPieces.length,
 					pieceCount: candidate.pieceCount,
 					lastUpdated: result.snapshot.lastUpdated

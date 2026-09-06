@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { modalFocus } from '$lib/actions/modalFocus';
 	import { resolve } from '$app/paths';
-	import type { GalleryProgress } from '$lib/services/gameplay/galleryProgress';
+	import { getDifficultyLabel, type GalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
 	interface Props {
 		progress: readonly GalleryProgress[];
@@ -97,6 +97,12 @@
 							<div class="min-w-0">
 								<p class="truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
 									{item.name}
+									{#if item.difficulty}
+										<span
+											class="ml-1 text-[0.65rem] font-(--font-mono) tracking-[0.12em] text-(--accent) uppercase"
+										>
+											{getDifficultyLabel(item.difficulty)}
+										</span>{/if}
 								</p>
 								<p class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
 									{item.placedCount}/{item.pieceCount} PLACED
@@ -104,7 +110,7 @@
 							</div>
 							<a
 								href={resolve(`/puzzle/${item.puzzleId}`)}
-								aria-label={`Continue ${item.name}`}
+								aria-label={`Continue ${item.name}${item.difficulty ? ` (${getDifficultyLabel(item.difficulty)})` : ''}`}
 								class="arcade-btn"
 							>
 								CONTINUE

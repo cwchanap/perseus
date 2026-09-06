@@ -253,6 +253,21 @@ describe('discoverGalleryProgress', () => {
 		expect(discovery.newest?.puzzleId).toBe('q-test');
 	});
 
+	it('labels variant progress with its difficulty', () => {
+		const store = {
+			'puzzle-progress-v2-pz1': JSON.stringify(variantSnapshot('pz1', 16)),
+			'puzzle-progress-v2-pz1-h': JSON.stringify(variantSnapshot('pz1-h', 100))
+		};
+		const discovery = discoverGalleryProgress({
+			serverFamilies: [serverFamily('pz1', '1:1')],
+			quickPuzzles: [],
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		expect(discovery.byVariantId.get('pz1')?.difficulty).toBe('easy');
+		expect(discovery.byVariantId.get('pz1-h')?.difficulty).toBe('hard');
+	});
+
 	it('returns placed counts for matching ready server cards', () => {
 		const snapshot = variantSnapshot('pz1', 16);
 		const store = { 'puzzle-progress-v2-pz1': JSON.stringify(snapshot) };
@@ -1196,5 +1211,44 @@ describe('discoverAllSavedProgress', () => {
 		expect(rows).toEqual([]);
 		expect(complete).toBe(true);
 		expect(store.getItem('puzzle-progress-v2-pz1')).not.toBeNull();
+	});
+
+	it('labels rows with the difficulty from catalog variants and detail fetches', async () => {
+		const store = memoryStorage({
+			'puzzle-progress-v2-catalog-n': JSON.stringify(
+				apiProgressSnapshot('catalog-n', {
+					lastUpdated: 3_000,
+					trayOrder: Array.from({ length: 49 }, (_, index) => index)
+				})
+			),
+			'puzzle-progress-v2-fetched': JSON.stringify(
+				apiProgressSnapshot('fetched', { lastUpdated: 2_000 })
+			),
+			'puzzle-progress-q-test': JSON.stringify({
+				...validSnapshot(),
+				puzzleId: 'q-test',
+				source: 'local',
+				lastUpdated: 1_000
+			})
+		});
+		const fetchPuzzleById = vi.fn(async (id: string) => ({
+			...fetchedServerPuzzle(id, 'Fetched Save'),
+			difficulty: 'hard' as const
+		}));
+
+		// The catalog family's easy variant id is the bare prefix; progress for
+		// the normal variant must surface that variant's difficulty.
+		const { rows } = await discoverAllSavedProgress({
+			puzzleIds: ['catalog-n', 'fetched', 'q-test'],
+			serverFamilies: [serverFamily('catalog', '1:1', { name: 'Catalog Save' })],
+			quickPuzzles: [quickPuzzle()],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		const byId = new Map(rows.map((row) => [row.puzzleId, row]));
+		expect(byId.get('catalog-n')?.difficulty).toBe('normal');
+		expect(byId.get('fetched')?.difficulty).toBe('hard');
+		expect(byId.get('q-test')?.difficulty).toBeUndefined();
 	});
 });
