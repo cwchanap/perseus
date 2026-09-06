@@ -52,13 +52,17 @@ vi.mock('$lib/services/quickPuzzle', () => ({
 	listQuick: vi.fn().mockReturnValue([])
 }));
 
-vi.mock('$lib/services/gameplay/galleryProgress', () => ({
-	discoverGalleryProgress: vi.fn().mockReturnValue({
-		byVariantId: new Map(),
-		newest: null
-	}),
-	discoverAllSavedProgress: vi.fn().mockResolvedValue({ rows: [], complete: true })
-}));
+vi.mock('$lib/services/gameplay/galleryProgress', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/services/gameplay/galleryProgress')>();
+	return {
+		...actual,
+		discoverGalleryProgress: vi.fn().mockReturnValue({
+			byVariantId: new Map(),
+			newest: null
+		}),
+		discoverAllSavedProgress: vi.fn().mockResolvedValue({ rows: [], complete: true })
+	};
+});
 
 vi.mock('$app/paths', () => ({
 	resolve: (p: string) => p
