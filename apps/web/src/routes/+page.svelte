@@ -12,6 +12,7 @@
 	import {
 		discoverGalleryProgress,
 		discoverAllSavedProgress,
+		getDifficultyLabel,
 		type GalleryProgress
 	} from '$lib/services/gameplay/galleryProgress';
 	import {
@@ -339,7 +340,12 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 							Continue on this device
 						</h2>
 						<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
-							{latestProgress.name}
+							{latestProgress.name}{#if latestProgress.difficulty}
+								<span
+									class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--accent) uppercase"
+								>
+									{getDifficultyLabel(latestProgress.difficulty)}
+								</span>{/if}
 						</p>
 					</div>
 					<span class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
