@@ -99,7 +99,7 @@ interface ArcadeShellProps {
 }
 ```
 
-`+layout.svelte` remains the auth-refresh owner and performs a best-effort `getPlayerProgression()` after authenticated state is known. `ArcadeShell` only renders the values it receives.
+`+layout.svelte` remains the auth-refresh and shell-composition owner and performs a best-effort `getPlayerProgression()` after authenticated state is known. This is the spec's shell-local fetch: it stays with the shell composition and is not promoted into a global store. `ArcadeShell` only renders values it receives.
 
 - [ ] **Step 1: Write shell tests in the repo's existing browser-test style**
 
@@ -235,6 +235,8 @@ interface ProgressRingProps {
 
 - [ ] **Step 1: Write primitive tests**
 
+Use an accessible label on the gem group so visual word removal does not remove the difficulty name:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
@@ -242,14 +244,13 @@ import { page } from 'vitest/browser';
 import DifficultyGems from '../DifficultyGems.svelte';
 
 it.each([
-	['easy', 1, 12],
-	['normal', 2, 48],
-	['hard', 3, 108]
-] as const)('renders %s as the expected gem count', async (difficulty, gems, pieceCount) => {
+	['easy', 'Easy', 1, 12],
+	['normal', 'Normal', 2, 48],
+	['hard', 'Hard', 3, 108]
+] as const)('renders %s as the expected gem count', async (difficulty, label, gems, pieceCount) => {
 	render(DifficultyGems, { difficulty, pieceCount });
 	await expect.element(page.getByTestId('difficulty-gem').nth(gems - 1)).toBeVisible();
-	await expect.element(page.getByText(String(pieceCount))).toBeVisible();
-	await expect.element(page.getByText(new RegExp(difficulty, 'i'))).toBeInTheDocument();
+	await expect.element(page.getByLabelText(`${label} difficulty, ${pieceCount} pieces`)).toBeVisible();
 });
 ```
 
@@ -267,7 +268,9 @@ Expected: FAIL because the components do not exist.
 
 - [ ] **Step 3: Implement both presentational components**
 
-Use inline SVG for the gem silhouette. `ProgressRing` uses one conic-gradient element and clamps once:
+Use inline SVG for the gem silhouette. The `DifficultyGems` root exposes `aria-label="Easy difficulty, 12 pieces"` (with the corresponding difficulty/count), and its decorative gem SVGs are `aria-hidden="true"`.
+
+`ProgressRing` uses one conic-gradient element and clamps once:
 
 ```ts
 const value = $derived(Math.min(100, Math.max(0, percent)));
@@ -286,7 +289,7 @@ Keep:
 - progress/continue semantics
 - `data-testid="difficulty-action"` and `data-difficulty`
 
-Replace visible Easy/Normal/Hard rows with `DifficultyGems`; keep screen-reader difficulty names.
+Replace visible Easy/Normal/Hard rows with `DifficultyGems`; keep the action's accessible name readable.
 
 - [ ] **Step 5: Run focused tests and commit**
 
@@ -806,7 +809,7 @@ bun run --cwd apps/web test:unit -- \
 	src/routes/error.svelte.test.ts
 ```
 
-Also run the existing quick-puzzle unit/E2E tests rather than guessing a route-test filename:
+Also run the existing quick-puzzle E2E test rather than guessing a route-test filename:
 
 ```bash
 bun run --cwd apps/web test:e2e -- quick-puzzle.spec.ts
@@ -853,39 +856,154 @@ git commit -m "fix(web): fit existing routes into arcade shell"
 **Files:**
 - Create: `apps/web/e2e/ui-redesign-visual.spec.ts`
 - Create: Playwright `toHaveScreenshot()` baseline PNGs
-- Modify deterministic fixture catalog only if an existing fixture cannot expose a required stable state
+- Reuse: `apps/web/e2e/gameplay-fixtures/catalog.ts` and `apps/web/e2e/support/gameplay-page.ts`
 
-**Interfaces:** Use the existing deterministic gameplay harness and `e2e/support/test`. Do not add production-only fixture hooks.
+**Interfaces:** Use the existing deterministic gameplay harness and `e2e/support/test`. Keep visual-only gallery/admin response builders local to the visual spec instead of extracting another fixture framework.
 
-- [ ] **Step 1: Write named canonical screenshot cases**
+- [ ] **Step 1: Add exact deterministic gallery/admin setup helpers**
 
-Use existing fixture helpers and explicit viewports. Representative shape:
+Start `ui-redesign-visual.spec.ts` with these local helpers (names may stay exactly as below):
+
+```ts
+import type { Page } from '@playwright/test';
+import type { PuzzleFamilySummary } from '@perseus/types';
+import { test, expect } from './support/test';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
+
+function visualFamily(id: string, name: string, category: 'Nature' | 'Animals' | 'Architecture'):
+	PuzzleFamilySummary {
+	return {
+		id,
+		name,
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1710000000000,
+		category,
+		variants: {
+			easy: { id: `${id}-easy`, difficulty: 'easy', pieceCount: 16, status: 'ready' },
+			normal: { id: `${id}-normal`, difficulty: 'normal', pieceCount: 49, status: 'ready' },
+			hard: { id: `${id}-hard`, difficulty: 'hard', pieceCount: 100, status: 'ready' }
+		}
+	};
+}
+
+const VISUAL_FAMILIES = [
+	visualFamily('visual-sunset', 'Sunset Ridge', 'Nature'),
+	visualFamily('visual-garden', 'Moonlit Garden', 'Animals'),
+	visualFamily('visual-harbor', 'Neon Harbor', 'Architecture')
+];
+
+async function installVisualGallery(page: Page): Promise<void> {
+	await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
+		route.fulfill({
+			json: {
+				families: VISUAL_FAMILIES,
+				total: VISUAL_FAMILIES.length,
+				offset: 0,
+				limit: 20
+			}
+		})
+	);
+}
+
+async function installVisualAdmin(page: Page): Promise<void> {
+	await page.route('**/api/admin/puzzle-families', (route) =>
+		route.fulfill({
+			json: {
+				families: [
+					...VISUAL_FAMILIES,
+					{
+						...visualFamily('visual-processing', 'Aurora Works', 'Nature'),
+						status: 'processing',
+						variants: {
+							easy: { id: 'visual-processing-easy', difficulty: 'easy', pieceCount: 16, status: 'processing' },
+							normal: { id: 'visual-processing-normal', difficulty: 'normal', pieceCount: 49, status: 'processing' },
+							hard: { id: 'visual-processing-hard', difficulty: 'hard', pieceCount: 100, status: 'processing' }
+						}
+					}
+				]
+			}
+		})
+	);
+	await page.route('**/api/admin/player-allowlist', (route) => {
+		if (route.request().method() !== 'GET') return route.fallback();
+		return route.fulfill({
+			json: {
+				entries: [
+					{ email: 'alex@example.com', player: { name: 'Alex C.' } },
+					{ email: 'sam@example.com', player: null }
+				]
+			}
+		});
+	});
+}
+```
+
+If the exact `PlayerAllowlistEntry.player` test fixture shape has changed when this task is executed, use the current exported type to fill its required fields; do not change the endpoint or production type for a screenshot.
+
+- [ ] **Step 2: Write the eleven canonical screenshot cases with exact navigation/setup**
+
+Use these arrangements:
 
 ```ts
 test('phone gallery — mock 2a @visual', async ({ page }) => {
 	await page.setViewportSize({ width: 393, height: 852 });
-	// Arrange the existing deterministic gallery fixture used by gallery E2E.
+	await installVisualGallery(page);
+	await page.goto('/');
+	await expect(page.getByTestId('puzzle-grid')).toBeVisible();
 	await expect(page).toHaveScreenshot('galaxy-phone-gallery.png', { fullPage: true });
+});
+
+test('phone gameplay — mock 2b @visual', async ({ gameplayPage, page }) => {
+	await page.setViewportSize({ width: 393, height: 852 });
+	await gameplayPage.gotoFixture({ fixtureId: 'e2e-portrait-12', seedPreferences: IMMEDIATE_START });
+	await expect(page.getByTestId('puzzle-board')).toBeVisible();
+	await expect(page).toHaveScreenshot('galaxy-phone-gameplay.png');
+});
+
+test('phone completion — mock 2c @visual', async ({ gameplayPage, page }) => {
+	await page.setViewportSize({ width: 393, height: 852 });
+	await gameplayPage.gotoFixture({
+		fixtureId: 'e2e-square-4',
+		completion: { kind: 'success' },
+		seedPreferences: IMMEDIATE_START
+	});
+	await gameplayPage.solveFixture();
+	await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+	await expect(page).toHaveScreenshot('galaxy-phone-completion.png');
 });
 ```
 
-The complete case list is:
+Repeat those same concrete arrangements at 1080×810 for `galaxy-tablet-gallery.png`, `galaxy-tablet-gameplay.png`, and `galaxy-tablet-completion.png`; use `e2e-portrait-12` for gameplay and `e2e-square-4` for completion.
 
-- phone gallery 2a
-- phone gameplay 2b
-- phone completion 2c
-- landscape tablet gallery 2d
-- landscape tablet gameplay 2e
-- landscape tablet completion 2f
-- desktop gallery 3a
-- desktop gameplay 3b
-- desktop completion 3c
-- desktop admin Missions 4a
-- desktop admin Player Access 4a
+Repeat them at 1440×900 for `galaxy-desktop-gallery.png`, `galaxy-desktop-gameplay.png`, and `galaxy-desktop-completion.png`. The fixture art/counts do not need to match the mock sample; composition does.
 
-Use reduced motion during capture through Playwright context/emulation, not production feature flags.
+Admin cases:
 
-- [ ] **Step 2: Run without baselines and verify expected failure**
+```ts
+test('desktop admin missions — mock 4a @visual', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await installVisualAdmin(page);
+	await page.goto('/admin');
+	await expect(page.getByRole('heading', { name: /MISSION DATABASE/i })).toBeVisible();
+	await expect(page).toHaveScreenshot('galaxy-desktop-admin-missions.png');
+});
+
+test('desktop admin player access — mock 4a @visual', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await installVisualAdmin(page);
+	await page.goto('/admin');
+	await page.getByRole('tab', { name: /Player access/i }).click();
+	await expect(page.getByRole('heading', { name: /PLAYER ACCESS/i })).toBeVisible();
+	await expect(page).toHaveScreenshot('galaxy-desktop-admin-player-access.png');
+});
+```
+
+Set `page.emulateMedia({ reducedMotion: 'reduce' })` before navigation in every screenshot case or in a local `beforeEach` so capture does not race decorative animation.
+
+- [ ] **Step 3: Run without baselines and verify expected failure**
 
 ```bash
 bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts
@@ -893,7 +1011,7 @@ bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts
 
 Expected: FAIL because approved screenshots do not exist.
 
-- [ ] **Step 3: Generate candidate baselines**
+- [ ] **Step 4: Generate candidate baselines**
 
 ```bash
 bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts --update-snapshots
@@ -901,7 +1019,7 @@ bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts --update-snapshots
 
 Expected: candidate PNGs are created.
 
-- [ ] **Step 4: Manually compare every candidate against its canonical mockup**
+- [ ] **Step 5: Manually compare every candidate against its canonical mockup**
 
 Check composition, hierarchy, dimensions, spacing, palette, glow/candy treatment, icon/gem language, and typography.
 
@@ -916,7 +1034,7 @@ Mandatory checks:
 
 If materially different, fix UI and regenerate. Do not bless a mismatch.
 
-- [ ] **Step 5: Run against approved baselines**
+- [ ] **Step 6: Run against approved baselines**
 
 ```bash
 bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts
@@ -924,7 +1042,7 @@ bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts
 
 Expected: PASS with no visual diff.
 
-- [ ] **Step 6: Run final single-PR verification**
+- [ ] **Step 7: Run final single-PR verification**
 
 ```bash
 bun run --cwd apps/web lint
@@ -938,7 +1056,7 @@ bun run --cwd apps/web test:e2e -- ui-redesign-visual.spec.ts
 
 Expected: all PASS.
 
-- [ ] **Step 7: Commit baselines/final parity adjustments**
+- [ ] **Step 8: Commit baselines/final parity adjustments**
 
 ```bash
 git add apps/web/e2e/ui-redesign-visual.spec.ts apps/web/e2e/**/*.png
