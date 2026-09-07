@@ -342,7 +342,7 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 						<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
 							{latestProgress.name}{#if latestProgress.difficulty}
 								<span
-									class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--accent) uppercase"
+									class="ml-1 text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--accent) uppercase"
 								>
 									{getDifficultyLabel(latestProgress.difficulty)}
 								</span>{/if}
