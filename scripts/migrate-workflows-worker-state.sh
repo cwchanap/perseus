@@ -18,16 +18,26 @@
 #
 # Usage
 # -----
-#   ./scripts/migrate-workflows-worker-state.sh --dry-run   # preview only
+#   ./scripts/migrate-workflows-worker-state.sh --dry-run   # validate URN plan only
 #   ./scripts/migrate-workflows-worker-state.sh             # execute migration
 #   ./scripts/migrate-workflows-worker-state.sh --stack <org>/perseus-infrastructure/production
+#
+# The script self-locates the repo root and cd's into packages/infrastructure
+# (the Pulumi project dir) for all pulumi commands, so it can be run from
+# anywhere.
 #
 # Prerequisites
 # -------------
 #   - pulumi CLI authenticated for the production stack
 #   - jq installed
-#   - Run from repo root
 #   - `import` options present in packages/infrastructure/src/workers.ts
+#   - Build artifacts present (execute migration only — dry-run needs none):
+#       bun run build --filter=@perseus/web
+#       bun run build --filter=@perseus/api
+#       bun run build --filter=@perseus/workflows
+#       bun run build --filter=@perseus/infrastructure
+#     The script checks these before deleting any state and fails fast if
+#     any are missing.
 
 set -euo pipefail
 
@@ -120,6 +130,44 @@ print_plan() {
 	done
 }
 
+# Print the repo-root-relative artifact paths that must exist before the
+# migration can run `pulumi preview`/`pulumi up`. The Pulumi program entry is
+# packages/infrastructure/dist/index.js (Pulumi.yaml `main: dist/index.js`,
+# resolved relative to the infrastructure dir); the worker/web paths mirror
+# packages/infrastructure/src/config.ts `paths`.
+required_artifact_paths() {
+	printf '%s\n' \
+		'packages/infrastructure/dist/index.js' \
+		'apps/api/dist/worker.js' \
+		'apps/workflows/dist/index.js' \
+		'apps/web/build'
+}
+
+# Verify the build artifacts exist. Exits 1 with the build commands to run
+# if any are missing. Args: <repo-root>
+check_build_artifacts() {
+	local repo_root="$1"
+	local missing=()
+	while IFS= read -r rel; do
+		if [[ ! -e "$repo_root/$rel" ]]; then
+			missing+=("$rel")
+		fi
+	done < <(required_artifact_paths)
+	if ((${#missing[@]} > 0)); then
+		echo "ERROR: build artifacts missing — pulumi preview/up would fail." >&2
+		echo "       Missing:" >&2
+		for rel in "${missing[@]}"; do
+			echo "         $rel" >&2
+		done
+		echo "       Build them from the repo root:" >&2
+		echo "         bun run build --filter=@perseus/web" >&2
+		echo "         bun run build --filter=@perseus/api" >&2
+		echo "         bun run build --filter=@perseus/workflows" >&2
+		echo "         bun run build --filter=@perseus/infrastructure" >&2
+		return 1
+	fi
+}
+
 # Delete stale state entries in reverse dependency order.
 # Args: <pulumi-cmd-prefix> <dry-run>
 # Reads: DELETION_ORDER (set by build_deletion_order)
@@ -166,6 +214,29 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required" >&2; exit 1; }
 	command -v pulumi >/dev/null 2>&1 || { echo "ERROR: pulumi is required" >&2; exit 1; }
 
+	# Locate the repo root from this script's path (scripts/ lives at the repo
+	# root) and cd into the Pulumi project dir so `pulumi stack export`,
+	# `preview`, and `up` resolve the project. Pulumi.yaml `main: dist/index.js`
+	# is relative to packages/infrastructure — running pulumi from elsewhere
+	# either fails or operates on the wrong project.
+	SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	REPO_ROOT="$(cd "$SCRIPT_PATH/.." && pwd)"
+	if [[ ! -f "$REPO_ROOT/package.json" || ! -f "$REPO_ROOT/packages/infrastructure/Pulumi.yaml" ]]; then
+		echo "ERROR: could not locate repo root from $SCRIPT_PATH" >&2
+		echo "       expected $REPO_ROOT to contain package.json and packages/infrastructure/Pulumi.yaml" >&2
+		exit 1
+	fi
+	INFRA_DIR="$REPO_ROOT/packages/infrastructure"
+	cd "$INFRA_DIR"
+
+	# Build artifacts must exist before any state is deleted — otherwise an
+	# operator could remove production state and then fail at preview because
+	# the Pulumi program or worker dists are missing. Dry-run needs none: it
+	# only exports state and prints the deletion plan (no preview/up).
+	if [[ "$DRY_RUN" != "true" ]]; then
+		check_build_artifacts "$REPO_ROOT" || exit 1
+	fi
+
 	# Build pulumi command prefix
 	PULUMI_CMD="pulumi"
 	if [[ -n "$STACK_ARG" ]]; then
@@ -173,7 +244,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	fi
 
 	# Step 0: Backup state
-	BACKUP_FILE="state-backup-$(date +%Y%m%d-%H%M%S).json"
+	BACKUP_FILE="$REPO_ROOT/state-backup-$(date +%Y%m%d-%H%M%S).json"
 	echo "=== Step 0: Backup state ==="
 	echo "  Writing $BACKUP_FILE"
 	if [[ "$DRY_RUN" == "true" ]]; then
@@ -220,7 +291,24 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	echo "=== Step 2: Delete stale state (reverse dependency order) ==="
 	delete_stale_state "$PULUMI_CMD" "$DRY_RUN"
 
-	# Step 3: Preview
+	# Dry-run stops here. A `pulumi preview` in dry-run would run against the
+	# pre-migration state: the stale URNs still exist (delete_stale_state only
+	# printed), but the program declares `import` IDs for the live resources,
+	# so Pulumi rejects the import ("resource '<URN>' already exists") instead
+	# of showing the post-deletion plan. The import preview is only meaningful
+	# after the real state removals — do not present this preview as a
+	# read-only validation of the migration.
+	if [[ "$DRY_RUN" == "true" ]]; then
+		echo ""
+		echo "=== Dry run complete ==="
+		echo "Validated: state export, stale-URN resolution, deletion order."
+		echo "NOT validated: pulumi preview of the import (requires real state removal)."
+		echo "Re-run without --dry-run to execute the migration and preview the adoption."
+		exit 0
+	fi
+
+	# Step 3: Preview (post-deletion — the stale URNs are gone, so the
+	# program's `import` IDs adopt the live resources)
 	echo ""
 	echo "=== Step 3: pulumi preview ==="
 	echo "  The Worker and Workflow should show as 'import' (adopted)."
@@ -230,13 +318,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	$PULUMI_CMD preview --diff
 
 	# Step 4: Apply
-	if [[ "$DRY_RUN" == "true" ]]; then
-		echo ""
-		echo "=== Dry run complete ==="
-		echo "Re-run without --dry-run to execute the migration."
-		exit 0
-	fi
-
 	echo ""
 	echo "=== Step 4: pulumi up ==="
 	# shellcheck disable=SC2086
