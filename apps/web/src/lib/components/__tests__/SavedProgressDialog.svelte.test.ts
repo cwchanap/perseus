@@ -62,6 +62,39 @@ describe('SavedProgressDialog', () => {
 		expect(document.body.textContent).not.toContain('UNABLE TO LOAD SAVED PROGRESS');
 	});
 
+	it('labels a saved-progress row with its difficulty and reflects it in the Continue aria-label', async () => {
+		// Server-family variants carry a difficulty; the dialog must surface it
+		// both as an inline label next to the mission name and inside the
+		// Continue link's accessible name so screen-reader users can
+		// distinguish same-named variants of different difficulties.
+		const withDifficulty: GalleryProgress = {
+			puzzleId: 'pz1-h',
+			name: 'Twin Mission',
+			source: 'api',
+			difficulty: 'hard',
+			placedCount: 4,
+			pieceCount: 100,
+			lastUpdated: 2_000
+		};
+		render(SavedProgressDialog, {
+			progress: [withDifficulty],
+			loading: false,
+			onClose: vi.fn()
+		});
+
+		const row = page.getByTestId('saved-progress-row-pz1-h');
+		await expect.element(row).toBeVisible();
+		await expect.element(row).toHaveTextContent('Twin Mission');
+		// The difficulty label renders inline next to the mission name.
+		await expect.element(row.getByText('Hard')).toBeVisible();
+		await expect.element(row).toHaveTextContent('4/100 PLACED');
+		// The Continue link's accessible name includes the difficulty so two
+		// same-named variants are distinguishable to assistive tech.
+		await expect
+			.element(row.getByRole('link', { name: 'Continue Twin Mission (Hard)' }))
+			.toHaveAttribute('href', '/puzzle/pz1-h');
+	});
+
 	it('renders a semantic row with a distinguishable Continue link', async () => {
 		render(SavedProgressDialog, { progress, loading: false, onClose: vi.fn() });
 		const list = page.getByRole('list');

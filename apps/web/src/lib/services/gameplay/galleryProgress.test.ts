@@ -20,7 +20,12 @@ import type {
 	SessionStorageAdapter,
 	SessionValidationContext
 } from '@perseus/game-core';
-import { discoverAllSavedProgress, discoverGalleryProgress } from './galleryProgress';
+import {
+	DIFFICULTY_LABELS,
+	discoverAllSavedProgress,
+	discoverGalleryProgress,
+	getDifficultyLabel
+} from './galleryProgress';
 
 const expectedSquare16 = Array.from({ length: 16 }, (_, id) => ({
 	id,
@@ -194,6 +199,26 @@ function spyAdapter(): {
 	};
 	return { adapter, contexts };
 }
+
+describe('getDifficultyLabel', () => {
+	it('returns the display label for every difficulty', () => {
+		expect(getDifficultyLabel('easy')).toBe(DIFFICULTY_LABELS.easy);
+		expect(getDifficultyLabel('normal')).toBe(DIFFICULTY_LABELS.normal);
+		expect(getDifficultyLabel('hard')).toBe(DIFFICULTY_LABELS.hard);
+	});
+
+	it('maps each difficulty to a distinct, human-readable label', () => {
+		const labels = new Set([
+			DIFFICULTY_LABELS.easy,
+			DIFFICULTY_LABELS.normal,
+			DIFFICULTY_LABELS.hard
+		]);
+		expect(labels.size).toBe(3);
+		expect(DIFFICULTY_LABELS.easy).toBe('Easy');
+		expect(DIFFICULTY_LABELS.normal).toBe('Normal');
+		expect(DIFFICULTY_LABELS.hard).toBe('Hard');
+	});
+});
 
 describe('discoverGalleryProgress', () => {
 	it('derives canonical server geometry for representative aspect ratios', () => {
