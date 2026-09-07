@@ -50,7 +50,8 @@ extract_urn() {
 
 # Resolve all stale URNs from a stack export JSON blob.
 # Sets global variables: WORKER_URN, VERSION_URN, WORKFLOW_URN, VERSION_DO_URN,
-# DEPLOYMENT_URN.
+# DEPLOYMENT_URN, and the external API-chain dependents API_VERSION_URN,
+# API_DEPLOYMENT_URN, API_CRON_URN.
 # Args: <stack-export-json>
 resolve_urns() {
 	local stack_json="$1"
@@ -59,22 +60,55 @@ resolve_urns() {
 	WORKFLOW_URN=$(extract_urn 'perseus-workflow' "$stack_json")
 	VERSION_DO_URN=$(extract_urn 'workflows-worker-version-do' "$stack_json")
 	DEPLOYMENT_URN=$(extract_urn 'workflows-worker-deployment' "$stack_json")
+	# External dependents of workflows-worker-version-do: createApiWorker
+	# declares dependsOn: [api-worker, workflowsWorker.version], and
+	# workflowsWorker.version is versionWithDo when the DO binding is present.
+	# These must be deleted before version-do or Pulumi refuses the removal.
+	API_VERSION_URN=$(extract_urn 'api-worker-version' "$stack_json")
+	API_DEPLOYMENT_URN=$(extract_urn 'api-worker-deployment' "$stack_json")
+	API_CRON_URN=$(extract_urn 'api-worker-cron-trigger' "$stack_json")
 }
 
-# Print the deletion plan in reverse dependency order.
-# Reads: WORKER_URN, VERSION_URN, WORKFLOW_URN, VERSION_DO_URN, DEPLOYMENT_URN
-print_plan() {
-	# Dependency chain:
-	#   worker → version → workflow → version-do → deployment
-	# Reverse (dependents first):
-	local order=(
+# Extract the Cloudflare physical name (inputs.name) for a given URN from a
+# `pulumi stack export` JSON blob. Used to distinguish the stale
+# 'perseus-workflows' Worker from the adopted 'workflows' Worker, since both
+# share the logical Pulumi name 'workflows-worker'.
+# Args: <urn> <stack-export-json>
+# Prints the name (empty string if not found).
+worker_physical_name() {
+	local urn="$1"
+	local stack_json="$2"
+	printf '%s' "$stack_json" | jq -r --arg urn "$urn" \
+		'.deployment.resources[] | select(.urn == $urn) | .inputs.name // empty' \
+		| head -1
+}
+
+# Build the deletion order as the global DELETION_ORDER array of "label:urn"
+# entries. Must be called after resolve_urns. Reverse dependency order —
+# dependents deleted before the resources they depend on.
+#
+# The API worker chain (cron-trigger → deployment → version) depends on
+# workflows-worker-version-do via createApiWorker's dependsOn. All three API
+# resources are additive (re-created every deploy via version upload), so
+# dropping them from state and letting `pulumi up` recreate them is safe —
+# only the Worker and Workflow are adopted via `import`.
+build_deletion_order() {
+	DELETION_ORDER=(
+		"api-worker-cron-trigger:${API_CRON_URN}"
+		"api-worker-deployment:${API_DEPLOYMENT_URN}"
+		"api-worker-version:${API_VERSION_URN}"
 		"workflows-worker-deployment:${DEPLOYMENT_URN}"
 		"workflows-worker-version-do:${VERSION_DO_URN}"
 		"perseus-workflow:${WORKFLOW_URN}"
 		"workflows-worker-version:${VERSION_URN}"
 		"workflows-worker:${WORKER_URN}"
 	)
-	for entry in "${order[@]}"; do
+}
+
+# Print the deletion plan in reverse dependency order.
+# Reads: DELETION_ORDER (set by build_deletion_order)
+print_plan() {
+	for entry in "${DELETION_ORDER[@]}"; do
 		local label="${entry%%:*}"
 		local urn="${entry#*:}"
 		if [[ -z "$urn" ]]; then
@@ -88,17 +122,11 @@ print_plan() {
 
 # Delete stale state entries in reverse dependency order.
 # Args: <pulumi-cmd-prefix> <dry-run>
+# Reads: DELETION_ORDER (set by build_deletion_order)
 delete_stale_state() {
 	local pulumi_cmd="$1"
 	local dry_run="$2"
-	local order=(
-		"workflows-worker-deployment:${DEPLOYMENT_URN}"
-		"workflows-worker-version-do:${VERSION_DO_URN}"
-		"perseus-workflow:${WORKFLOW_URN}"
-		"workflows-worker-version:${VERSION_URN}"
-		"workflows-worker:${WORKER_URN}"
-	)
-	for entry in "${order[@]}"; do
+	for entry in "${DELETION_ORDER[@]}"; do
 		local label="${entry%%:*}"
 		local urn="${entry#*:}"
 		if [[ -z "$urn" ]]; then
@@ -159,16 +187,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	# Step 1: Discover URNs
 	echo ""
 	echo "=== Step 1: Discover stale URNs ==="
-	if [[ "$DRY_RUN" == "true" ]]; then
-		echo "  [dry-run] cannot resolve URNs without stack access"
-		echo "  In a real run, this reads 'pulumi stack export' and resolves:"
-		echo "    workflows-worker, workflows-worker-version, perseus-workflow,"
-		echo "    workflows-worker-version-do, workflows-worker-deployment"
-		exit 0
-	fi
-
 	STACK_JSON=$($PULUMI_CMD stack export)
 	resolve_urns "$STACK_JSON"
+	build_deletion_order
 
 	echo ""
 	print_plan
@@ -179,6 +200,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		echo "ERROR: 'workflows-worker' not found in stack state." >&2
 		echo "       It may have already been migrated. Inspect with:" >&2
 		echo "         $PULUMI_CMD stack --show-urns" >&2
+		exit 1
+	fi
+
+	# Safety check: the resolved Worker must be the stale 'perseus-workflows'.
+	# After adoption the logical name 'workflows-worker' still exists but its
+	# physical name is 'workflows' — deleting that would destroy valid state.
+	WORKER_NAME=$(worker_physical_name "$WORKER_URN" "$STACK_JSON")
+	if [[ "$WORKER_NAME" != 'perseus-workflows' ]]; then
+		echo ""
+		echo "ERROR: workflows-worker physical name is '$WORKER_NAME', not 'perseus-workflows'." >&2
+		echo "       The migration may have already run. Aborting to avoid deleting valid state." >&2
+		echo "       Inspect with: $PULUMI_CMD stack --show-urns" >&2
 		exit 1
 	fi
 
