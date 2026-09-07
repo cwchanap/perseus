@@ -172,19 +172,41 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 		(b) => !(b.name === 'PUZZLE_METADATA_DO' && b.type === 'durable_object_namespace')
 	);
 
-	const worker = new cloudflare.Worker('workflows-worker', {
-		accountId: accountId,
-		name: naming.workerWorkflows,
-		observability: {
-			enabled: true,
-			headSamplingRate: 1,
-			logs: {
+	// ONE-TIME STATE ADOPTION — remove this `import` option after the next
+	// successful `pulumi up`. The existing Cloudflare Worker 'workflows' was
+	// created out-of-band (June-28 upload) and is not yet in Pulumi state.
+	// Without `import`, `pulumi up` would try to CREATE a new Worker named
+	// 'workflows', conflicting with the live one. The adoption procedure:
+	//
+	//   1. pulumi state delete workflows-worker
+	//      (remove the stale state entry from the old 'perseus-workflows' name)
+	//   2. pulumi up   ← adopts the existing 'workflows' Worker into state
+	//   3. Remove the `import` option below
+	//   4. pulumi up   ← preview must show no create/replace for this Worker
+	//
+	// Until step 2 succeeds, deployment must not proceed — the import option
+	// itself prevents a destructive create by forcing Pulumi to adopt instead.
+	// See AGENTS.md "D1 state-loss recovery (re-adoption)" for the analogous
+	// pattern used for the D1 database.
+	const worker = new cloudflare.Worker(
+		'workflows-worker',
+		{
+			accountId: accountId,
+			name: naming.workerWorkflows,
+			observability: {
 				enabled: true,
 				headSamplingRate: 1,
-				invocationLogs: true
+				logs: {
+					enabled: true,
+					headSamplingRate: 1,
+					invocationLogs: true
+				}
 			}
+		},
+		{
+			import: `${accountId}/${naming.workerWorkflows}`
 		}
-	});
+	);
 
 	const initialVersion = new cloudflare.WorkerVersion(
 		'workflows-worker-version',
