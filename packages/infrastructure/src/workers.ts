@@ -172,20 +172,32 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 		(b) => !(b.name === 'PUZZLE_METADATA_DO' && b.type === 'durable_object_namespace')
 	);
 
-	// ONE-TIME STATE ADOPTION — remove this `import` option after the next
-	// successful `pulumi up`. The existing Cloudflare Worker 'workflows' was
-	// created out-of-band (June-28 upload) and is not yet in Pulumi state.
-	// Without `import`, `pulumi up` would try to CREATE a new Worker named
-	// 'workflows', conflicting with the live one. The adoption procedure:
+	// ONE-TIME STATE ADOPTION — remove BOTH `import` options (Worker + Workflow)
+	// after the next successful `pulumi up`. The existing Cloudflare Worker
+	// 'workflows' and its 'perseus' Workflow were created out-of-band (June-28
+	// wrangler upload) and are not yet in Pulumi state. Without `import`,
+	// `pulumi up` would try to CREATE new resources, conflicting with the live
+	// ones.
 	//
-	//   1. pulumi state delete workflows-worker
-	//      (remove the stale state entry from the old 'perseus-workflows' name)
-	//   2. pulumi up   ← adopts the existing 'workflows' Worker into state
-	//   3. Remove the `import` option below
-	//   4. pulumi up   ← preview must show no create/replace for this Worker
+	// `pulumi state delete` takes a full URN (not a logical name) and refuses to
+	// delete resources that have dependents. The stale subtree must be removed
+	// in reverse dependency order before `pulumi up` can adopt. Use the tested
+	// migration script instead of running commands by hand:
 	//
-	// Until step 2 succeeds, deployment must not proceed — the import option
-	// itself prevents a destructive create by forcing Pulumi to adopt instead.
+	//   ./scripts/migrate-workflows-worker-state.sh --dry-run   # preview
+	//   ./scripts/migrate-workflows-worker-state.sh             # execute
+	//
+	// The script: backs up state, resolves URNs from `pulumi stack export`,
+	// deletes the stale subtree (deployment → version-do → workflow → version →
+	// worker), then runs `pulumi up` which adopts the Worker + Workflow via
+	// these `import` options. WorkerVersion and WorkersDeployment are freshly
+	// created (new version uploads and deployments are additive — never
+	// conflict with existing remote resources).
+	//
+	// After the script succeeds: remove both `import` options, run `pulumi up`,
+	// and verify the preview shows no create/replace for these resources.
+	// Until then, deployment must not proceed — the `import` options prevent a
+	// destructive create by forcing Pulumi to adopt instead.
 	// See AGENTS.md "D1 state-loss recovery (re-adoption)" for the analogous
 	// pattern used for the D1 database.
 	const worker = new cloudflare.Worker(
@@ -230,7 +242,15 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 			className: 'PerseusWorkflow',
 			scriptName: naming.workerWorkflows
 		},
-		{ dependsOn: initialVersion }
+		{
+			dependsOn: initialVersion,
+			// ONE-TIME STATE ADOPTION — see the comment above the Worker
+			// resource. The 'perseus' Workflow already exists on the live
+			// 'workflows' script (created by the June-28 wrangler upload).
+			// Import format: <accountId>/<workflowName>. Remove this `import`
+			// option after the migration script succeeds.
+			import: `${accountId}/${naming.workflow}`
+		}
 	);
 
 	if (doBinding) {
