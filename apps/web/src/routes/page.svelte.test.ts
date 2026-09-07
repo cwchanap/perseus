@@ -249,6 +249,49 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('2/16 PLACED')).toBeVisible();
 	});
 
+	it('labels the continue panel with the newest progress difficulty', async () => {
+		// Server-family variants carry a difficulty; the Continue-on-device
+		// panel must surface it next to the mission name so a player with
+		// saves across multiple variants of the same family can tell them
+		// apart at a glance.
+		const serverFamilies = [
+			makeFamily('p1', {
+				name: 'Server Mission',
+				aspectRatio: '1:1',
+				status: 'ready'
+			})
+		];
+		const progress: GalleryProgress = {
+			puzzleId: 'p1-h',
+			name: 'Resume Me',
+			source: 'api',
+			difficulty: 'hard',
+			placedCount: 2,
+			pieceCount: 100,
+			lastUpdated: 2_000
+		};
+
+		mockedFetchPuzzles.mockResolvedValue({
+			families: serverFamilies,
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+		mockedDiscoverGalleryProgress.mockReturnValue({
+			byVariantId: new Map([['p1-h', progress]]),
+			newest: progress
+		});
+
+		render(GalleryPage);
+
+		const panel = page.getByTestId('continue-on-device');
+		await expect.element(panel).toBeVisible();
+		await expect.element(panel).toHaveTextContent('Resume Me');
+		// The difficulty label renders inline next to the mission name.
+		await expect.element(panel.getByText('Hard')).toBeVisible();
+		await expect.element(page.getByText('2/100 PLACED')).toBeVisible();
+	});
+
 	it('renders the continue panel without crashing when progress counts are nullish', async () => {
 		// A malformed newest progress entry with nullish counts must not throw:
 		// Svelte renders nullish text interpolations as empty, so the panel
