@@ -360,6 +360,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 9: required_artifact_paths lists the build artifacts the migration
+# needs before pulumi preview/up. These must match packages/infrastructure
+# Pulumi.yaml `main` and config.ts `paths` — a drift would let the script
+# delete state and then fail at preview.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 9: required_artifact_paths matches Pulumi entry + config paths"
+
+expected_paths=(
+	'packages/infrastructure/dist/index.js'
+	'apps/api/dist/worker.js'
+	'apps/workflows/dist/index.js'
+	'apps/web/build'
+)
+actual_paths=()
+while IFS= read -r p; do
+	actual_paths+=("$p")
+done < <(required_artifact_paths)
+
+if [[ "${#actual_paths[@]}" -eq "${#expected_paths[@]}" ]]; then
+	ok "path count matches (${#actual_paths[@]})"
+else
+	fail "expected ${#expected_paths[@]} paths, got ${#actual_paths[@]}"
+fi
+all_match=true
+for i in "${!expected_paths[@]}"; do
+	if [[ "${actual_paths[$i]:-}" != "${expected_paths[$i]}" ]]; then
+		fail "path[$i]: expected '${expected_paths[$i]}', got '${actual_paths[$i]:-}'"
+		all_match=false
+	fi
+done
+if [[ "$all_match" == true ]]; then
+	ok "all artifact paths match Pulumi.yaml main + config.ts paths"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
