@@ -1,32 +1,42 @@
 # Galaxy Arcade UI Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Redesign the Perseus web gallery, gameplay, completion, and admin surfaces to match the approved Galaxy Arcade mockup across phone, landscape tablet, and desktop without changing gameplay, persistence, API, or backend behavior.
+**Goal:** Redesign the Perseus web gallery, gameplay, completion, and admin surfaces to match the
+approved Galaxy Arcade mockup without changing gameplay, persistence, API, or NativeScript behavior.
 
-**Architecture:** Keep the current SvelteKit route and `@perseus/game-core` ownership boundaries. Add only three repeated presentation primitives (`ArcadeShell`, `DifficultyGems`, `ProgressRing`), lift the existing `PuzzleToolbar` out of `PuzzleBoardPanel` so the route can compose `rail | board | tray`, keep board zoom/pan state inside `PuzzleBoardPanel` through three exported presentation controls, and extend the existing tray-local drawer state into phone sheet states. Functional E2E remains authoritative; visual baselines are a separate manual `@visual` lane after behavior is green.
+**Architecture:** Keep current SvelteKit and `@perseus/game-core` ownership. Add only three reusable
+presentation primitives (`ArcadeShell`, `DifficultyGems`, `ProgressRing`), lift the existing toolbar
+into the route-level gameplay grid, keep viewport state private to `PuzzleBoardPanel`, and make
+`puzzleLayout.ts` rail-aware. Functional E2E remains authoritative; visual baselines are a separate
+manual lane after behavior is green.
 
-**Tech Stack:** SvelteKit 2, Svelte 5 runes, TypeScript 5.9, Tailwind CSS v4 plus component CSS, `vitest-browser-svelte`, Vitest browser mode, Playwright.
+**Tech Stack:** SvelteKit 2, Svelte 5 runes, TypeScript 5.9, Tailwind CSS v4 + component CSS,
+Fontsource-bundled web fonts, Vitest browser mode, Playwright.
 
 **Spec:** `docs/superpowers/specs/2026-09-07-galaxy-arcade-ui-redesign-design.md`
 
 ## Global Constraints
 
-- One ticket / one implementation PR. Do not split these tasks into follow-up PRs.
-- Mandatory hard review gate after Task 4 before Task 5 begins.
-- Web-only: no `apps/mobile`, API/workflows, infrastructure, D1, `@perseus/game-core`, `@perseus/types`, or `@perseus/shared` changes.
-- Preserve current gameplay/session/persistence semantics and server contracts.
-- Preserve keyboard, touch, focus-trap, `inert`, announcer, `aria-*`, and 44px coarse-pointer behavior.
-- Exactly three new reusable presentation primitives: `ArcadeShell`, `DifficultyGems`, `ProgressRing`.
-- No component library, icon package, global UI store, or second design-token system.
-- Canonical variants: 2a–2f, 3a–3c, and admin 4a. Turn 1 and 4b are reference-only.
-- Rendered 3a is authoritative: desktop gallery is three columns.
-- Player persistent sidebar breakpoint is exactly `min-width: 1440px`.
-- Phone canonical viewport is 393×852; routine mobile regression remains 390×844.
-- Landscape-tablet canonical viewport is 1080×810; existing 768×1024 portrait coverage remains supported.
-- Desktop canonical viewport is 1440×900.
-- Mock 48/72/84px cells are fixture-specific visual targets, never hardcoded board rules.
-- Back to Arcade remains truthful; do not invent `NEXT` behavior.
+- One ticket / one implementation PR. Do not split into follow-up PRs.
+- Mandatory hard Gate A after Task 4 before Task 5.
+- Web-only: no `apps/mobile`, API/workflows, infrastructure, D1, `@perseus/game-core`,
+  `@perseus/types`, or `@perseus/shared` changes.
+- Preserve gameplay/session/persistence semantics and server contracts.
+- Preserve keyboard, touch, focus-trap, inert, announcer, ARIA, and coarse-pointer behavior.
+- Exactly three new reusable presentation components: `ArcadeShell`, `DifficultyGems`,
+  `ProgressRing`.
+- No component library, icon package, global UI store, or generic sidebar framework.
+- Canonical variants: 2a–2f, 3a–3c, admin 4a. Turn 1 and 4b are reference only.
+- Automated phone viewport is 390×844 for both functional and visual phone coverage.
+- Landscape tablet target is 1080×810; existing 768×1024 portrait coverage remains supported.
+- Desktop target is 1440×900.
+- Player persistent sidebar starts exactly at 1440px.
+- Rendered 3a wins: desktop gallery is three columns.
+- Mock cell sizes are visual targets, never hardcoded rules.
+- Back to Arcade remains truthful; do not invent `NEXT`.
 
 ---
 
@@ -41,21 +51,25 @@
 - `apps/web/src/lib/components/ProgressRing.svelte`
 - `apps/web/src/lib/components/__tests__/ProgressRing.svelte.test.ts`
 - `apps/web/e2e/ui-redesign-visual.spec.ts`
-- Playwright PNG baselines generated by the manual visual lane
+- Playwright visual baseline PNGs generated by the manual visual lane
 
 ### Main modified files
 
+- `apps/web/package.json`
+- `bun.lock`
 - `apps/web/src/routes/layout.css`
 - `apps/web/src/routes/+layout.svelte`
 - `apps/web/src/routes/layout.svelte.test.ts`
+- `apps/web/e2e/support/test.ts`
 - `apps/web/src/routes/+page.svelte`
 - `apps/web/src/routes/page.svelte.test.ts`
+- `apps/web/src/routes/page.svelte.spec.ts`
 - `apps/web/src/lib/constants/categories.ts`
 - `apps/web/src/lib/components/PuzzleCard.svelte`
 - `apps/web/src/lib/components/PuzzleDifficultyPicker.svelte`
 - `apps/web/src/lib/components/CategoryBadge.svelte`
 - `apps/web/src/lib/components/CategoryFilter.svelte`
-- their existing component tests
+- their existing tests
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
@@ -69,25 +83,27 @@
 - `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
 - `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
 - `apps/web/src/routes/admin/+page.svelte`
+- `apps/web/src/routes/admin/admin-page.svelte.test.ts`
 - `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte`
+- `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts`
 - `apps/web/src/routes/admin/PlayerAccessPanel.svelte`
-- their existing tests
-- `apps/web/e2e/gallery.spec.ts`
-- relevant gameplay/admin E2E specs
-- `apps/web/e2e/support/test.ts`
-- `apps/web/package.json`
+- `apps/web/src/routes/admin/PlayerAccessPanel.svelte.test.ts`
+- relevant gallery/gameplay/admin E2E specs
 
 ---
 
-## Task 1: Retune global chrome and add the player Arcade shell
+## Task 1: Retune global chrome, self-host fonts, and add the player shell
 
 **Files:**
 - Create: `apps/web/src/lib/components/ArcadeShell.svelte`
 - Create: `apps/web/src/lib/components/__tests__/ArcadeShell.svelte.test.ts`
+- Modify: `apps/web/package.json`
+- Modify: `bun.lock`
 - Modify: `apps/web/src/routes/layout.css`
 - Modify: `apps/web/src/routes/+layout.svelte`
 - Modify: `apps/web/src/routes/layout.svelte.test.ts`
-- Verify and change only if shell overlap is exposed:
+- Modify: `apps/web/e2e/support/test.ts`
+- Modify only if shell overlap requires it:
   - `apps/web/src/routes/leaderboard/+page.svelte`
   - `apps/web/src/routes/profile/+page.svelte`
   - `apps/web/src/routes/quick/+page.svelte`
@@ -101,141 +117,204 @@
 import type { Snippet } from 'svelte';
 
 interface ArcadeShellProps {
-	children?: Snippet;
-	currentPath: string;
-	authStatus: 'loading' | 'authenticated' | 'anonymous';
-	playerDisplayName: string;
-	score: number | null;
-	rank: number | null;
-	onLogout: () => void;
+  children?: Snippet;
+  currentPath: string;
+  authStatus: 'loading' | 'authenticated' | 'anonymous';
+  playerDisplayName: string;
+  score: number | null;
+  rank: number | null;
+  onLogout: () => void;
 }
 ```
 
-`+layout.svelte` remains the auth and progression-fetch owner. `ArcadeShell` renders values only.
+`+layout.svelte` owns the best-effort progression request and passes values into `ArcadeShell`.
 
-- [ ] **Step 1: Write failing `ArcadeShell` tests**
+- [ ] **Step 1: Write failing shell tests, including the real 1440 CSS boundary**
+
+Create `ArcadeShell.svelte.test.ts` using `vitest-browser-svelte` and the existing
+`page.viewport()` pattern:
 
 ```ts
-import { describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
-import { page } from 'vitest/browser';
-import ArcadeShell from '../ArcadeShell.svelte';
+it('activates the persistent sidebar only at 1440px', async () => {
+  const originalWidth = window.innerWidth;
+  const originalHeight = window.innerHeight;
+  try {
+    await page.viewport(1439, 900);
+    render(ArcadeShell, authenticatedProps);
+    const sidebar = await page.getByTestId('arcade-sidebar').element();
+    expect(getComputedStyle(sidebar).display).toBe('none');
 
-it('renders player destinations and progression values', async () => {
-	render(ArcadeShell, {
-		currentPath: '/',
-		authStatus: 'authenticated',
-		playerDisplayName: 'Alex C.',
-		score: 900,
-		rank: 38,
-		onLogout: vi.fn()
-	});
-
-	await expect.element(page.getByRole('link', { name: 'Arcade' })).toBeVisible();
-	await expect.element(page.getByRole('link', { name: 'Ranks' })).toBeVisible();
-	await expect.element(page.getByRole('link', { name: 'Upload' })).toBeVisible();
-	await expect.element(page.getByRole('link', { name: 'Quick' })).toBeVisible();
-	await expect.element(page.getByRole('link', { name: 'Profile' })).toBeVisible();
-	await expect.element(page.getByText('900')).toBeVisible();
-	await expect.element(page.getByText('#38')).toBeVisible();
+    await page.viewport(1440, 900);
+    expect(getComputedStyle(sidebar).display).not.toBe('none');
+  } finally {
+    await page.viewport(originalWidth, originalHeight);
+  }
 });
 ```
 
-Add stable `data-testid="arcade-shell"` and `data-sidebar-breakpoint="1440"` hooks; CSS remains the
-visibility source.
+Also assert Arcade/Ranks/Upload/Quick/Profile links and authenticated score/rank values.
 
-Update `layout.svelte.test.ts` to assert:
+Do **not** add `data-sidebar-breakpoint="1440"`; the computed style is the contract.
 
-- `/puzzle/:id` bypasses `ArcadeShell`
-- `/admin` bypasses `ArcadeShell`
-- ordinary player routes render through it
-- progression failure leaves navigation/children usable and score/rank absent
+Update `layout.svelte.test.ts` to require:
+
+- `/puzzle/:id` bypasses the player shell
+- `/admin` bypasses the player shell
+- ordinary player routes use the shell
+- progression rejection leaves shell/navigation usable
+- authenticated navigation from one shell route to another refetches progression
+- a superseded request is aborted/ignored
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/ArcadeShell.svelte.test.ts \
-	src/routes/layout.svelte.test.ts
+  src/lib/components/__tests__/ArcadeShell.svelte.test.ts \
+  src/routes/layout.svelte.test.ts
 ```
 
-Expected: FAIL because `ArcadeShell` does not exist and root layout still renders floating links.
+Expected: FAIL because `ArcadeShell` and route-keyed progression behavior do not exist.
 
-- [ ] **Step 3: Retune `layout.css`**
+- [ ] **Step 3: Bundle the existing fonts locally**
 
-Apply the spec palette to existing tokens, remove the `body::after` scanline/CRT overlay, keep the
-existing font imports, retain reduced-motion rules, and convert shared arcade buttons to the
-rounded candy/glass language.
+Install fixed Fontsource packages:
 
-Do not add a second token namespace.
+```bash
+cd apps/web
+bun add @fontsource/orbitron@5.3.0 @fontsource/rajdhani@5.3.0 @fontsource/share-tech-mono@5.3.0
+cd ../..
+```
 
-- [ ] **Step 4: Implement `ArcadeShell` with one exact breakpoint**
+In `+layout.svelte`, import only the used weights before `layout.css`:
+
+```ts
+import '@fontsource/orbitron/600.css';
+import '@fontsource/orbitron/700.css';
+import '@fontsource/orbitron/900.css';
+import '@fontsource/rajdhani/400.css';
+import '@fontsource/rajdhani/500.css';
+import '@fontsource/rajdhani/600.css';
+import '@fontsource/rajdhani/700.css';
+import '@fontsource/share-tech-mono/400.css';
+import './layout.css';
+```
+
+Delete the Google Fonts `@import` from `layout.css`.
+
+Delete the Google Fonts route stub from `e2e/support/test.ts`; local fonts make both functional and
+visual lanes offline-safe.
+
+Verify no runtime Google Fonts dependency remains:
+
+```bash
+rg "fonts\.googleapis\.com|fonts\.gstatic\.com" apps/web/src apps/web/e2e
+```
+
+Expected: no matches.
+
+- [ ] **Step 4: Retune global tokens and remove the CRT overlay**
+
+Move current token values toward the spec indigo/cyan/magenta/gold palette, keep the same token
+names, remove `body::after` scanlines, and convert shared arcade buttons to rounded candy/glass
+surfaces. Keep reduced-motion and coarse-pointer rules.
+
+- [ ] **Step 5: Implement `ArcadeShell` with exact CSS**
 
 ```css
 .arcade-sidebar {
-	display: none;
+  display: none;
 }
 
 @media (min-width: 1440px) {
-	.arcade-sidebar {
-		display: flex;
-		width: 232px;
-	}
+  .arcade-sidebar {
+    display: flex;
+    width: 232px;
+  }
 }
 ```
 
-Below 1440px render compact header/navigation without reserving sidebar width. Use semantic `<nav>`
-links and preserve sign-in/sign-out behavior.
+Below 1440px use compact header/navigation without reserving sidebar width.
 
-- [ ] **Step 5: Replace root floating navigation**
+- [ ] **Step 6: Make shell progression a pathname-keyed request**
 
-In `+layout.svelte`:
+In `+layout.svelte`, keep `playerAuth.refresh()` and add state:
 
-- keep `playerAuth.refresh()`
-- derive puzzle/admin bypasses
-- load `getPlayerProgression()` only after authenticated state is known
-- clear display values when auth becomes anonymous
-- keep progression failure non-blocking
-- do not add a store
+```ts
+let shellScore = $state<number | null>(null);
+let shellRank = $state<number | null>(null);
+```
 
-- [ ] **Step 6: Run shell/unmocked-route regression**
+Use an effect keyed by auth status and `$page.url.pathname`:
+
+```ts
+$effect(() => {
+  const pathname = $page.url.pathname;
+  const authenticated = $playerAuth.status === 'authenticated';
+  const shellVisible = !pathname.startsWith('/puzzle/') && pathname !== '/admin';
+
+  if (!authenticated || !shellVisible) {
+    shellScore = null;
+    shellRank = null;
+    return;
+  }
+
+  const controller = new AbortController();
+  void getPlayerProgression(controller.signal)
+    .then((summary) => {
+      if (controller.signal.aborted) return;
+      shellScore = summary.score;
+      shellRank = summary.rank;
+    })
+    .catch((error) => {
+      if (controller.signal.aborted) return;
+      console.error('Failed to load shell progression', error);
+      shellScore = null;
+      shellRank = null;
+    });
+
+  return () => controller.abort();
+});
+```
+
+The profile page keeps its own existing request. The duplicate read on `/profile` is accepted; do
+not add context/store machinery just to dedupe it.
+
+- [ ] **Step 7: Run shell/unmocked-route regression**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/ArcadeShell.svelte.test.ts \
-	src/routes/layout.svelte.test.ts \
-	src/routes/leaderboard/page.svelte.test.ts \
-	src/routes/profile/page.svelte.test.ts \
-	src/routes/upload/page.svelte.test.ts \
-	src/routes/login/page.svelte.test.ts \
-	src/routes/error.svelte.test.ts
+  src/lib/components/__tests__/ArcadeShell.svelte.test.ts \
+  src/routes/layout.svelte.test.ts \
+  src/routes/leaderboard/page.svelte.test.ts \
+  src/routes/profile/page.svelte.test.ts \
+  src/routes/upload/page.svelte.test.ts \
+  src/routes/login/page.svelte.test.ts \
+  src/routes/error.svelte.test.ts
 bun run --cwd apps/web test:e2e -- quick-puzzle.spec.ts
 bun run --cwd apps/web check
 ```
 
-Expected: PASS. If one unmocked route fails only because the shell overlaps it, make the minimum
-spacing/content-width fix and keep its information architecture unchanged.
+Expected: PASS. Make only minimum overlap/readability changes to unmocked routes.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add apps/web/src/routes/layout.css \
-	apps/web/src/routes/+layout.svelte \
-	apps/web/src/routes/layout.svelte.test.ts \
-	apps/web/src/lib/components/ArcadeShell.svelte \
-	apps/web/src/lib/components/__tests__/ArcadeShell.svelte.test.ts \
-	apps/web/src/routes/leaderboard \
-	apps/web/src/routes/profile \
-	apps/web/src/routes/quick \
-	apps/web/src/routes/upload \
-	apps/web/src/routes/login \
-	apps/web/src/routes/+error.svelte
+git add apps/web/package.json bun.lock \
+  apps/web/src/routes/layout.css \
+  apps/web/src/routes/+layout.svelte \
+  apps/web/src/routes/layout.svelte.test.ts \
+  apps/web/e2e/support/test.ts \
+  apps/web/src/lib/components/ArcadeShell.svelte \
+  apps/web/src/lib/components/__tests__/ArcadeShell.svelte.test.ts \
+  apps/web/src/routes/leaderboard apps/web/src/routes/profile \
+  apps/web/src/routes/quick apps/web/src/routes/upload \
+  apps/web/src/routes/login apps/web/src/routes/+error.svelte
 git commit -m "feat(web): add galaxy arcade shell"
 ```
 
 ---
 
-## Task 2: Add closed gem, category-icon, and progress-ring vocabularies
+## Task 2: Add closed gem/category/progress vocabularies
 
 **Files:**
 - Create: `apps/web/src/lib/components/DifficultyGems.svelte`
@@ -248,7 +327,7 @@ git commit -m "feat(web): add galaxy arcade shell"
 - Modify: `apps/web/src/lib/components/__tests__/CategoryBadge.svelte.test.ts`
 - Modify: `apps/web/src/lib/components/CategoryFilter.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/CategoryFilter.svelte.test.ts`
-- Modify: `apps/web/src/lib/constants/categories.ts` only to retune/remove obsolete light-theme color classes
+- Modify: `apps/web/src/lib/constants/categories.ts`
 
 **Interfaces:**
 
@@ -256,226 +335,237 @@ git commit -m "feat(web): add galaxy arcade shell"
 import type { PuzzleDifficulty } from '@perseus/types';
 
 interface DifficultyGemsProps {
-	difficulty: PuzzleDifficulty;
-	pieceCount: number;
+  difficulty: PuzzleDifficulty;
+  pieceCount: number;
 }
 
 interface ProgressRingProps {
-	percent: number;
-	size?: number;
-	accent?: 'cyan' | 'magenta' | 'gold';
-	showValue?: boolean;
-	label: string;
+  percent: number;
+  size?: number;
+  accent?: 'cyan' | 'magenta' | 'gold';
+  showValue?: boolean;
+  label: string;
 }
 
 interface CategoryBadgeProps {
-	category: PuzzleCategory;
-	showLabel?: boolean;
-	compact?: boolean;
+  category: PuzzleCategory;
+  showLabel?: boolean;
+  compact?: boolean;
 }
 ```
 
-`CategoryBadge` owns the one category mapping table. `CategoryFilter` renders `CategoryBadge` rather
-than maintaining its own icon table.
-
-- [ ] **Step 1: Write failing `DifficultyGems` tests**
+- [ ] **Step 1: Write failing DifficultyGems tests**
 
 ```ts
 it.each([
-	['easy', 'Easy', 1, 12],
-	['normal', 'Normal', 2, 48],
-	['hard', 'Hard', 3, 108]
+  ['easy', 'Easy', 1, 12],
+  ['normal', 'Normal', 2, 48],
+  ['hard', 'Hard', 3, 108]
 ] as const)('renders %s with the closed gem count', async (difficulty, label, gems, pieces) => {
-	render(DifficultyGems, { difficulty, pieceCount: pieces });
-	await expect.element(page.getByLabelText(`${label} difficulty, ${pieces} pieces`)).toBeVisible();
-	await expect.element(page.getByTestId('difficulty-gem').nth(gems - 1)).toBeVisible();
+  render(DifficultyGems, { difficulty, pieceCount: pieces });
+  await expect.element(page.getByLabelText(`${label} difficulty, ${pieces} pieces`)).toBeVisible();
+  await expect.element(page.getByTestId('difficulty-gem')).toHaveLength(gems);
 });
 ```
 
-Also assert the root has `data-gem-count={gems}` so exact count can be tested without querying a
-nonexistent locator.
+- [ ] **Step 2: Write failing ProgressRing tests**
 
-- [ ] **Step 2: Write failing `ProgressRing` tests**
+Require percentage clamping plus `role="progressbar"`, min/max/now, and supplied accessible label.
 
-Require clamping plus `role="progressbar"`, `aria-valuemin="0"`, `aria-valuemax="100"`,
-`aria-valuenow`, and supplied label.
+- [ ] **Step 3: Write failing category mapping/accessibility tests**
 
-- [ ] **Step 3: Write failing category mapping tests**
-
-Test every existing `PUZZLE_CATEGORIES` value and assert one inline icon plus textual accessible
-name. Stable mapping test hook:
+Test every existing `PUZZLE_CATEGORIES` member against one `CategoryBadge` icon mapping:
 
 ```ts
 const EXPECTED_CATEGORY_ICON = {
-	Animals: 'paw',
-	Nature: 'leaf',
-	Art: 'art',
-	Architecture: 'building',
-	Abstract: 'abstract',
-	Food: 'food',
-	Travel: 'compass'
+  Animals: 'paw',
+  Nature: 'leaf',
+  Art: 'art',
+  Architecture: 'building',
+  Abstract: 'abstract',
+  Food: 'food',
+  Travel: 'compass'
 } as const;
 ```
 
-Expose `data-category-icon`; SVG stays `aria-hidden="true"`.
+Use `data-category-icon` as a stable mapping hook. SVG is `aria-hidden="true"`.
+
+For compact `CategoryFilter`, assert every radio still has its category accessible name via
+`sr-only` text. Assert the All radio remains named `All`; it does not use `CategoryBadge`.
 
 - [ ] **Step 4: Run and verify failure**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/DifficultyGems.svelte.test.ts \
-	src/lib/components/__tests__/ProgressRing.svelte.test.ts \
-	src/lib/components/__tests__/PuzzleDifficultyPicker.svelte.test.ts \
-	src/lib/components/__tests__/CategoryBadge.svelte.test.ts \
-	src/lib/components/__tests__/CategoryFilter.svelte.test.ts
+  src/lib/components/__tests__/DifficultyGems.svelte.test.ts \
+  src/lib/components/__tests__/ProgressRing.svelte.test.ts \
+  src/lib/components/__tests__/PuzzleDifficultyPicker.svelte.test.ts \
+  src/lib/components/__tests__/CategoryBadge.svelte.test.ts \
+  src/lib/components/__tests__/CategoryFilter.svelte.test.ts
 ```
 
-Expected: FAIL on the new primitives and icon vocabulary.
+Expected: FAIL because the new primitives/icon mapping do not exist.
 
-- [ ] **Step 5: Implement the primitives/mapping**
+- [ ] **Step 5: Implement the three closed vocabularies**
 
-`DifficultyGems`: inline decorative gem SVGs, closed 1/2/3 count, piece count, accessible label,
-`data-gem-count`.
+- `DifficultyGems`: inline decorative gem SVGs, textual accessible label, piece count.
+- `ProgressRing`: one conic-gradient ring with clamped `$derived` percentage.
+- `CategoryBadge`: one local `Record<PuzzleCategory, ...>` mapping the seven categories.
+- `CategoryFilter`: reuse `CategoryBadge` for real categories, keep All separate, keep `sr-only`
+  textual names in compact mode.
+- Delete unused `CATEGORY_COLORS` from `categories.ts`.
 
-`ProgressRing`:
+Do not create another category mapping in admin/gallery.
 
-```ts
-const value = $derived(Math.min(100, Math.max(0, percent)));
-```
+- [ ] **Step 6: Refactor PuzzleDifficultyPicker without changing behavior**
 
-Use one conic-gradient ring; no state beyond derived display.
+Preserve difficulty ordering, ready/non-ready state, variant links, best time, resume progress,
+`data-testid="difficulty-action"`, and `data-difficulty`. Replace visible difficulty words with
+`DifficultyGems` while keeping textual accessible names.
 
-`CategoryBadge`: one local `Record<PuzzleCategory, ...>` implementing the seven spec rows.
-`CategoryFilter` reuses it in compact mode and keeps existing fieldset/radio semantics.
-
-- [ ] **Step 6: Refactor `PuzzleDifficultyPicker`**
-
-Preserve `PUZZLE_DIFFICULTIES` ordering, ready/non-ready behavior, variant links, best times,
-continue progress, `data-testid="difficulty-action"`, and `data-difficulty`. Replace visible
-Easy/Normal/Hard words with gems while keeping accessible names textual.
-
-- [ ] **Step 7: Run tests and commit**
+- [ ] **Step 7: Run and commit**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/DifficultyGems.svelte.test.ts \
-	src/lib/components/__tests__/ProgressRing.svelte.test.ts \
-	src/lib/components/__tests__/PuzzleDifficultyPicker.svelte.test.ts \
-	src/lib/components/__tests__/CategoryBadge.svelte.test.ts \
-	src/lib/components/__tests__/CategoryFilter.svelte.test.ts
+  src/lib/components/__tests__/DifficultyGems.svelte.test.ts \
+  src/lib/components/__tests__/ProgressRing.svelte.test.ts \
+  src/lib/components/__tests__/PuzzleDifficultyPicker.svelte.test.ts \
+  src/lib/components/__tests__/CategoryBadge.svelte.test.ts \
+  src/lib/components/__tests__/CategoryFilter.svelte.test.ts
 ```
 
 Expected: PASS.
 
 ```bash
 git add apps/web/src/lib/components/DifficultyGems.svelte \
-	apps/web/src/lib/components/ProgressRing.svelte \
-	apps/web/src/lib/components/PuzzleDifficultyPicker.svelte \
-	apps/web/src/lib/components/CategoryBadge.svelte \
-	apps/web/src/lib/components/CategoryFilter.svelte \
-	apps/web/src/lib/constants/categories.ts \
-	apps/web/src/lib/components/__tests__
-git commit -m "feat(web): add arcade visual vocabulary"
+  apps/web/src/lib/components/ProgressRing.svelte \
+  apps/web/src/lib/components/PuzzleDifficultyPicker.svelte \
+  apps/web/src/lib/components/CategoryBadge.svelte \
+  apps/web/src/lib/components/CategoryFilter.svelte \
+  apps/web/src/lib/constants/categories.ts \
+  apps/web/src/lib/components/__tests__
+git commit -m "feat(web): add arcade visual vocabularies"
 ```
 
 ---
 
-## Task 3: Redesign gallery for 2a, 2d, and 3a
+## Task 3: Redesign gallery for phone, tablet, and desktop
 
 **Files:**
 - Modify: `apps/web/src/routes/+page.svelte`
 - Modify: `apps/web/src/routes/page.svelte.test.ts`
+- Modify: `apps/web/src/routes/page.svelte.spec.ts`
 - Modify: `apps/web/src/lib/components/PuzzleCard.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts`
-- Modify: `apps/web/src/lib/components/SearchBar.svelte` only for theme/shell-compatible presentation
+- Modify: `apps/web/src/lib/components/SearchBar.svelte` only for shell-compatible styling
 - Modify: `apps/web/e2e/gallery.spec.ts`
 
-**Interfaces:**
-- Gallery services do not change.
-- `PuzzleCard` keeps `family`, `progressByVariantId`, `playableLinks`.
-- Reuse `DifficultyGems`, `CategoryBadge`, `ProgressRing` from Task 2.
+**Interfaces:** Gallery service/session contracts remain unchanged.
 
-- [ ] **Step 1: Add failing card/gallery assertions**
+- [ ] **Step 1: Add failing art-card and resume assertions**
 
 Require:
 
 - `data-testid="puzzle-card"` remains
-- square artwork remains a real `<img>` with family alt text
-- category is accessible through `CategoryBadge`
+- artwork remains the dominant square surface
+- category remains accessible in icon mode
 - three difficulty actions remain
-- saved progress stays associated with the correct variant
-- processing/failed states stay explicit
-- resume area renders `ProgressRing`
+- processing/failed overlays remain explicit
+- resume section contains `ProgressRing` and the existing resume action
 
-Update E2E selectors away from visible Easy/Normal/Hard text where necessary; use
-`data-difficulty`/accessible names.
+Update gallery E2E selectors to use accessible names/`data-difficulty` rather than visible
+Easy/Normal/Hard words.
 
-- [ ] **Step 2: Run failing focused tests**
+- [ ] **Step 2: Add failing rendered column-count tests**
+
+Use the same `page.viewport()` + computed-style approach already used in gameplay route tests:
+
+```ts
+it('uses three poster columns at tablet and desktop canonical widths', async () => {
+  const originalWidth = window.innerWidth;
+  const originalHeight = window.innerHeight;
+  try {
+    await page.viewport(1080, 810);
+    render(Page);
+    const grid = await page.getByTestId('puzzle-grid').element();
+    expect(getComputedStyle(grid).gridTemplateColumns.split(' ').length).toBe(3);
+
+    await page.viewport(1440, 900);
+    expect(getComputedStyle(grid).gridTemplateColumns.split(' ').length).toBe(3);
+  } finally {
+    await page.viewport(originalWidth, originalHeight);
+  }
+});
+```
+
+Also assert one column at 390×844.
+
+- [ ] **Step 3: Run both gallery unit files and verify failure**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
-	src/routes/page.svelte.test.ts
-bun run --cwd apps/web test:e2e -- gallery.spec.ts
+  src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
+  src/routes/page.svelte.test.ts \
+  src/routes/page.svelte.spec.ts
 ```
 
-Expected: FAIL on new art-first/resume composition assertions.
+Expected: FAIL on new composition/column assertions. `page.svelte.spec.ts` is intentionally included;
+it already renders the route and must not be deferred to the final sweep.
 
-- [ ] **Step 3: Recompose `PuzzleCard`**
+- [ ] **Step 4: Recompose one PuzzleCard**
+
+Keep existing family/progress props and status behavior. Render:
+
+- square artwork
+- bottom image gradient
+- category icon chip
+- title against art
+- compact progress/best/mastery data
+- gem difficulty action row
+
+Do not make form-factor-specific card components.
+
+- [ ] **Step 5: Recompose gallery layout**
+
+Targets:
 
 ```text
-square art
-  category icon chip
-  status overlay when not ready
-  bottom art gradient
-    title
-    compact best/progress/mastery
-card footer
-  three gem difficulty actions
+390×844: 1 column
+1080×810: 3 columns, compact shell
+1440×900: 3 columns inside 232px sidebar shell
 ```
 
-Do not create form-factor-specific card components.
+Keep search debounce, category selection, cursor sentinel, quick puzzles, saved-progress discovery,
+saved-progress dialog, and discard behavior untouched.
 
-- [ ] **Step 4: Recompose the route without changing data flow**
-
-Keep puzzle fetch, debounce, filter, cursor sentinel, quick puzzles, saved-session discovery,
-SavedProgressDialog, DiscardSessionDialog, error/loading behavior.
-
-Canonical CSS targets:
-
-- 393×852: 1-column art-first feed
-- 1080×810: 3-column poster wall
-- 1440×900: 3-column poster wall inside the 232px shell content region
-- desktop sidebar still activates only at 1440px
-- resume banner uses `ProgressRing` and one cyan primary action
-
-Intermediate portrait-tablet layout may use two columns if that preserves readability.
-
-- [ ] **Step 5: Run tests/check and commit**
+- [ ] **Step 6: Run gallery unit/E2E**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
-	src/routes/page.svelte.test.ts
+  src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
+  src/routes/page.svelte.test.ts \
+  src/routes/page.svelte.spec.ts
 bun run --cwd apps/web test:e2e -- gallery.spec.ts
-bun run --cwd apps/web check
 ```
 
 Expected: PASS.
 
+- [ ] **Step 7: Commit**
+
 ```bash
 git add apps/web/src/routes/+page.svelte \
-	apps/web/src/routes/page.svelte.test.ts \
-	apps/web/src/lib/components/PuzzleCard.svelte \
-	apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
-	apps/web/src/lib/components/SearchBar.svelte \
-	apps/web/e2e/gallery.spec.ts
+  apps/web/src/routes/page.svelte.test.ts \
+  apps/web/src/routes/page.svelte.spec.ts \
+  apps/web/src/lib/components/PuzzleCard.svelte \
+  apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
+  apps/web/src/lib/components/SearchBar.svelte \
+  apps/web/e2e/gallery.spec.ts
 git commit -m "feat(web): redesign arcade gallery"
 ```
 
 ---
 
-## Task 4: Lift the toolbar and recompose responsive gameplay
+## Task 4: Lift the toolbar and make gameplay rail/sheet math real
 
 **Files:**
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
@@ -489,193 +579,289 @@ git commit -m "feat(web): redesign arcade gallery"
 - Modify: `apps/web/src/lib/services/puzzleLayout.ts`
 - Modify: `apps/web/src/lib/services/puzzleLayout.test.ts`
 - Modify: `apps/web/e2e/gameplay-mobile-tap.spec.ts`
-- Modify: `apps/web/e2e/gameplay-interactions.spec.ts`
-- Modify: `apps/web/e2e/gameplay-session-controls.spec.ts` only if toolbar placement changes a selector there
-- Verify unchanged compatibility: `apps/web/e2e/support/gameplay-page.ts::pauseMission()` already clicks Pause directly when visible and opens MORE only as fallback
+- Verify: `apps/web/e2e/support/gameplay-page.ts` (keep its fallback unless a locator actually breaks)
+- Run existing gameplay interaction/session/accessibility specs
 
 **Interfaces:**
 
-`PuzzleToolbar` keeps its existing action callback/boolean interface and one roving-focus tree.
-
-`PuzzleInventoryPanel` keeps canonical session props and replaces private `drawerOpen` with:
+`PuzzleBoardPanel` exports only:
 
 ```ts
-type MobileSheetState = 'peek' | 'half' | 'full';
-
-const MOBILE_SHEET_HEIGHT: Record<MobileSheetState, number> = {
-	peek: 140,
-	half: 300,
-	full: 528
-};
+export function zoomIn(): void;
+export function zoomOut(): void;
 ```
 
-`PuzzleBoardPanel` removes toolbar-only props and exports only these presentation methods:
+FIT stays route-owned:
 
 ```ts
-export function zoomIn(): void {
-	handleZoomIn();
-}
-
-export function zoomOut(): void {
-	handleZoomOut();
-}
-
-export function resetView(): void {
-	resetViewport();
+function requestBoardViewReset(): void {
+  boardViewResetVersion += 1;
 }
 ```
 
-The route binds the panel instance and invokes those methods from the lifted toolbar. Zoom/pan state
-stays private to `PuzzleBoardPanel`.
-
-- [ ] **Step 1: Write failing board-panel ownership tests**
-
-Update `PuzzleBoardPanel.svelte.test.ts` so it asserts:
-
-- no `puzzle-toolbar` is rendered inside the panel
-- board/reference behavior is unchanged
-- the bound component instance exposes `zoomIn`, `zoomOut`, `resetView`
-
-Use `bind:this` in a tiny test wrapper to invoke the exported methods. Do not move viewport state to
-the route for easier testing.
-
-- [ ] **Step 2: Write failing phone sheet tests**
-
-Require default `half`, cycle to `full` then `peek`, no canonical callbacks from sheet-state changes,
-and hinted-piece reveal to raise state to at least `half` before `scrollIntoView`.
+`PuzzleInventoryPanel` gains one presentation callback:
 
 ```ts
-render(PuzzleInventoryPanel, props);
-await expect.element(page.getByTestId('puzzle-inventory-panel')).toHaveAttribute(
-	'data-sheet-state',
-	'half'
-);
-await page.getByRole('button', { name: 'Expand piece tray' }).click();
-await expect.element(page.getByTestId('puzzle-inventory-panel')).toHaveAttribute(
-	'data-sheet-state',
-	'full'
-);
+onAnnouncement?: (message: string) => void;
 ```
 
-- [ ] **Step 3: Write failing 390×844 board-metric proof**
-
-Extend `puzzleLayout.test.ts` using the existing 6×8 portrait fixture:
+`puzzleLayout.ts` exports:
 
 ```ts
-const phone = getResponsivePuzzleBoardMetrics(
-	portraitPuzzle,
-	{ width: 390, height: 844 },
-	DESKTOP_TRAY_BASE_WIDTH,
-	390
-);
-expect(phone.cellSize).toBeGreaterThanOrEqual(36);
-expect(phone.cellSize).toBeLessThanOrEqual(48);
+export const GAMEPLAY_RAIL_WIDTH = {
+  small: 56,
+  medium: 56,
+  large: 88,
+  'extra-large': 96
+} as const;
+
+export const MOBILE_SHEET_HEIGHT = {
+  peek: 140,
+  half: 300,
+  full: 528
+} as const;
+
+export function getGameplayRailWidth(viewportWidth: number): number;
+export function clampTrayWidth(
+  layoutWidth: number,
+  requestedWidth: number,
+  railWidth?: number
+): number;
 ```
 
-Keep arbitrary-aspect/measured-layout tests. Change `DESKTOP_TRAY_BASE_WIDTH` from 360 to **352** and
-update exact-value tests.
+`DESKTOP_TRAY_BASE_WIDTH` becomes 352. `getDefaultPuzzleTrayWidth()` uses a **300px base for large**
+and **352px base for extra-large** before applying the existing coarse-puzzle widening rule.
 
-- [ ] **Step 4: Write failing 390×844 fold/action E2E**
+- [ ] **Step 1: Write failing rail-aware layout math tests**
 
-In `gameplay-mobile-tap.spec.ts`, load `e2e-portrait-12` with immediate-start preferences and assert:
+Add these invariants to `puzzleLayout.test.ts`:
 
 ```ts
-await expect(page.getByTestId('puzzle-board')).toBeVisible();
-await expect(page.getByTestId('puzzle-inventory-panel')).toHaveAttribute('data-sheet-state', 'half');
-await expect(page.getByRole('button', { name: 'Hint' })).toBeVisible();
-await expect(page.getByRole('button', { name: 'Toggle reference' })).toBeVisible();
-await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
-await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
-await expect(page.getByRole('button', { name: 'Pause mission' })).toBeVisible();
+it('reserves the gameplay rail when clamping desktop tray width', () => {
+  const layoutWidth = 1408;
+  const railWidth = 96;
+  const tray = clampTrayWidth(layoutWidth, 1000, railWidth);
+  expect(layoutWidth - railWidth - tray - DESKTOP_TRAY_SEPARATOR_WIDTH)
+    .toBeGreaterThanOrEqual(DESKTOP_BOARD_MIN_WIDTH);
+});
+
+it('reserves the tablet rail when clamping the 1080 layout', () => {
+  const layoutWidth = 1080;
+  const railWidth = 88;
+  const tray = clampTrayWidth(layoutWidth, 1000, railWidth);
+  expect(layoutWidth - railWidth - tray - DESKTOP_TRAY_SEPARATOR_WIDTH)
+    .toBeGreaterThanOrEqual(DESKTOP_BOARD_MIN_WIDTH);
+});
 ```
 
-Call `gameplayPage.pauseMission()` and verify the pause dialog. Do **not** assert MORE is absent; the
-spec allows phone MORE for low-frequency actions.
+Add a coarse-puzzle metric test where the desktop cap binds and assert the returned board width is
+`<= layout - rail - tray - separator`.
 
-- [ ] **Step 5: Run and verify failure before implementation**
+Add tiered default tests for the existing 6×8 portrait fixture:
+
+```ts
+expect(getDefaultPuzzleTrayWidth(portraitPuzzle, { width: 1080, height: 810 })).toBe(300);
+expect(getDefaultPuzzleTrayWidth(portraitPuzzle, { width: 1440, height: 900 })).toBe(352);
+```
+
+Keep existing dynamic widening tests for coarse puzzles.
+
+Expected on `main`: FAIL because rail width is not represented and both default trays floor at 360.
+
+- [ ] **Step 2: Write failing board-panel ownership tests**
+
+Require:
+
+- `PuzzleBoardPanel` no longer renders `data-testid="puzzle-toolbar"`
+- `zoomIn()` changes rendered zoom state
+- `zoomOut()` reverses it
+- route-driven `viewResetVersion` still resets the viewport
+
+Do not add/test `resetView()` export.
+
+- [ ] **Step 3: Write failing tri-state sheet/ARIA tests**
+
+Default state is half:
+
+```ts
+await expect.element(page.getByTestId('puzzle-inventory-panel'))
+  .toHaveAttribute('data-sheet-state', 'half');
+```
+
+The handle is a plain button with no `aria-expanded` and next-action labels:
+
+```text
+half -> "Expand piece tray to full"
+full -> "Collapse piece tray to peek"
+peek -> "Expand piece tray to half"
+```
+
+Assert transitions call:
+
+```ts
+onAnnouncement('Piece tray: full.');
+onAnnouncement('Piece tray: peek.');
+onAnnouncement('Piece tray: half.');
+```
+
+Keep `aria-controls` pointing at the inventory body.
+
+Update all old `Open inventory` / `Collapse inventory` assertions in
+`PuzzleInventoryPanel.svelte.test.ts` and `gameplay-mobile-tap.spec.ts` as part of this task.
+
+Keep the hint-reveal test and require a hinted piece to raise peek -> half before scrolling.
+
+- [ ] **Step 4: Write failing canonical phone geometry/direct-action E2E**
+
+Run only in the existing Chromium mobile project. Load `e2e-portrait-12` with immediate-start
+preferences.
+
+Assert geometry, not just `toBeVisible()`:
+
+```ts
+const board = await page.getByTestId('puzzle-board').boundingBox();
+const sheet = await page.getByTestId('puzzle-inventory-panel').boundingBox();
+expect(board).not.toBeNull();
+expect(sheet).not.toBeNull();
+expect(board!.y).toBeGreaterThanOrEqual(0);
+expect(board!.y + board!.height).toBeLessThanOrEqual(sheet!.y + 1);
+```
+
+Require `data-sheet-state="half"` and direct visible buttons:
+
+- Hint
+- Toggle reference
+- Undo
+- Reset view
+- Pause mission
+
+Prove the direct Pause path by clicking `Pause mission` itself rather than calling the helper, then
+assert the Mission Paused dialog opens. Keep `GameplayPage.pauseMission()` fallback unchanged for
+other compact layouts.
+
+Roving focus proof:
+
+```ts
+const toolbar = page.getByTestId('puzzle-toolbar');
+await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
+```
+
+Also assert each visible toolbar button's computed `position` is not `fixed`, preserving the current
+`offsetParent !== null` roving-focus filter.
+
+- [ ] **Step 5: Run the red gate**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
-	src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts \
-	src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
-	src/lib/services/puzzleLayout.test.ts \
-	src/routes/puzzle/[id]/page.svelte.test.ts
+  src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
+  src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts \
+  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
+  src/lib/services/puzzleLayout.test.ts \
+  src/routes/puzzle/[id]/page.svelte.test.ts
 (cd apps/web && bunx playwright test gameplay-mobile-tap.spec.ts --project=chromium-mobile)
 ```
 
-Expected: FAIL on toolbar ownership, sheet state, rail visibility, and new metrics. The direct
-Playwright command is intentional: the normal `test:e2e` script pins `chromium-desktop`.
+Expected: FAIL on toolbar ownership, rail math, tray defaults, sheet state/ARIA, and phone geometry.
 
-- [ ] **Step 6: Lift `PuzzleToolbar` into the route**
+- [ ] **Step 6: Make puzzleLayout rail-aware**
 
-In `PuzzleBoardPanel.svelte`:
+Implement `GAMEPLAY_RAIL_WIDTH`, `MOBILE_SHEET_HEIGHT`, and `getGameplayRailWidth()`.
 
-- remove `PuzzleToolbar` import/rendering
-- remove toolbar-only props (`onUndo`, `onRedo`, `onHint`, reference hold, rotation, pause/setup,
-  canUndo/canRedo/canPause/canOpenSetup)
-- keep `onReferenceToggle` because dismissible `ReferenceOverlay` still needs it
-- keep board placement/reference/interaction props
-- export the three view methods above
+Use rail width in three places:
 
-In `puzzle/[id]/+page.svelte`:
+1. small/medium `getWidthReserve()`
+2. large/extra-large `desktopWidthCap`
+3. `clampTrayWidth()` max-tray calculation
 
-- bind `PuzzleBoardPanel` instance
-- render `PuzzleToolbar` as a sibling region in `.game-layout`
-- wire session actions directly from the route
-- wire zoom/reset to board-panel exports
-- derive `referenceAvailable` from current puzzle/reference URL
+Use `MOBILE_SHEET_HEIGHT.half` for small/medium vertical reserve instead of another literal `300`.
 
-Do not move zoom/pan state to the route.
+Keep the same viewport tiers and arbitrary-grid/aspect math.
 
-- [ ] **Step 7: Keep one toolbar tree and preserve low-frequency overflow**
+- [ ] **Step 7: Make tray base width tier-aware**
 
-Phone direct rail: Hint, Reference, Undo, Fit, Pause. Keep MORE only for low-frequency
-redo/zoom/rotation/setup/peek actions that cannot fit without stealing board space.
+`getDefaultPuzzleTrayWidth()` uses:
 
-Tablet/desktop show the full action set directly. Retain `data-toolbar-action`, roving focus,
-pressed state, disabled skipping, and accessible names. Do not replace overflow with a scrollable
-vertical full-action stack.
-
-- [ ] **Step 8: Convert inventory drawer to phone sheet / docked tray**
-
-- default phone/stacked state `half`
-- cycle `peek -> half -> full -> peek`
-- hint raises to at least `half`
-- `data-sheet-state` on panel root
-- never serialize sheet state
-- safe-area padding stays CSS-only
-- landscape tablet/desktop ignore sheet height and stay docked
-- portrait tablet may use stacked sheet
-- preserve filters, shuffle, rotate-selected, cancel, roving focus, rejection/hint styling
-
-- [ ] **Step 9: Recompose route layout**
-
-```text
-phone:
-  full-bleed board
-  floating HUD top
-  right high-frequency rail
-  bottom inventory sheet
-
-1080×810 landscape tablet:
-  ~88px rail | board | ~300px tray
-
-1440×900 desktop:
-  ~96px rail | board | 352px default tray
+```ts
+const baseWidth = tier === 'large' ? 300 : DESKTOP_TRAY_BASE_WIDTH;
 ```
 
-Keep current tray resizing for docked layouts and `puzzleLayout.ts` as metric owner.
+for docked large/extra-large layouts, with `DESKTOP_TRAY_BASE_WIDTH = 352` and the existing
+cell-based coarse-puzzle widening layered on top.
 
-- [ ] **Step 10: Run Task 4 behavioral gates**
+Do not turn 300/352 into hard maximums.
+
+- [ ] **Step 8: Lift PuzzleToolbar out of PuzzleBoardPanel**
+
+`PuzzleBoardPanel`:
+
+- removes toolbar import/rendering
+- removes toolbar-only session/action props
+- keeps board/reference/interaction props
+- keeps `onReferenceToggle` for dismissible overlay
+- exports only `zoomIn` and `zoomOut`
+- keeps `viewResetVersion` reset behavior
+
+Route:
+
+- binds panel instance
+- renders `PuzzleToolbar` as a sibling grid region
+- wires session actions directly
+- wires Zoom in/out to panel exports
+- wires Fit to `requestBoardViewReset`
+- derives reference availability from the loaded source
+- passes `announceGameplay` into inventory as `onAnnouncement`
+
+Do not move zoom/pan state into the route.
+
+- [ ] **Step 9: Keep one toolbar tree with deliberate HPA-217 reversal**
+
+At 390×844 expose Hint/Reference/Undo/Fit/Pause directly in the right rail. Keep low-frequency
+Redo/Zoom/Rotation/Setup/Peek in `MORE` if they do not fit.
+
+Tablet/desktop show the full action set directly.
+
+Keep `data-toolbar-action`, pressed/disabled semantics, roving focus, textual accessible names, and
+44px coarse-pointer targets.
+
+- [ ] **Step 10: Convert inventory drawer to tri-state sheet**
+
+State remains private:
+
+```ts
+type MobileSheetState = 'peek' | 'half' | 'full';
+let sheetState = $state<MobileSheetState>('half');
+```
+
+Use `MOBILE_SHEET_HEIGHT` for CSS values. Remove binary `aria-expanded`; use next-action labels and
+route announcer callback. Desktop/tablet docked layouts ignore sheet height. Preserve filter/shuffle,
+rotate-selected, cancel-selection, roving focus, hint/rejection styling, and completion message.
+
+- [ ] **Step 11: Recompose route geometry**
+
+```text
+phone 390×844:
+  board region | right 56px high-frequency rail
+  bottom 300px half sheet
+
+landscape tablet 1080×810:
+  88px rail | board | 300px base tray
+
+desktop 1440×900:
+  96px rail | board | 352px base tray
+```
+
+Keep tray resizing on docked layouts. Pass current rail width into every route call to
+`clampTrayWidth` (`appliedTrayWidth`, `setRequestedTrayWidth`, `currentMaxTrayWidth`).
+
+- [ ] **Step 12: Run Task 4 behavior gate**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
-	src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts \
-	src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
-	src/lib/services/puzzleLayout.test.ts \
-	src/routes/puzzle/[id]/page.svelte.test.ts
+  src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
+  src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts \
+  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
+  src/lib/services/puzzleLayout.test.ts \
+  src/routes/puzzle/[id]/page.svelte.test.ts
 (cd apps/web && bunx playwright test gameplay-mobile-tap.spec.ts --project=chromium-mobile)
 bun run --cwd apps/web test:e2e -- gameplay-interactions.spec.ts
 bun run --cwd apps/web test:e2e -- gameplay-session-controls.spec.ts
@@ -683,49 +869,51 @@ bun run --cwd apps/web test:e2e:a11y
 bun run --cwd apps/web check
 ```
 
-Expected: PASS, including 390×844 direct high-frequency actions and existing keyboard/touch flows.
+Expected: PASS.
 
-- [ ] **Step 11: Commit Task 4**
+- [ ] **Step 13: Commit Task 4**
 
 ```bash
 git add apps/web/src/routes/puzzle/[id]/+page.svelte \
-	apps/web/src/routes/puzzle/[id]/page.svelte.test.ts \
-	apps/web/src/lib/components/PuzzleBoardPanel.svelte \
-	apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
-	apps/web/src/lib/components/PuzzleToolbar.svelte \
-	apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts \
-	apps/web/src/lib/components/PuzzleInventoryPanel.svelte \
-	apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
-	apps/web/src/lib/services/puzzleLayout.ts \
-	apps/web/src/lib/services/puzzleLayout.test.ts \
-	apps/web/e2e/gameplay-mobile-tap.spec.ts \
-	apps/web/e2e/gameplay-interactions.spec.ts \
-	apps/web/e2e/gameplay-session-controls.spec.ts
+  apps/web/src/routes/puzzle/[id]/page.svelte.test.ts \
+  apps/web/src/lib/components/PuzzleBoardPanel.svelte \
+  apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
+  apps/web/src/lib/components/PuzzleToolbar.svelte \
+  apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts \
+  apps/web/src/lib/components/PuzzleInventoryPanel.svelte \
+  apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
+  apps/web/src/lib/services/puzzleLayout.ts \
+  apps/web/src/lib/services/puzzleLayout.test.ts \
+  apps/web/e2e/gameplay-mobile-tap.spec.ts
 git commit -m "feat(web): redesign responsive gameplay workspace"
 ```
 
-### HARD REVIEW GATE A — STOP AFTER TASK 4
+### HARD GATE A — STOP AFTER TASK 4
 
-Do not start Task 5 until the same draft PR has been reviewed through Task 4.
+Do not begin Task 5 until the same PR is reviewed through Task 4.
 
-Verify:
+Gate A checklist:
 
-- no non-web product scope appeared
-- shell breakpoint is exactly 1440px
-- gallery is three columns at 1080 and 1440 canonical layouts
-- `PuzzleToolbar` is no longer nested inside `PuzzleBoardPanel`
-- `PuzzleBoardPanel` still owns zoom/pan state
-- phone sheet state is local/unpersisted
-- 390×844 board cell/fold/action tests pass
-- `pauseMission()` works with direct Pause and fallback MORE remains available for low-frequency actions
-- gameplay keyboard/touch/announcer tests are green
+- [ ] no non-web product scope
+- [ ] computed shell breakpoint: hidden 1439 / visible 1440
+- [ ] computed gallery columns: 3 at 1080 and 1440
+- [ ] `PuzzleToolbar` no longer nested in `PuzzleBoardPanel`
+- [ ] board panel still owns zoom/pan and exposes only zoom in/out
+- [ ] FIT still uses `boardViewResetVersion`
+- [ ] rail-aware tray clamp leaves >=480px board at 1080 and 1440
+- [ ] reported board width does not exceed the real board column
+- [ ] large tray base 300; extra-large base 352
+- [ ] phone board/sheet bounding boxes pass at 390×844
+- [ ] direct Pause path passes at 390×844
+- [ ] sheet state remains unpersisted and no longer uses `aria-expanded`
+- [ ] toolbar roving-focus direct-action test passes
+- [ ] existing gameplay keyboard/touch/announcer tests pass
 
-Fix Gate A findings before adding completion/admin diffs. This is the single-PR substitute for the
-reviewer's proposed two-PR split.
+If Gate A fails, fix the current composition before adding completion/admin changes.
 
 ---
 
-## Task 5: Redesign completion around finished art with closed star mapping
+## Task 5: Redesign completion around finished art and closed stars
 
 **Files:**
 - Modify: `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
@@ -736,100 +924,86 @@ reviewer's proposed two-PR split.
 
 **Interfaces:**
 
-Extend dialog props:
+Add:
 
 ```ts
 referenceImageUrl: string | null;
 ```
 
-The route supplies `source.resolveReferenceImage() ?? null`; no second request.
+Route passes the already-loaded reference URL; no new request.
 
-Inside `PuzzleCompletionDialog.svelte`, derive stars with one local helper:
+- [ ] **Step 1: Write failing rendered star-rule tests**
 
-```ts
-function completionStars(
-	resultClass: ResultClass,
-	hintsUsed: number,
-	incorrectAttempts: number
-): 1 | 2 | 3 {
-	if (resultClass === 'relaxed') return 1;
-	if (
-		(resultClass === 'standard_timed' || resultClass === 'rotation_timed') &&
-		hintsUsed === 0 &&
-		incorrectAttempts === 0
-	) {
-		return 3;
-	}
-	return 2;
-}
+Do not export a test-only helper. Reuse existing `competitiveTimedResult` and derive star count in the
+component.
+
+Render cases and count `data-testid="completion-star"`:
+
+```text
+standard timed, 0 hints, 0 misses -> 3
+rotation timed, 0 hints, 0 misses -> 3
+standard timed, 1 hint -> 2
+standard timed, 1 miss -> 2
+assisted timed -> 2
+relaxed -> 1
 ```
-
-Do not export this helper just for tests. Render a stars container with
-`data-testid="completion-stars"` and `data-stars={starCount}`.
-
-- [ ] **Step 1: Write failing rendered star-table tests**
-
-Use the existing completion-dialog base props and render these cases:
-
-```ts
-render(PuzzleCompletionDialog, {
-	...baseProps,
-	resultClass: 'standard_timed',
-	hintsUsed: 0,
-	incorrectAttempts: 0
-});
-await expect.element(page.getByTestId('completion-stars')).toHaveAttribute('data-stars', '3');
-```
-
-Repeat with fresh renders/tests for:
-
-- `rotation_timed`, 0 hints, 0 misses → `3`
-- `standard_timed`, 1 hint, 0 misses → `2`
-- `standard_timed`, 0 hints, 1 miss → `2`
-- `assisted_timed` → `2`
-- `relaxed` → `1`
-
-Also assert the visible/decorative star count matches `data-stars` without exporting domain logic.
 
 - [ ] **Step 2: Write failing art/composition behavior tests**
 
 Require:
 
 - reference art renders when URL exists
-- null URL has a graceful placeholder
-- existing final-time/best-time/result/award/retry testids remain
-- focus trap, Escape, Play Again, Back to Arcade remain
-- relaxed result still omits timed-only UI
+- null URL renders graceful fallback
+- final-time/best-time/result/award/retry testids remain
+- focus trap and Escape remain
+- Play Again and Back to Arcade remain distinct
+- relaxed mode still omits timed-only UI
 
-- [ ] **Step 3: Run and verify failure**
+- [ ] **Step 3: Run red tests**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
-	src/routes/puzzle/[id]/page.svelte.test.ts
+  src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
+  src/routes/puzzle/[id]/page.svelte.test.ts
 ```
 
-Expected: FAIL on reference art and star summary.
+Expected: FAIL because finished art/star presentation does not exist.
 
-- [ ] **Step 4: Pass existing reference image and recompose dialog**
+- [ ] **Step 4: Implement star derived value without duplicate competitive logic**
 
-- phone 2c: art central, stars, large time/result, four stat tiles
-- tablet 2f: two columns, ~396px art for canonical fixture
-- desktop 3c: large two-column composition, ~504px art, remove 24rem large-screen cap
+Use existing `competitiveTimedResult`:
 
-Keep result pane scrollable only when unusual awards exceed canonical fixture height.
+```ts
+const completionStarCount = $derived(
+  resultClass === 'relaxed'
+    ? 1
+    : competitiveTimedResult && hintsUsed === 0 && incorrectAttempts === 0
+      ? 3
+      : 2
+);
+```
 
-- [ ] **Step 5: Preserve truthful actions/server state**
+This is display-only.
 
-Keep Retry Sync, Play Again, Back to Arcade, awards, mastery, family rank, local-stat failure, and
-personal-best semantics. Do not implement next-puzzle selection.
+- [ ] **Step 5: Pass existing reference art and recompose one dialog**
 
-- [ ] **Step 6: Run tests and commit**
+- phone: art + stars + large time/result + four stats
+- tablet: ~396px art left, result right
+- desktop: ~504px art left, result right, remove 24rem large-screen cap
+
+Keep unusual award content scrollable rather than clipped.
+
+- [ ] **Step 6: Preserve truthful actions/server state**
+
+Keep Retry Sync, Play Again, Back to Arcade, awards, mastery, rank, local-stat failure, and
+personal-best behavior. No next-puzzle logic.
+
+- [ ] **Step 7: Run and commit**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
-	src/routes/puzzle/[id]/page.svelte.test.ts
+  src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
+  src/routes/puzzle/[id]/page.svelte.test.ts
 bun run --cwd apps/web test:e2e -- gameplay-interactions.spec.ts
 ```
 
@@ -837,16 +1011,16 @@ Expected: PASS.
 
 ```bash
 git add apps/web/src/lib/components/PuzzleCompletionDialog.svelte \
-	apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
-	apps/web/src/routes/puzzle/[id]/+page.svelte \
-	apps/web/src/routes/puzzle/[id]/page.svelte.test.ts \
-	apps/web/e2e/gameplay-interactions.spec.ts
+  apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
+  apps/web/src/routes/puzzle/[id]/+page.svelte \
+  apps/web/src/routes/puzzle/[id]/page.svelte.test.ts \
+  apps/web/e2e/gameplay-interactions.spec.ts
 git commit -m "feat(web): redesign mission completion results"
 ```
 
 ---
 
-## Task 6: Recompose admin 4a and run full functional regression
+## Task 6: Recompose admin 4a and run Gate B
 
 **Files:**
 - Modify: `apps/web/src/routes/admin/+page.svelte`
@@ -855,63 +1029,79 @@ git commit -m "feat(web): redesign mission completion results"
 - Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts`
 - Modify: `apps/web/src/routes/admin/PlayerAccessPanel.svelte`
 - Modify: `apps/web/src/routes/admin/PlayerAccessPanel.svelte.test.ts`
-- Reuse: `apps/web/src/lib/components/DifficultyGems.svelte`
+- Reuse: `DifficultyGems.svelte`
 
 **Interfaces:**
 
-Keep route-local:
+Keep:
 
 ```ts
 type AdminTab = 'puzzles' | 'players';
 ```
 
-Add optional callbacks:
+Add:
 
 ```ts
 interface AdminPuzzlesPanelProps {
-	onCountChange?: (count: number) => void;
+  active?: boolean;
+  onCountChange?: (count: number) => void;
 }
 
 interface PlayerAccessPanelProps {
-	onCountChange?: (count: number) => void;
+  active?: boolean;
+  onCountChange?: (count: number) => void;
 }
 ```
 
-Panels call callbacks when their already-loaded authoritative list length changes. No second fetch.
+Both panels still own their data fetches. `active` is required by the route composition; only
+`AdminPuzzlesPanel` uses it to gate processing polling.
 
-- [ ] **Step 1: Write failing route/sidebar tests**
+- [ ] **Step 1: Write failing dual-mounted route tests**
 
-Require Missions/Player Access sidebar tabs, live callback counts, Upload/View Arcade in sidebar,
-existing `aria-selected` plus Arrow/Home/End behavior, and only selected panel visible.
+Require:
 
-- [ ] **Step 2: Write failing panel tests**
+- both panel components mount once on initial `/admin`
+- both initial counts reach the sidebar
+- only active tabpanel is visible/accessibility-exposed
+- inactive tabpanel remains mounted but hidden
+- Upload and View Arcade live in sidebar
+- tablist/`aria-selected`/Arrow/Home/End behavior remains
 
-Admin puzzles:
+Mock both endpoints and assert exactly one initial request to each.
 
-- ~60px thumbnail
+- [ ] **Step 2: Write failing polling-gate test**
+
+In `AdminPuzzlesPanel.svelte.test.ts`, render with a processing family and `active={false}`; advance
+fake timers and assert no polling refetch occurs. Flip/rerender active true and assert polling starts.
+
+This prevents an invisible processing panel from polling in the background.
+
+- [ ] **Step 3: Write failing admin table/player styling tests**
+
+Admin puzzles require:
+
+- ~60px ready thumbnail
 - passive status dot + visible word
 - three `DifficultyGems`
-- accessible preview/delete icons
-- delete only red row action
-- current search/filter/pagination/polling/delete/force-warning/session-cleanup stays
+- accessible preview/delete icon actions
+- search/filter/pagination/delete behavior unchanged
 
-Player access:
+Player Access keeps add/remove behavior and reports count through `onCountChange`.
 
-- count callback after load/add/remove
-- existing add/remove/error behavior stays
-
-- [ ] **Step 3: Run and verify failure**
+- [ ] **Step 4: Run red admin tests**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/routes/admin/admin-page.svelte.test.ts \
-	src/routes/admin/AdminPuzzlesPanel.svelte.test.ts \
-	src/routes/admin/PlayerAccessPanel.svelte.test.ts
+  src/routes/admin/admin-page.svelte.test.ts \
+  src/routes/admin/AdminPuzzlesPanel.svelte.test.ts \
+  src/routes/admin/PlayerAccessPanel.svelte.test.ts
 ```
 
-Expected: FAIL on new sidebar/count/table structure.
+Expected: FAIL because current route conditionally mounts only one panel and has no live sidebar.
 
-- [ ] **Step 4: Implement route count wiring**
+- [ ] **Step 5: Mount both panels deliberately**
+
+Route state:
 
 ```ts
 let activeTab: AdminTab = $state('puzzles');
@@ -919,31 +1109,53 @@ let missionCount = $state(0);
 let playerCount = $state(0);
 ```
 
+Composition:
+
 ```svelte
-<AdminPuzzlesPanel onCountChange={(count) => (missionCount = count)} />
-<PlayerAccessPanel onCountChange={(count) => (playerCount = count)} />
+<div hidden={activeTab !== 'puzzles'}>
+  <AdminPuzzlesPanel
+    active={activeTab === 'puzzles'}
+    onCountChange={(count) => (missionCount = count)}
+  />
+</div>
+<div hidden={activeTab !== 'players'}>
+  <PlayerAccessPanel
+    active={activeTab === 'players'}
+    onCountChange={(count) => (playerCount = count)}
+  />
+</div>
 ```
 
-Keep current tab keyboard behavior; relocate it only.
+Both initial reads are intentional for 4a counts. Do not add a route-level duplicate fetch.
 
-- [ ] **Step 5: Restyle panels; do not rewrite data logic**
+- [ ] **Step 6: Gate AdminPuzzlesPanel polling with active**
 
-`AdminPuzzlesPanel`: table rows with 60px art, category, passive status, gem counts, preview/delete.
+Initial `loadPuzzles()` still runs on mount to populate count. `startPollingIfNeeded()` runs only
+when active. When `active` transitions true and processing rows exist, start the existing interval;
+when false, clear it.
 
-`PlayerAccessPanel`: 13–15px Rajdhani tool UI with current form/list behavior.
+Player Access has no polling; it only uses the active prop as part of the explicit mounted-panel
+contract and remains hidden by its parent while inactive.
 
-- [ ] **Step 6: Run admin tests**
+- [ ] **Step 7: Restyle current panels without moving data logic**
+
+Admin table rows: 60px image, category, passive status, gem counts, preview/delete; delete is only
+red action.
+
+Player Access: readable 13–15px Rajdhani, current form/list semantics.
+
+- [ ] **Step 8: Run admin tests**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
-	src/routes/admin/admin-page.svelte.test.ts \
-	src/routes/admin/AdminPuzzlesPanel.svelte.test.ts \
-	src/routes/admin/PlayerAccessPanel.svelte.test.ts
+  src/routes/admin/admin-page.svelte.test.ts \
+  src/routes/admin/AdminPuzzlesPanel.svelte.test.ts \
+  src/routes/admin/PlayerAccessPanel.svelte.test.ts
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Run full functional Gate B before visual work**
+- [ ] **Step 9: Run full functional Gate B**
 
 ```bash
 bun run --cwd apps/web lint
@@ -954,63 +1166,51 @@ bun run --cwd apps/web test:e2e:a11y
 bun run --cwd apps/web test:e2e:extended
 ```
 
-Expected: PASS. Do not start screenshot generation with a functional failure.
+Expected: PASS. Do not generate screenshots with a functional failure.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add apps/web/src/routes/admin/+page.svelte \
-	apps/web/src/routes/admin/admin-page.svelte.test.ts \
-	apps/web/src/routes/admin/AdminPuzzlesPanel.svelte \
-	apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts \
-	apps/web/src/routes/admin/PlayerAccessPanel.svelte \
-	apps/web/src/routes/admin/PlayerAccessPanel.svelte.test.ts
+  apps/web/src/routes/admin/admin-page.svelte.test.ts \
+  apps/web/src/routes/admin/AdminPuzzlesPanel.svelte \
+  apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts \
+  apps/web/src/routes/admin/PlayerAccessPanel.svelte \
+  apps/web/src/routes/admin/PlayerAccessPanel.svelte.test.ts
 git commit -m "feat(web): redesign admin control panel"
 ```
 
 ---
 
-## Task 7: Add deterministic manual visual-parity lane and approve baselines
+## Task 7: Add deterministic manual visual parity lane
 
 **Files:**
 - Modify: `apps/web/package.json`
-- Modify: `apps/web/e2e/support/test.ts`
 - Create: `apps/web/e2e/ui-redesign-visual.spec.ts`
 - Create: Playwright screenshot PNG baselines
 - Reuse: `apps/web/e2e/fixtures/test-image.jpg`
 - Reuse: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
 - Reuse: `apps/web/e2e/support/gameplay-page.ts`
 
-**Interfaces:**
+**Interfaces:** No new Playwright project and no visual-only environment flag. Local Fontsource assets
+from Task 1 are used by every test lane.
 
-No new Playwright project. Visual cases use existing `chromium-desktop` and set canonical viewport
-explicitly. `PERSEUS_E2E_VISUAL=1` is test-only state used to allow real font loading in this manual
-lane.
+- [ ] **Step 1: Isolate @visual from normal E2E**
 
-- [ ] **Step 1: Isolate `@visual` from normal E2E**
+Change scripts:
 
 ```json
 {
-	"test:e2e": "playwright test --project=chromium-desktop --grep-invert \"@extended|@visual\"",
-	"test:e2e:visual": "PERSEUS_E2E_VISUAL=1 playwright test --grep @visual --project=chromium-desktop --workers=1"
+  "test:e2e": "playwright test --project=chromium-desktop --grep-invert \"@extended|@visual\"",
+  "test:e2e:visual": "playwright test --grep @visual --project=chromium-desktop --workers=1"
 }
 ```
 
-Keep smoke/a11y/extended scripts unchanged.
-
-In `e2e/support/test.ts`:
-
-```ts
-if (process.env.PERSEUS_E2E_VISUAL !== '1') {
-	await page.context().route('https://fonts.googleapis.com/**', async (route) => {
-		await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
-	});
-}
-```
-
-Functional tests remain offline-safe; manual visual tests can load intended fonts.
+Smoke/a11y/extended scripts stay unchanged.
 
 - [ ] **Step 2: Add deterministic family/art helpers**
+
+In `ui-redesign-visual.spec.ts`:
 
 ```ts
 import path from 'node:path';
@@ -1026,145 +1226,166 @@ const VISUAL_ART = path.join(__dirname, 'fixtures', 'test-image.jpg');
 const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 ```
 
-Use fixed UUID-shaped family/variant IDs. Create three ready families with 16/49/100 variants and
-Nature/Animals/Architecture categories.
+Create three fixed UUID-shaped ready families with Nature/Animals/Architecture and 16/49/100
+variants.
+
+Fulfill both family list and thumbnails:
 
 ```ts
 async function installVisualGallery(page: Page, families: PuzzleFamilySummary[]) {
-	await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
-		route.fulfill({
-			json: { families, total: families.length, offset: 0, limit: 20 }
-		})
-	);
+  await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: { families, total: families.length, offset: 0, limit: 20 } })
+  );
 
-	await page.route(/\/api\/puzzle-families\/[^/]+\/thumbnail$/, (route) =>
-		route.fulfill({ path: VISUAL_ART, contentType: 'image/jpeg' })
-	);
+  await page.route(/\/api\/puzzle-families\/[^/]+\/thumbnail$/, (route) =>
+    route.fulfill({ path: VISUAL_ART, contentType: 'image/jpeg' })
+  );
 }
 ```
 
-Admin setup reuses the same thumbnail route and fulfills `/api/admin/puzzle-families` plus fixed
-GET `/api/admin/player-allowlist`. Do not rely on production network art.
+Admin setup reuses the same thumbnail fulfillment and provides fixed admin-family and allowlist JSON.
+No production network content is allowed in screenshot data/art.
 
 - [ ] **Step 3: Seed gallery resume state**
+
+Before each gallery capture:
 
 ```ts
 await installVisualGallery(page, VISUAL_FAMILIES);
 await page.goto('/');
 await seedApiVariantProgress(
-	page,
-	VISUAL_FAMILIES[0]!.variants.easy.id,
-	'1:1',
-	16
+  page,
+  VISUAL_FAMILIES[0]!.variants.easy.id,
+  '1:1',
+  16
 );
 await page.reload();
 await expect(page.getByTestId('continue-on-device')).toBeVisible();
 ```
 
-Reuse the same persistence helper as `gallery.spec.ts`; do not invent screenshot-specific saves.
-
-- [ ] **Step 4: Add one visual-readiness helper**
+- [ ] **Step 4: Add visual-readiness helper**
 
 ```ts
 async function waitForVisualReady(page: Page): Promise<void> {
-	await page.evaluate(async () => {
-		await document.fonts.ready;
-		await Promise.all(
-			Array.from(document.images).map(async (image) => {
-				if (!image.complete) {
-					await new Promise<void>((resolve) => {
-						image.addEventListener('load', () => resolve(), { once: true });
-						image.addEventListener('error', () => resolve(), { once: true });
-					});
-				}
-				try {
-					await image.decode();
-				} catch {
-					// load/error above is the deterministic boundary
-				}
-			})
-		);
-	});
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await Promise.all(
+      Array.from(document.images).map(async (image) => {
+        if (!image.complete) {
+          await new Promise<void>((resolve) => {
+            image.addEventListener('load', () => resolve(), { once: true });
+            image.addEventListener('error', () => resolve(), { once: true });
+          });
+        }
+        try {
+          await image.decode();
+        } catch {
+          // load/error above is the deterministic boundary
+        }
+      })
+    );
+  });
 }
 ```
 
-Use `page.emulateMedia({ reducedMotion: 'reduce' })` before navigation in every visual case or a
-visual-spec `beforeEach`.
+Every visual case uses reduced motion.
 
-- [ ] **Step 5: Add eleven canonical screenshot cases**
+- [ ] **Step 5: Use correct phone/tablet device contexts**
 
-Gallery/gameplay/completion:
-
-- 393×852 → 2a/2b/2c
-- 1080×810 → 2d/2e/2f
-- 1440×900 → 3a/3b/3c
-
-Admin at 1440×900:
-
-- missions 4a
-- player access 4a
-
-Gameplay:
+Group phone cases:
 
 ```ts
-await gameplayPage.gotoFixture({
-	fixtureId: 'e2e-portrait-12',
-	seedPreferences: IMMEDIATE_START
+test.describe('phone @visual', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  // 2a, 2b, 2c
 });
 ```
 
-Completion:
+Group landscape tablet cases:
 
 ```ts
-await gameplayPage.gotoFixture({
-	fixtureId: 'e2e-square-4',
-	completion: { kind: 'success' },
-	seedPreferences: IMMEDIATE_START
+test.describe('landscape tablet @visual', () => {
+  test.use({ viewport: { width: 1080, height: 810 }, hasTouch: true, isMobile: true });
+  // 2d, 2e, 2f
 });
-await gameplayPage.solveFixture();
-await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
 ```
 
-Before capture call `waitForVisualReady(page)`. Screenshot assertions use
-`maxDiffPixelRatio: 0.005`; gallery may use `fullPage`, gameplay/completion/admin use viewport
-captures.
+Desktop/admin cases keep desktop pointer semantics at 1440×900.
 
-- [ ] **Step 6: Prove lane isolation and initial red state**
+- [ ] **Step 6: Add eleven canonical screenshot cases**
+
+Phone:
+
+- 2a gallery
+- 2b gameplay with `e2e-portrait-12`
+- 2c completion with solved `e2e-square-4`
+
+Tablet:
+
+- 2d gallery
+- 2e gameplay with `e2e-portrait-12`
+- 2f completion with solved `e2e-square-4`
+
+Desktop:
+
+- 3a gallery
+- 3b gameplay
+- 3c completion
+- 4a missions
+- 4a player access
+
+Before every screenshot call `waitForVisualReady(page)`.
+
+Use:
+
+```ts
+await expect(page).toHaveScreenshot('galaxy-phone-gallery.png', {
+  fullPage: true,
+  maxDiffPixelRatio: 0.005
+});
+```
+
+Gameplay/completion/admin use viewport captures instead of `fullPage`.
+
+- [ ] **Step 7: Prove lane isolation and initial red state**
 
 ```bash
 bun run --cwd apps/web test:e2e -- gallery.spec.ts
 bun run --cwd apps/web test:e2e:visual
 ```
 
-Expected: normal gallery E2E PASS and visual lane FAIL only because baselines do not exist.
+Expected:
 
-- [ ] **Step 7: Generate candidate baselines manually**
+- normal gallery E2E PASS and does not execute `@visual`
+- visual lane FAIL only because baseline PNGs do not exist
+
+- [ ] **Step 8: Generate candidates manually**
 
 ```bash
 bun run --cwd apps/web test:e2e:visual -- --update-snapshots
 ```
 
-Do not add this command to CI/smoke.
+Never add snapshot updates to CI.
 
-- [ ] **Step 8: Compare every candidate to its canonical mock**
+- [ ] **Step 9: Compare candidates to source board**
 
-Mandatory review:
+Mandatory checks:
 
-- 2a one-column art feed + resume + gems
-- 2b full-bleed board + direct high-frequency rail + bottom sheet
-- 2c finished art + star/time hierarchy
-- 2d three-column tablet wall, no player sidebar
-- 2e ~88px rail + board + docked tray
-- 2f two-column art/results
-- 3a 232px sidebar + three-column wall
-- 3b ~96px rail + board + 352px tray
-- 3c large art/result composition
-- 4a missions table + 60px art + passive status + gem counts + red delete only
-- 4a player access same admin shell/tool language
+- 2a: one-column art feed + resume + gems
+- 2b: direct right rail + board + half sheet
+- 2c: finished art + star/time hierarchy
+- 2d: three-column tablet gallery, no player sidebar
+- 2e: ~88px rail + board + ~300px tray
+- 2f: two-column completion
+- 3a: 232px sidebar + three-column gallery
+- 3b: ~96px rail + board + ~352px tray
+- 3c: large finished-art result
+- 4a missions: table, 60px thumbnails, passive status, gems, red only delete
+- 4a player access: same admin shell/tool language
 
-If materially different, fix UI and regenerate. Never bless missing art or missing resume state.
+Do not bless fallback fonts, missing art, missing resume state, or wrong pointer-size controls.
 
-- [ ] **Step 9: Run approved visual and final functional gates**
+- [ ] **Step 10: Run approved visual and final functional gates**
 
 ```bash
 bun run --cwd apps/web test:e2e:visual
@@ -1178,39 +1399,42 @@ bun run --cwd apps/web test:e2e:extended
 
 Expected: all PASS.
 
-- [ ] **Step 10: Commit visual lane/baselines**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add apps/web/package.json \
-	apps/web/e2e/support/test.ts \
-	apps/web/e2e/ui-redesign-visual.spec.ts \
-	apps/web/e2e/**/*.png
+  apps/web/e2e/ui-redesign-visual.spec.ts \
+  apps/web/e2e/**/*.png
 git commit -m "test(web): lock galaxy arcade visual parity"
 ```
 
 ---
 
-## Implementation Review Checklist
+## Final Review Checklist
 
 - [ ] One implementation PR; Gate A completed before Task 5.
-- [ ] No changes outside web/docs.
-- [ ] No persistence/session/API changes.
-- [ ] Exactly three new reusable presentation primitives.
-- [ ] Player sidebar breakpoint is exactly 1440px.
-- [ ] Desktop/tablet canonical gallery is three columns.
-- [ ] Category icon mapping exists only in `CategoryBadge`.
-- [ ] `PuzzleDifficulty` is imported from `@perseus/types`, not redeclared.
-- [ ] `PuzzleToolbar` is lifted out of `PuzzleBoardPanel`.
-- [ ] `PuzzleBoardPanel` still owns zoom/pan and exports only zoomIn/zoomOut/resetView.
-- [ ] Phone high-frequency actions are direct; low-frequency MORE remains allowed.
-- [ ] 390×844 mobile test actually runs `chromium-mobile` and proves board/sheet/actions.
-- [ ] Phone tray state is local/unpersisted and hint raises it to at least half.
-- [ ] Desktop default tray is 352px; dynamic sizing handles arbitrary grids/aspects.
-- [ ] Completion star count follows closed presentation table and is never persisted/exported as domain logic.
-- [ ] Completion uses already-loaded reference image.
-- [ ] Admin counts come from panel callbacks, not duplicate fetches.
-- [ ] Functional E2E is green before visual baselines are generated.
-- [ ] Default `test:e2e` excludes `@visual`.
-- [ ] Visual lane supplies deterministic gallery/admin art and seeded resume state.
-- [ ] Visual lane waits for fonts/images and uses reduced motion.
-- [ ] Every baseline is manually compared with its canonical mock before acceptance.
+- [ ] No non-web product scope.
+- [ ] Exactly three new reusable presentation components.
+- [ ] Fonts are local; no Google Fonts runtime/stub/visual flag remains.
+- [ ] Sidebar computed display flips at 1439/1440.
+- [ ] Gallery computed columns equal 3 at 1080 and 1440.
+- [ ] `page.svelte.spec.ts` is green with gallery changes.
+- [ ] `PuzzleDifficulty` comes from `@perseus/types`.
+- [ ] `CATEGORY_COLORS` removed; one CategoryBadge icon table exists.
+- [ ] Compact category radios retain textual accessible names; All stays separate.
+- [ ] Toolbar lifted out of board panel.
+- [ ] Board panel owns zoom/pan and exports only zoomIn/zoomOut.
+- [ ] FIT uses route `boardViewResetVersion`.
+- [ ] Rail width participates in tray clamp, desktop cap, and phone/tablet reserve.
+- [ ] Rail-aware clamp guarantees >=480px board at 1080 and 1440.
+- [ ] Tablet tray base is 300; extra-large tray base is 352.
+- [ ] Phone board/sheet geometry passes at 390×844.
+- [ ] Canonical phone Pause is direct; helper fallback remains for other compact layouts.
+- [ ] Tri-state sheet has no `aria-expanded`; next-state labels and announcements pass.
+- [ ] Roving toolbar focus still sees positioned rail buttons.
+- [ ] Completion stars reuse `competitiveTimedResult` and remain display-only.
+- [ ] Admin dual mount is explicit; puzzle polling stops while inactive.
+- [ ] Shell progression refetches on pathname changes; no global store exists.
+- [ ] Visual phone/tablet contexts use touch/mobile semantics.
+- [ ] Functional Gate B is green before baselines are generated.
+- [ ] Every approved baseline was manually compared with the source board.
