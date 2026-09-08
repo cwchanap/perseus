@@ -204,6 +204,19 @@ describe('Root Layout', () => {
 		await expect.element(page.getByTestId('layout-child')).toBeVisible();
 	});
 
+	it('keeps route content mounted while shell chrome toggles', async () => {
+		render(RootLayout, { children: makeChildren() });
+		const child = await page.getByTestId('layout-child').element();
+
+		setPathname('/puzzle/puzzle-1');
+		await expect.poll(() => page.getByTestId('arcade-shell').query()).toBeNull();
+		expect(await page.getByTestId('layout-child').element()).toBe(child);
+
+		setPathname('/leaderboard');
+		await expect.element(page.getByTestId('arcade-shell')).toBeVisible();
+		expect(await page.getByTestId('layout-child').element()).toBe(child);
+	});
+
 	it('uses the player shell on ordinary routes', async () => {
 		setPathname('/leaderboard');
 

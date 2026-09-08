@@ -46,6 +46,20 @@ describe('ArcadeShell', () => {
 		await expect.element(page.getByTestId('shell-child')).toBeVisible();
 	});
 
+	it('preserves a single main landmark when route content provides one', async () => {
+		await page.viewport(1440, 900);
+		render(ArcadeShell, {
+			...authenticatedProps,
+			children: createRawSnippet(() => ({
+				render: () => '<main data-testid="shell-main-child">child</main>',
+				setup: () => {}
+			}))
+		});
+
+		expect(document.querySelectorAll('main')).toHaveLength(1);
+		await expect.element(page.getByTestId('shell-main-child')).toBeVisible();
+	});
+
 	it('keeps the compact navigation available below the sidebar breakpoint', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
