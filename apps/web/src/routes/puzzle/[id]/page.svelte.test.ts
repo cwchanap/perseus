@@ -6,6 +6,7 @@ import type { GameProgress, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 import {
 	clampTrayWidth,
 	getDefaultPuzzleTrayWidth,
+	getGameplayRailWidth,
 	getResponsivePuzzleBoardMetrics
 } from '$lib/services/puzzleLayout';
 
@@ -451,6 +452,18 @@ async function rotateSelectedPiece(): Promise<void> {
 	await page.getByRole('button', { name: 'Rotate selected piece' }).click();
 }
 
+async function openMoreActions(): Promise<void> {
+	const more = page.getByLabelText('More puzzle actions');
+	const button = more.query();
+	if (
+		button instanceof HTMLElement &&
+		button.offsetParent !== null &&
+		button.getAttribute('aria-expanded') !== 'true'
+	) {
+		await more.click();
+	}
+}
+
 async function getPieceRotation(pieceId: number): Promise<number> {
 	const piece = await page.getByLabelText(`Puzzle piece ${pieceId}`).element();
 	const visual = piece.querySelector('[data-testid="puzzle-piece-visual"]');
@@ -492,6 +505,16 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('renders the floating HUD progress ring from the placed piece percentage', async () => {
+		await renderPuzzlePage();
+
+		await expect.element(page.getByTestId('gameplay-hud')).toBeVisible();
+		await expect.element(page.getByTestId('progress-ring')).toHaveAttribute('aria-valuenow', '0');
+
+		await placePiece(0, 0, 0);
+		await expect.element(page.getByTestId('progress-ring')).toHaveAttribute('aria-valuenow', '50');
 	});
 
 	it('shuffles the tray order on a fresh puzzle load (not sorted ascending)', async () => {
@@ -622,7 +645,8 @@ describe('Puzzle route gameplay integration', () => {
 
 			const expectedTrayWidth = clampTrayWidth(
 				layoutWidth,
-				getDefaultPuzzleTrayWidth(puzzle, { width: 1280, height: 900 })
+				getDefaultPuzzleTrayWidth(puzzle, { width: 1280, height: 900 }),
+				getGameplayRailWidth(1280)
 			);
 			const expected = getResponsivePuzzleBoardMetrics(
 				puzzle,
@@ -792,17 +816,24 @@ describe('Puzzle route gameplay integration', () => {
 			});
 
 			const separator = await page.getByTestId('tray-resizer').element();
+			const railWidth = getGameplayRailWidth(1280);
 			window.dispatchEvent(new Event('resize'));
 			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
+			await expect
+				.poll(() => layout.style.getPropertyValue('--tray-width').trim())
+				.toBe(`${clampTrayWidth(1100, Number.POSITIVE_INFINITY, railWidth)}px`);
 
 			width = 900;
 			window.dispatchEvent(new Event('resize'));
-			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('400px');
+			await expect
+				.poll(() => layout.style.getPropertyValue('--tray-width').trim())
+				.toBe(`${clampTrayWidth(900, Number.POSITIVE_INFINITY, railWidth)}px`);
 
 			width = 1100;
 			window.dispatchEvent(new Event('resize'));
-			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
+			await expect
+				.poll(() => layout.style.getPropertyValue('--tray-width').trim())
+				.toBe(`${clampTrayWidth(1100, Number.POSITIVE_INFINITY, railWidth)}px`);
 		} finally {
 			restoreViewport();
 		}
@@ -824,7 +855,9 @@ describe('Puzzle route gameplay integration', () => {
 				.style.getPropertyValue('--board-width');
 
 			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
+			await expect
+				.poll(() => layout.style.getPropertyValue('--tray-width').trim())
+				.toBe(`${clampTrayWidth(1100, Number.POSITIVE_INFINITY, getGameplayRailWidth(1280))}px`);
 
 			await expect
 				.poll(() =>
@@ -1310,6 +1343,7 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 
 		await page.getByLabelText('More puzzle actions').click();
+		await openMoreActions();
 		await page.getByLabelText('Rotation mode').click();
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
@@ -1375,6 +1409,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('0/2')).toBeVisible();
 		await expect.element(page.getByLabelText('Redo')).toBeEnabled();
 
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByText('1/2')).toBeVisible();
 	});
@@ -1432,11 +1467,13 @@ describe('Puzzle route gameplay integration', () => {
 		expect(await getPieceRotation(1)).toBe(90);
 
 		// Redo re-applies the placement
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByText('1/2')).toBeVisible();
 		expect(await getPieceRotation(1)).toBe(90);
 
 		// Second redo re-applies the rotation
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByText('1/2')).toBeVisible();
 		expect(await getPieceRotation(1)).toBe(180);
@@ -1463,6 +1500,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByRole('button', { name: 'Rotate selected piece' })).toBeVisible();
 
 		// Redo re-applies the rotation toggle-off
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
@@ -1501,6 +1539,7 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('aria-pressed', 'false');
 
 		// Redo should re-enable rotation
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
@@ -1744,6 +1783,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
 
 		// Redo — should re-show celebration but NOT call recordLocalCompletion again
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
@@ -1766,6 +1806,7 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('data-selected', 'true');
 
 		// Redo: piece 0 is placed back on the board
+		await openMoreActions();
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByText('1/2')).toBeVisible();
 

@@ -179,20 +179,6 @@
 		</button>
 		<button
 			type="button"
-			aria-label="Redo"
-			data-toolbar-action="redo"
-			tabindex={toolbarTabIndex('redo')}
-			disabled={!canRedo}
-			onclick={onRedo}
-			class="arcade-btn-ghost toolbar-button"
-		>
-			REDO
-		</button>
-	</div>
-
-	<div class="toolbar-group">
-		<button
-			type="button"
 			aria-label="Hint"
 			aria-describedby="assistance-scoring-help"
 			data-toolbar-action="hint"
@@ -216,6 +202,28 @@
 				class="arcade-btn-ghost toolbar-button"
 			>
 				REF
+			</button>
+		{/if}
+		<button
+			type="button"
+			aria-label="Reset view"
+			data-toolbar-action="fit"
+			tabindex={toolbarTabIndex('fit')}
+			onclick={onResetView}
+			class="arcade-btn-ghost toolbar-button"
+		>
+			FIT
+		</button>
+		{#if canPause}
+			<button
+				type="button"
+				aria-label="Pause mission"
+				data-toolbar-action="pause"
+				tabindex={toolbarTabIndex('pause')}
+				onclick={onPause}
+				class="arcade-btn-ghost toolbar-button"
+			>
+				PAUSE
 			</button>
 		{/if}
 	</div>
@@ -242,6 +250,17 @@
 		<div class="toolbar-group">
 			<button
 				type="button"
+				aria-label="Redo"
+				data-toolbar-action="redo"
+				tabindex={toolbarTabIndex('redo')}
+				disabled={!canRedo}
+				onclick={onRedo}
+				class="arcade-btn-ghost toolbar-button"
+			>
+				REDO
+			</button>
+			<button
+				type="button"
 				aria-label="Zoom out"
 				data-toolbar-action="zoom-out"
 				tabindex={toolbarTabIndex('zoom-out')}
@@ -255,14 +274,6 @@
 				tabindex={toolbarTabIndex('zoom-in')}
 				onclick={onZoomIn}
 				class="arcade-btn-ghost toolbar-button">+</button
-			>
-			<button
-				type="button"
-				aria-label="Reset view"
-				data-toolbar-action="fit"
-				tabindex={toolbarTabIndex('fit')}
-				onclick={onResetView}
-				class="arcade-btn-ghost toolbar-button">FIT</button
 			>
 			<button
 				type="button"
@@ -311,32 +322,18 @@
 			</div>
 		{/if}
 
-		{#if canPause || canOpenSetup}
+		{#if canOpenSetup}
 			<div class="toolbar-group">
-				{#if canPause}
-					<button
-						type="button"
-						aria-label="Pause mission"
-						data-toolbar-action="pause"
-						tabindex={toolbarTabIndex('pause')}
-						onclick={onPause}
-						class="arcade-btn-ghost toolbar-button"
-					>
-						PAUSE
-					</button>
-				{/if}
-				{#if canOpenSetup}
-					<button
-						type="button"
-						aria-label="Open mission setup"
-						data-toolbar-action="setup"
-						tabindex={toolbarTabIndex('setup')}
-						onclick={onOpenSetup}
-						class="arcade-btn-ghost toolbar-button"
-					>
-						SETUP
-					</button>
-				{/if}
+				<button
+					type="button"
+					aria-label="Open mission setup"
+					data-toolbar-action="setup"
+					tabindex={toolbarTabIndex('setup')}
+					onclick={onOpenSetup}
+					class="arcade-btn-ghost toolbar-button"
+				>
+					SETUP
+				</button>
 			</div>
 		{/if}
 	</div>
@@ -365,6 +362,7 @@
 		padding: 0.75rem;
 		background: var(--bg-2);
 		border: 1px solid var(--border);
+		pointer-events: none;
 	}
 
 	.toolbar-group,
@@ -383,6 +381,7 @@
 		padding: 0.45rem 0.65rem;
 		line-height: 1;
 		white-space: nowrap;
+		pointer-events: auto;
 	}
 
 	.toolbar-button:focus-visible {
@@ -395,6 +394,7 @@
 	.toolbar-button:disabled {
 		cursor: not-allowed;
 		opacity: 0.45;
+		pointer-events: none;
 	}
 
 	.toolbar-button:disabled:hover {
@@ -415,8 +415,16 @@
 
 	@media (max-width: 1023px) {
 		.puzzle-toolbar {
+			align-items: stretch;
+			flex-direction: column;
+			flex-wrap: nowrap;
 			gap: 0.5rem;
 			padding: 0.5rem;
+		}
+
+		.puzzle-toolbar > .toolbar-group {
+			flex-direction: column;
+			flex-wrap: nowrap;
 		}
 
 		.more-toggle {
@@ -425,8 +433,8 @@
 
 		.toolbar-secondary {
 			position: absolute;
-			top: calc(100% + 0.5rem);
-			right: 0;
+			top: 0;
+			right: calc(100% + 0.5rem);
 			z-index: 20;
 			display: none;
 			width: min(18rem, calc(100vw - 2rem));
@@ -438,6 +446,10 @@
 			background: var(--bg-1);
 			border: 1px solid var(--border);
 			box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
+		}
+
+		.toolbar-secondary .toolbar-group {
+			flex-direction: row;
 		}
 
 		.toolbar-secondary[data-open='true'] {

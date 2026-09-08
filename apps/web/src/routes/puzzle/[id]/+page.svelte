@@ -9,6 +9,7 @@
 	import type { TimerState } from '$lib/stores/timer';
 	import type { Puzzle } from '$lib/types/puzzle';
 	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
+	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
 	import PuzzleInventoryPanel from '$lib/components/PuzzleInventoryPanel.svelte';
 	import PuzzleCompletionDialog from '$lib/components/PuzzleCompletionDialog.svelte';
 	import PuzzleLeaderboardDialog from '$lib/components/PuzzleLeaderboardDialog.svelte';
@@ -16,6 +17,7 @@
 	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
 	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
+	import ProgressRing from '$lib/components/ProgressRing.svelte';
 	import {
 		DEFAULT_GAMEPLAY_PREFERENCES,
 		loadGameplayPreferences,
@@ -29,6 +31,7 @@
 		DESKTOP_TRAY_SEPARATOR_WIDTH,
 		clampTrayWidth,
 		getDefaultPuzzleTrayWidth,
+		getGameplayRailWidth,
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
@@ -83,9 +86,15 @@
 	let trayResizePointerId = $state<number | null>(null);
 	let trayResizeStartX = $state(0);
 	let trayResizeStartWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
+	type PuzzleBoardPanelHandle = { zoomIn: () => void; zoomOut: () => void };
+	let boardPanel = $state<PuzzleBoardPanelHandle | null>(null);
+
+	const gameplayRailWidth = $derived(getGameplayRailWidth(viewportWidth));
 
 	const appliedTrayWidth = $derived(
-		gameLayoutWidth > 0 ? clampTrayWidth(gameLayoutWidth, requestedTrayWidth) : requestedTrayWidth
+		gameLayoutWidth > 0
+			? clampTrayWidth(gameLayoutWidth, requestedTrayWidth, gameplayRailWidth)
+			: requestedTrayWidth
 	);
 
 	// Route-owned polite status region: the single synchronous announcement
@@ -336,12 +345,12 @@
 
 	function setRequestedTrayWidth(width: number): void {
 		if (gameLayoutWidth <= 0) return;
-		requestedTrayWidth = clampTrayWidth(gameLayoutWidth, width);
+		requestedTrayWidth = clampTrayWidth(gameLayoutWidth, width, gameplayRailWidth);
 	}
 
 	function currentMaxTrayWidth(): number {
 		if (gameLayoutWidth <= 0) return Math.max(DESKTOP_TRAY_MIN_WIDTH, appliedTrayWidth);
-		return clampTrayWidth(gameLayoutWidth, Number.POSITIVE_INFINITY);
+		return clampTrayWidth(gameLayoutWidth, Number.POSITIVE_INFINITY, gameplayRailWidth);
 	}
 
 	function isPiecePlaced(pieceId: number): boolean {
@@ -1249,24 +1258,6 @@
 					>
 						LEADERBOARD
 					</button>
-					<div class="hud-divider"></div>
-				{/if}
-				<div class="progress-stat">
-					<span class="stat-label">PIECES</span>
-					<span class="stat-value"
-						>{placedPieces.length}<span class="stat-total">/{puzzle.pieceCount}</span></span
-					>
-				</div>
-				<div class="hud-divider"></div>
-				{#if showTimedPresentation}
-					<!-- GameTimer renders its own data-testid="game-timer"; the
-					     wrapper stays testid-free so existing assertions keep
-					     resolving to the timer block. -->
-					<div>
-						<GameTimer {timerState} {bestTime} />
-					</div>
-				{:else if showRelaxedPresentation}
-					<div data-testid="relaxed-mode-indicator">RELAXED</div>
 				{/if}
 			</div>
 		{/if}
@@ -1320,14 +1311,59 @@
 				bind:this={gameLayoutElement}
 				class="game-layout"
 				data-board-tier={currentBoardMetrics?.tier}
-				style={`--tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
+				data-reference-toggled={referenceToggled ? 'true' : 'false'}
+				style={`--gameplay-rail-width: ${gameplayRailWidth}px; --tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
 					currentBoardMetrics
 						? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
 						: ''
 				}`}
 			>
+				<div class="gameplay-hud" data-testid="gameplay-hud">
+					{#if showTimedPresentation}
+						<!-- GameTimer renders its own data-testid="game-timer" so the
+						     existing timer contract remains unchanged. -->
+						<GameTimer {timerState} {bestTime} />
+					{:else if showRelaxedPresentation}
+						<div data-testid="relaxed-mode-indicator">RELAXED</div>
+					{/if}
+					<div class="hud-pieces">
+						<span class="stat-label">PIECES</span>
+						<span class="stat-value"
+							>{placedPieces.length}<span class="stat-total">/{currentPuzzle.pieceCount}</span
+							></span
+						>
+					</div>
+					<ProgressRing percent={progressPct} size={48} label="Puzzle progress" />
+				</div>
+
+				<PuzzleToolbar
+					{canUndo}
+					{canRedo}
+					{canPause}
+					{canOpenSetup}
+					{rotationEnabled}
+					rotationToggleDisabled={isRotationToggleLocked()}
+					{referenceToggled}
+					referenceAvailable={currentPuzzle.hasReference === true &&
+						source.resolveReferenceImage() !== null}
+					hasReference={currentPuzzle.hasReference === true}
+					onUndo={handleUndo}
+					onRedo={handleRedo}
+					onHint={handleHint}
+					onReferenceDown={handleReferenceDown}
+					onReferenceUp={handleReferenceUp}
+					onReferenceToggle={handleReferenceToggle}
+					onZoomIn={() => boardPanel?.zoomIn()}
+					onZoomOut={() => boardPanel?.zoomOut()}
+					onResetView={requestBoardViewReset}
+					onRotationToggle={handleRotationToggle}
+					onPause={handleToolbarPause}
+					onOpenSetup={() => showMissionSetup(false)}
+				/>
+
 				<!-- Board panel -->
 				<PuzzleBoardPanel
+					bind:this={boardPanel}
 					puzzle={currentPuzzle}
 					boardMetrics={currentBoardMetrics}
 					{placedPieces}
@@ -1337,24 +1373,10 @@
 					referenceImageUrl={source.resolveReferenceImage() ?? null}
 					{referenceActive}
 					{referenceToggled}
-					{canUndo}
-					{canRedo}
-					{canOpenSetup}
-					{canPause}
-					{rotationEnabled}
-					rotationToggleDisabled={isRotationToggleLocked()}
 					interactionBlocked={hasSessionModal}
 					viewResetVersion={boardViewResetVersion}
 					onPiecePlaced={handlePiecePlaced}
-					onUndo={handleUndo}
-					onRedo={handleRedo}
-					onHint={handleHint}
-					onReferenceDown={handleReferenceDown}
-					onReferenceUp={handleReferenceUp}
 					onReferenceToggle={handleReferenceToggle}
-					onRotationToggle={handleRotationToggle}
-					onPause={handleToolbarPause}
-					onOpenSetup={() => showMissionSetup(false)}
 				/>
 
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -1390,6 +1412,7 @@
 					activeFilter={activeInventoryFilter}
 					onFilterChange={handleInventoryFilterChange}
 					onShuffle={handleInventoryShuffle}
+					onAnnouncement={announceGameplay}
 				/>
 			</div>
 		{/if}
@@ -1593,13 +1616,6 @@
 		padding: 0.25rem 0.45rem;
 	}
 
-	.progress-stat {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		gap: 0.1rem;
-	}
-
 	.stat-label {
 		font-family: var(--font-mono);
 		font-size: 0.5rem;
@@ -1617,12 +1633,6 @@
 	.stat-total {
 		color: var(--text-2);
 		font-size: 0.75rem;
-	}
-
-	.hud-divider {
-		width: 1px;
-		height: 2rem;
-		background: var(--border);
 	}
 
 	/* Progress bar */
@@ -1716,13 +1726,65 @@
 		--piece-slot-size: 4rem;
 		--inventory-gap: 0.375rem;
 		--inventory-pad: 0.875rem;
+		position: relative;
 		display: grid;
-		grid-template-columns: 1fr;
+		grid-template-columns: minmax(0, 1fr) var(--gameplay-rail-width);
 		grid-template-rows: minmax(0, 1fr) auto;
 		min-height: 0;
 		gap: 1.25rem;
 		max-width: min(96rem, calc(100vw - 2rem));
 		margin: 0 auto;
+	}
+
+	.game-layout > :global(.puzzle-toolbar) {
+		grid-column: 2;
+		grid-row: 1;
+		min-height: 0;
+		z-index: 2;
+	}
+
+	.game-layout > :global(.board-panel) {
+		grid-column: 1;
+		grid-row: 1;
+		min-width: 0;
+		min-height: 0;
+	}
+
+	.game-layout > :global(.inventory-panel) {
+		grid-column: 1 / -1;
+		grid-row: 2;
+		min-width: 0;
+	}
+
+	.game-layout[data-reference-toggled='true'] > :global(.puzzle-toolbar) {
+		pointer-events: none;
+	}
+
+	:global(.game-layout[data-reference-toggled='true'] > .puzzle-toolbar .toolbar-button) {
+		pointer-events: none;
+	}
+
+	.gameplay-hud {
+		position: absolute;
+		top: 0.75rem;
+		left: calc(var(--gameplay-rail-width) + 1rem);
+		right: 1rem;
+		z-index: 3;
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.75rem;
+		pointer-events: none;
+	}
+
+	.hud-pieces {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.1rem;
+		padding: 0.45rem 0.65rem;
+		background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+		border: 1px solid var(--border);
 	}
 
 	/* Mobile: fill the viewport-bound main so the board's 1fr row shrinks
@@ -1732,15 +1794,80 @@
 		.game-layout {
 			height: 100%;
 		}
+
+		.game-layout > :global(.puzzle-toolbar) {
+			height: max-content;
+			align-self: start;
+			overflow: visible;
+		}
+
+		:global(.game-layout > .inventory-panel[data-sheet-state='peek']),
+		:global(.game-layout > .inventory-panel[data-sheet-state='full']) {
+			position: relative;
+			z-index: 3;
+		}
+
+		:global(.game-layout > .puzzle-toolbar:has(.toolbar-secondary[data-open='true'])) {
+			z-index: 5;
+		}
 	}
 
 	@media (min-width: 1024px) {
 		.game-layout {
 			grid-template-columns:
+				var(--gameplay-rail-width)
 				minmax(0, 1fr)
 				var(--tray-resizer-width)
 				var(--tray-width);
+			grid-template-rows: minmax(0, 1fr);
 			column-gap: 0;
+		}
+
+		.game-layout > :global(.puzzle-toolbar) {
+			grid-column: 1;
+			grid-row: 1;
+			height: 100%;
+			overflow: hidden;
+			align-items: stretch;
+			flex-direction: column;
+			flex-wrap: nowrap;
+			padding: 0.5rem 0.25rem;
+		}
+
+		:global(.game-layout > .puzzle-toolbar .toolbar-group) {
+			flex-direction: column;
+			flex-wrap: nowrap;
+		}
+
+		:global(.game-layout > .puzzle-toolbar .toolbar-secondary) {
+			min-height: 0;
+			overflow-y: auto;
+			flex-direction: column;
+		}
+
+		:global(.game-layout > .puzzle-toolbar .toolbar-secondary .toolbar-group) {
+			display: flex;
+			flex-direction: column;
+		}
+
+		.game-layout > :global(.board-panel) {
+			grid-column: 2;
+			grid-row: 1;
+		}
+
+		.game-layout > :global(.inventory-panel) {
+			grid-column: 4;
+			grid-row: 1;
+		}
+
+		.game-layout > .tray-resizer {
+			grid-column: 3;
+			grid-row: 1;
+		}
+
+		.gameplay-hud {
+			left: calc(var(--gameplay-rail-width) + 1.25rem);
+			right: calc(var(--tray-width) + var(--tray-resizer-width) + 1.25rem);
 		}
 
 		.tray-resizer {

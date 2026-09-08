@@ -148,7 +148,8 @@ function baseProps() {
 		onCancelSelection: vi.fn(),
 		activeFilter: 'all' as const,
 		onFilterChange: vi.fn(),
-		onShuffle: vi.fn()
+		onShuffle: vi.fn(),
+		onAnnouncement: vi.fn()
 	};
 }
 
@@ -286,32 +287,55 @@ describe('PuzzleInventoryPanel', () => {
 		expect(input.onCancelSelection).toHaveBeenCalledOnce();
 	});
 
-	it('starts open and toggles binary state without changing tray contents', async () => {
-		render(PuzzleInventoryPanel, baseProps());
+	it('starts half-open and cycles the tri-state sheet without changing tray contents', async () => {
+		const input = baseProps();
+		render(PuzzleInventoryPanel, input);
 		const toggle = (await page
 			.getByTestId('inventory-drawer-toggle')
 			.element()) as HTMLButtonElement;
 
-		expect(toggle.getAttribute('aria-expanded')).toBe('true');
+		expect(
+			page.getByTestId('puzzle-inventory-panel').query()?.getAttribute('data-sheet-state')
+		).toBe('half');
+		expect(toggle.getAttribute('aria-expanded')).toBeNull();
+		expect(toggle.getAttribute('aria-label')).toBe('Expand piece tray to full');
 		expect(toggle.getAttribute('aria-controls')).toBe('puzzle-inventory-body');
 		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
 
 		toggle.click();
-		await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false');
+		await expect
+			.element(page.getByTestId('puzzle-inventory-panel'))
+			.toHaveAttribute('data-sheet-state', 'full');
+		await expect.element(toggle).toHaveAttribute('aria-label', 'Collapse piece tray to peek');
+		expect(input.onAnnouncement).toHaveBeenCalledWith('Piece tray: full.');
 		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
 
 		toggle.click();
-		await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true');
+		await expect
+			.element(page.getByTestId('puzzle-inventory-panel'))
+			.toHaveAttribute('data-sheet-state', 'peek');
+		await expect.element(toggle).toHaveAttribute('aria-label', 'Expand piece tray to half');
+		expect(input.onAnnouncement).toHaveBeenCalledWith('Piece tray: peek.');
+
+		toggle.click();
+		await expect
+			.element(page.getByTestId('puzzle-inventory-panel'))
+			.toHaveAttribute('data-sheet-state', 'half');
+		await expect.element(toggle).toHaveAttribute('aria-label', 'Expand piece tray to full');
+		expect(input.onAnnouncement).toHaveBeenCalledWith('Piece tray: half.');
 		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
 	});
 
-	it('keeps Cancel and an enabled Rotate in the header while collapsed', async () => {
+	it('keeps Cancel and an enabled Rotate in the header while peeked', async () => {
 		render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
 		const toggle = (await page
 			.getByTestId('inventory-drawer-toggle')
 			.element()) as HTMLButtonElement;
 		toggle.click();
-		await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false');
+		toggle.click();
+		await expect
+			.element(page.getByTestId('puzzle-inventory-panel'))
+			.toHaveAttribute('data-sheet-state', 'peek');
 
 		await expect
 			.element(page.getByRole('button', { name: 'Cancel selected piece' }))
@@ -323,12 +347,16 @@ describe('PuzzleInventoryPanel', () => {
 		const input = baseProps();
 		const view = render(PuzzleInventoryPanel, input);
 
-		await page.getByRole('button', { name: 'Collapse inventory' }).click();
+		await page.getByRole('button', { name: 'Expand piece tray to full' }).click();
+		await page.getByRole('button', { name: 'Collapse piece tray to peek' }).click();
 		await view.rerender({ ...input, activeHintPieceId: 1 });
 
 		await expect
 			.element(page.getByTestId('inventory-drawer-toggle'))
-			.toHaveAttribute('aria-expanded', 'true');
+			.toHaveAttribute('aria-label', 'Expand piece tray to full');
+		await expect
+			.element(page.getByTestId('puzzle-inventory-panel'))
+			.toHaveAttribute('data-sheet-state', 'half');
 		await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
 
 		expect(drawerDisplayAtScroll).not.toBe('none');
@@ -412,7 +440,8 @@ describe('PuzzleInventoryPanel', () => {
 		expect(style.flexWrap).toBe('nowrap');
 		expect(style.overflowX).toBe('auto');
 
-		await page.getByRole('button', { name: 'Collapse inventory' }).click();
+		await page.getByRole('button', { name: 'Expand piece tray to full' }).click();
+		await page.getByRole('button', { name: 'Collapse piece tray to peek' }).click();
 		const body = document.querySelector<HTMLElement>('#puzzle-inventory-body')!;
 		await expect.poll(() => getComputedStyle(body).display).toBe('none');
 	});

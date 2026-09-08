@@ -34,6 +34,7 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 
 	const more = page.getByRole('button', { name: 'More puzzle actions' });
 	const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+	const resetView = page.getByRole('button', { name: 'Reset view' });
 	const pause = page.getByRole('button', { name: 'Pause mission' });
 	const setup = page.getByRole('button', { name: 'Open mission setup' });
 	const toggleReference = page.getByRole('button', { name: 'Toggle reference' });
@@ -62,15 +63,18 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	const redo = page.getByRole('button', { name: 'Redo' });
 	const hint = page.getByRole('button', { name: 'Hint' });
 	await expect(undo).toBeVisible();
-	await expect(redo).toBeVisible();
+	await expect(undo).toBeDisabled();
+	await expect(redo).toBeHidden();
 	await expect(hint).toBeVisible();
 	await expect(toggleReference).toBeVisible();
+	await expect(resetView).toBeVisible();
+	await expect(pause).toBeVisible();
 	await expect(peekReference).toBeHidden();
 	await expect(more).toBeVisible();
 	await expect(more).toHaveAttribute('aria-expanded', 'false');
 
 	// Touch-target minimums: every visible primary action must be >= 44 px.
-	for (const control of [undo, redo, hint, toggleReference, more]) {
+	for (const control of [undo, hint, toggleReference, resetView, pause, more]) {
 		const box = await control.boundingBox();
 		expect(box).not.toBeNull();
 		expect(box!.width).toBeGreaterThanOrEqual(44);
@@ -78,16 +82,14 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	}
 
 	await expect(zoomIn).toBeHidden();
-	await expect(pause).toBeHidden();
 	await expect(setup).toBeHidden();
 
 	await more.click();
 	await expect(more).toHaveAttribute('aria-expanded', 'true');
 	await expect(peekReference).toBeVisible();
+	await expect(redo).toBeVisible();
 	await expect(zoomIn).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Rotation mode' })).toBeVisible();
-	await expect(pause).toBeVisible();
 	await expect(setup).toBeVisible();
 
 	// Actionability is the stacking proof. This fails if the board covers the panel.
@@ -113,6 +115,52 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	await more.click();
 	await expect(more).toHaveAttribute('aria-expanded', 'false');
 	await expect(zoomIn).toBeHidden();
+});
+
+test('canonical phone workspace keeps the board above the half sheet and exposes direct actions @smoke', async ({
+	gameplayPage,
+	page
+}) => {
+	test.skip(!isChromiumMobile(), 'canonical phone proof uses chromium-mobile');
+	await gameplayPage.gotoFixture({
+		fixtureId: 'e2e-portrait-12',
+		seedPreferences: IMMEDIATE_START
+	});
+
+	const board = await page.getByTestId('puzzle-board').boundingBox();
+	const sheet = await page.getByTestId('puzzle-inventory-panel').boundingBox();
+	const viewport = page.viewportSize();
+	expect(viewport).toEqual({ width: 390, height: 844 });
+	expect(board).not.toBeNull();
+	expect(sheet).not.toBeNull();
+	expect(board!.y).toBeGreaterThanOrEqual(0);
+	expect(board!.y + board!.height).toBeLessThanOrEqual(sheet!.y + 1);
+	await expect(page.getByTestId('puzzle-inventory-panel')).toHaveAttribute(
+		'data-sheet-state',
+		'half'
+	);
+
+	for (const name of ['Hint', 'Toggle reference', 'Undo', 'Reset view', 'Pause mission']) {
+		await expect(page.getByRole('button', { name })).toBeVisible();
+	}
+	await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
+	await expect(page.getByRole('button', { name: 'Redo' })).toBeHidden();
+
+	const toolbar = page.getByTestId('puzzle-toolbar');
+	await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
+	const fixedButtons = await toolbar
+		.locator('[data-toolbar-action]:visible')
+		.evaluateAll(
+			(buttons) => buttons.filter((button) => getComputedStyle(button).position === 'fixed').length
+		);
+	expect(fixedButtons).toBe(0);
+
+	await page.getByRole('button', { name: 'Pause mission' }).click();
+	await expect(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+	await page
+		.getByRole('dialog', { name: 'Mission Paused' })
+		.getByRole('button', { name: 'Resume' })
+		.click();
 });
 
 test('mobile inventory fits the viewport and shows four tray slots @smoke', async ({
@@ -246,7 +294,11 @@ test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gamepla
 	});
 
 	const toggle = page.getByTestId('inventory-drawer-toggle');
-	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(toggle).toHaveAttribute('aria-label', 'Expand piece tray to full');
+	await expect(page.getByTestId('puzzle-inventory-panel')).toHaveAttribute(
+		'data-sheet-state',
+		'half'
+	);
 	await expect(page.getByTestId('puzzle-board')).toBeVisible();
 
 	// Piece 0 belongs at (0, 0); reject it at (1, 1).
@@ -270,14 +322,19 @@ test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gamepla
 		'data-selected',
 		'true'
 	);
-	await page.getByRole('button', { name: 'Collapse inventory' }).click();
-	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+	await page.getByRole('button', { name: 'Expand piece tray to full' }).click();
+	await page.getByRole('button', { name: 'Collapse piece tray to peek' }).click();
+	await expect(toggle).toHaveAttribute('aria-label', 'Expand piece tray to half');
+	await expect(page.getByTestId('puzzle-inventory-panel')).toHaveAttribute(
+		'data-sheet-state',
+		'peek'
+	);
 	await expect(page.getByTestId('puzzle-board')).toBeVisible();
 	await page.getByRole('button', { name: 'Cancel selected piece' }).click();
 	await expect(page.locator('[data-testid="puzzle-piece"][data-selected="true"]')).toHaveCount(0);
 
-	await page.getByRole('button', { name: 'Open inventory' }).click();
-	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+	await page.getByRole('button', { name: 'Expand piece tray to half' }).click();
+	await expect(toggle).toHaveAttribute('aria-label', 'Expand piece tray to full');
 
 	const fixture = gameplayPage.fixture!;
 	for (const piece of fixture.pieces.filter((candidate) => candidate.id !== 0)) {
