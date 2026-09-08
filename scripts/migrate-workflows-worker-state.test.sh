@@ -457,6 +457,165 @@ fi
 rm -rf "$STUB_DIR" "$ARGV_LOG"
 
 # ---------------------------------------------------------------------------
+# Test 11: execute mode requires an explicit production --stack. Without it,
+# pulumi mutates whichever stack is currently selected in the checkout — a
+# cheap way to delete state from the wrong stack. The stale-name guard does
+# not prove the selected stack is production. Execute mode must fail fast
+# unless --stack is supplied and ends in /perseus-infrastructure/production;
+# dry-run (read-only) stays looser.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 11: execute mode requires explicit production --stack"
+
+STUB_DIR11=$(mktemp -d)
+ARGV_LOG11=$(mktemp)
+cat > "$STUB_DIR11/pulumi" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$ARGV_LOG11"
+if [[ \$1 == "stack" && \$2 == "export" ]]; then
+	printf '{"version":3,"deployment":{"resources":[]}}\n'
+fi
+exit 0
+EOF
+chmod +x "$STUB_DIR11/pulumi"
+
+# Execute mode without --stack must fail fast with the stack-required error,
+# before any pulumi invocation.
+: > "$ARGV_LOG11"
+out=$(PATH="$STUB_DIR11:$PATH" bash "$SCRIPT" 2>&1 || true)
+if echo "$out" | grep -q "ERROR: --stack is required for execute mode"; then
+	ok "execute mode without --stack fails fast"
+else
+	fail "execute mode without --stack did not fail with the expected error"
+fi
+pulumi_calls_before_gate=$(wc -l < "$ARGV_LOG11" | tr -d ' ')
+if [[ "$pulumi_calls_before_gate" -eq 0 ]]; then
+	ok "no pulumi call made before the stack gate"
+else
+	fail "pulumi called $pulumi_calls_before_gate time(s) before the stack gate"
+fi
+
+# Execute mode with a non-production --stack must fail fast.
+out=$(PATH="$STUB_DIR11:$PATH" bash "$SCRIPT" --stack "cwchanap/perseus-infrastructure/staging" 2>&1 || true)
+if echo "$out" | grep -q "must end in '/perseus-infrastructure/production'"; then
+	ok "execute mode with non-production --stack fails fast"
+else
+	fail "execute mode with non-production --stack did not fail with the expected error"
+fi
+
+# Dry-run without --stack must NOT hit the execute-mode stack gate (it is
+# read-only and allowed to run without an explicit stack).
+out=$(PATH="$STUB_DIR11:$PATH" bash "$SCRIPT" --dry-run 2>&1 || true)
+if ! echo "$out" | grep -q "ERROR: --stack is required for execute mode"; then
+	ok "dry-run without --stack does not hit the execute-mode stack gate"
+else
+	fail "dry-run without --stack wrongly hit the execute-mode stack gate"
+fi
+
+rm -rf "$STUB_DIR11" "$ARGV_LOG11"
+
+# ---------------------------------------------------------------------------
+# Test 12: auto-restore the backup when the post-deletion preview fails.
+# Step 2 strips the stale URNs from the stack checkpoint; if the read-only
+# preview then fails (bad import ID, transient provider/auth failure), the
+# script must restore the backup via `pulumi stack import` before exiting so
+# a rerun can proceed — otherwise the WORKER_URN safety check fails on the
+# stripped state. Stubs `pulumi` (export→mock state, state delete→ok,
+# preview→fail, stack import→ok) and `bun` (no-op build) and runs in execute
+# mode with a valid production --stack.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 12: auto-restore backup on post-deletion preview failure"
+
+STUB_DIR12=$(mktemp -d)
+ARGV_LOG12=$(mktemp)
+MOCK_STATE_FILE=$(mktemp)
+printf '%s' "$MOCK_JSON" > "$MOCK_STATE_FILE"
+cat > "$STUB_DIR12/pulumi" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$ARGV_LOG12"
+if [[ \$1 == "stack" && \$2 == "export" ]]; then
+	cat "$MOCK_STATE_FILE"
+	exit 0
+fi
+if [[ \$1 == "stack" && \$2 == "import" ]]; then
+	cat > /dev/null
+	exit 0
+fi
+if [[ \$1 == "state" && \$2 == "delete" ]]; then
+	exit 0
+fi
+if [[ \$1 == "preview" ]]; then
+	echo "simulated preview failure" >&2
+	exit 1
+fi
+exit 0
+EOF
+chmod +x "$STUB_DIR12/pulumi"
+
+# Stub bun so build_artifacts is a no-op (the real build is slow and not
+# what this test exercises).
+cat > "$STUB_DIR12/bun" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$STUB_DIR12/bun"
+
+# The script writes a state-backup-*.json to REPO_ROOT in execute mode.
+# Snapshot existing backups so the test can clean up only the one it creates.
+REPO_ROOT12="$(cd "$SCRIPT_DIR/.." && pwd)"
+before_backups=$(find "$REPO_ROOT12" -maxdepth 1 -name 'state-backup-*.json' 2>/dev/null | sort || true)
+
+# Execute mode with a valid production stack. The stubbed pulumi fails
+# preview; the script must restore the backup (call `stack import`) and
+# exit non-zero. Capture the exit code without letting set -e abort the
+# test harness on the expected non-zero exit.
+exit_code=0
+PATH="$STUB_DIR12:$PATH" bash "$SCRIPT" --stack "cwchanap/perseus-infrastructure/production" >/dev/null 2>&1 || exit_code=$?
+
+if [[ "$exit_code" -ne 0 ]]; then
+	ok "script exited non-zero on preview failure (exit $exit_code)"
+else
+	fail "script exited 0 despite preview failure"
+fi
+
+# state delete must have run (deletion happened before the failed preview).
+delete_count=$(grep -c '^state delete' "$ARGV_LOG12" || true)
+if [[ "$delete_count" -gt 0 ]]; then
+	ok "state delete ran before preview ($delete_count call(s))"
+else
+	fail "state delete was not invoked before preview"
+fi
+
+# stack import must have run (auto-restore triggered by preview failure).
+import_count=$(grep -c '^stack import' "$ARGV_LOG12" || true)
+if [[ "$import_count" -gt 0 ]]; then
+	ok "stack import (auto-restore) invoked on preview failure"
+else
+	fail "stack import was not invoked — backup not auto-restored"
+fi
+
+# The stack import must carry --stack (restore targets the right stack).
+import_line=$(grep '^stack import' "$ARGV_LOG12" | head -1)
+if [[ "$import_line" == "stack import --stack cwchanap/perseus-infrastructure/production" ]]; then
+	ok "stack import targets the explicit stack: '$import_line'"
+else
+	fail "stack import argv wrong; expected '--stack ...', got '$import_line'"
+fi
+
+rm -rf "$STUB_DIR12" "$ARGV_LOG12" "$MOCK_STATE_FILE"
+
+# Clean up the state-backup file this execute-mode run created in REPO_ROOT
+# (leave any pre-existing backups untouched).
+after_backups=$(find "$REPO_ROOT12" -maxdepth 1 -name 'state-backup-*.json' 2>/dev/null | sort || true)
+new_backups=$(comm -13 <(printf '%s\n' "$before_backups") <(printf '%s\n' "$after_backups"))
+if [[ -n "$new_backups" ]]; then
+	while IFS= read -r f; do
+		[[ -n "$f" ]] && rm -f "$f"
+	done <<< "$new_backups"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
