@@ -5,6 +5,8 @@ import { createRawSnippet } from 'svelte';
 import RootLayout from './+layout.svelte';
 import { playerAuth } from '$lib/stores/playerAuth';
 
+const mockProgression = vi.hoisted(() => vi.fn());
+
 const mockPage = vi.hoisted(() => {
 	const subscribers = new Set<(value: unknown) => void>();
 	let value: unknown = {
@@ -67,6 +69,10 @@ vi.mock('$lib/stores/playerAuth', () => ({
 	playerAuth: mockPlayerAuth
 }));
 
+vi.mock('$lib/services/api', () => ({
+	getPlayerProgression: mockProgression
+}));
+
 function setPathname(pathname: string) {
 	mockPage.set({
 		url: new URL(`https://perseus.test${pathname}`),
@@ -87,6 +93,16 @@ function makeChildren() {
 describe('Root Layout', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockProgression.mockResolvedValue({
+			score: 900,
+			rank: 38,
+			easyClears: 0,
+			normalClears: 0,
+			hardClears: 0,
+			achievementsUnlocked: 0,
+			achievementsTotal: 0,
+			masteryEarned: 0
+		});
 		setPathname('/');
 		mockPlayerAuth.set({
 			status: 'anonymous',
@@ -98,7 +114,7 @@ describe('Root Layout', () => {
 	it('renders anonymous player navigation and refreshes auth on mount', async () => {
 		render(RootLayout, { children: makeChildren() });
 
-		await expect.element(page.getByLabelText('Player navigation')).toBeVisible();
+		await expect.element(page.getByTestId('arcade-mobile-nav')).toBeVisible();
 		await expect.element(page.getByTestId('quick-puzzle-link')).toBeVisible();
 		await expect.element(page.getByRole('link', { name: /SIGN IN/i })).toBeVisible();
 		await vi.waitFor(() => {
@@ -115,7 +131,7 @@ describe('Root Layout', () => {
 
 		render(RootLayout, { children: makeChildren() });
 
-		await expect.element(page.getByLabelText('Player navigation')).toBeVisible();
+		await expect.element(page.getByTestId('arcade-mobile-nav')).toBeVisible();
 		await expect.element(page.getByRole('link', { name: /SIGN IN/i })).not.toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: /SIGN OUT/i })).not.toBeInTheDocument();
 	});
@@ -170,11 +186,105 @@ describe('Root Layout', () => {
 		}
 	});
 
-	it('hides player navigation on puzzle routes', async () => {
+	it('bypasses the player shell on puzzle routes', async () => {
 		setPathname('/puzzle/puzzle-1');
 
 		render(RootLayout, { children: makeChildren() });
 
-		await expect.poll(() => page.getByLabelText('Player navigation').query()).toBeNull();
+		await expect.poll(() => page.getByTestId('arcade-shell').query()).toBeNull();
+		await expect.element(page.getByTestId('layout-child')).toBeVisible();
+	});
+
+	it('bypasses the player shell on admin routes', async () => {
+		setPathname('/admin');
+
+		render(RootLayout, { children: makeChildren() });
+
+		await expect.poll(() => page.getByTestId('arcade-shell').query()).toBeNull();
+		await expect.element(page.getByTestId('layout-child')).toBeVisible();
+	});
+
+	it('uses the player shell on ordinary routes', async () => {
+		setPathname('/leaderboard');
+
+		render(RootLayout, { children: makeChildren() });
+
+		await expect.element(page.getByTestId('arcade-shell')).toBeVisible();
+		await expect.element(page.getByTestId('layout-child')).toBeVisible();
+	});
+
+	it('keeps shell navigation usable when progression rejects', async () => {
+		const progressionError = new Error('progression unavailable');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		mockProgression.mockRejectedValue(progressionError);
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				name: 'Player One',
+				createdAt: 1779530400000,
+				lastLoginAt: 1779530400000
+			},
+			error: null
+		});
+
+		try {
+			render(RootLayout, { children: makeChildren() });
+			await expect.element(page.getByTestId('arcade-shell')).toBeVisible();
+			await expect.element(page.getByTestId('leaderboard-link')).toBeVisible();
+			await vi.waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith(
+					'Failed to load shell progression',
+					progressionError
+				);
+			});
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+
+	it('refetches progression when authenticated navigation changes routes', async () => {
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				name: 'Player One',
+				createdAt: 1779530400000,
+				lastLoginAt: 1779530400000
+			},
+			error: null
+		});
+		render(RootLayout, { children: makeChildren() });
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(1));
+
+		setPathname('/leaderboard');
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(2));
+	});
+
+	it('aborts a superseded progression request', async () => {
+		const signals: AbortSignal[] = [];
+		mockProgression.mockImplementation((signal: AbortSignal) => {
+			signals.push(signal);
+			return new Promise(() => {});
+		});
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				name: 'Player One',
+				createdAt: 1779530400000,
+				lastLoginAt: 1779530400000
+			},
+			error: null
+		});
+		render(RootLayout, { children: makeChildren() });
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(1));
+
+		setPathname('/upload');
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(2));
+		expect(signals[0]?.aborted).toBe(true);
 	});
 });
