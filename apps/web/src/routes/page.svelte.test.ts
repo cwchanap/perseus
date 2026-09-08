@@ -245,6 +245,10 @@ describe('Gallery Page', () => {
 		render(GalleryPage);
 
 		await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
+		await expect.element(page.getByTestId('progress-ring')).toBeVisible();
+		await expect
+			.element(page.getByTestId('progress-ring'))
+			.toHaveAttribute('aria-valuenow', '12.5');
 		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Resume Me');
 		await expect.element(page.getByText('2/16 PLACED')).toBeVisible();
 	});
@@ -290,6 +294,33 @@ describe('Gallery Page', () => {
 		// The difficulty label renders inline next to the mission name.
 		await expect.element(panel.getByText('Hard')).toBeVisible();
 		await expect.element(page.getByText('2/100 PLACED')).toBeVisible();
+	});
+
+	it('uses one poster column on phone and three at tablet and desktop widths', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		const originalWidth = window.innerWidth;
+		const originalHeight = window.innerHeight;
+		try {
+			await page.viewport(1080, 810);
+			render(GalleryPage);
+			await expect.element(page.getByTestId('puzzle-grid')).toBeVisible();
+			const grid = await page.getByTestId('puzzle-grid').element();
+			expect(getComputedStyle(grid).gridTemplateColumns.split(' ').length).toBe(3);
+
+			await page.viewport(1440, 900);
+			expect(getComputedStyle(grid).gridTemplateColumns.split(' ').length).toBe(3);
+
+			await page.viewport(390, 844);
+			expect(getComputedStyle(grid).gridTemplateColumns.split(' ').length).toBe(1);
+		} finally {
+			await page.viewport(originalWidth, originalHeight);
+		}
 	});
 
 	it('renders the continue panel without crashing when progress counts are nullish', async () => {
