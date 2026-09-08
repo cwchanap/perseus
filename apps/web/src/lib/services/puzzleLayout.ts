@@ -47,6 +47,8 @@ export const MOBILE_SHEET_HEIGHT = {
 	full: 528
 } as const;
 
+export const MOBILE_GAMEPLAY_GAP = 20;
+
 const DESKTOP_TRAY_TARGET_COLUMNS = 3;
 const DESKTOP_TRAY_CHROME_WIDTH = 42;
 
@@ -63,7 +65,7 @@ export function getGameplayRailWidth(viewportWidth: number): number {
 
 function getWidthReserve(tier: PuzzleBoardViewportTier): number {
 	if (tier === 'small' || tier === 'medium') {
-		return GAMEPLAY_RAIL_WIDTH[tier] + (tier === 'small' ? 32 : 64);
+		return GAMEPLAY_RAIL_WIDTH[tier] + MOBILE_GAMEPLAY_GAP + (tier === 'small' ? 40 : 64);
 	}
 	return 64;
 }

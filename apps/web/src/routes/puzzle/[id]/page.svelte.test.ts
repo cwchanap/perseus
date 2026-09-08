@@ -685,6 +685,63 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('keeps small square and landscape metrics inside the rendered board column', async () => {
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			await page.viewport(390, 844);
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+
+			const puzzles = [
+				{
+					...createMockPuzzle(),
+					imageWidth: 200,
+					imageHeight: 200,
+					pieceCount: 4,
+					gridCols: 2,
+					gridRows: 2,
+					pieces: [
+						createPiece(0, 0, 0),
+						createPiece(1, 1, 0),
+						createPiece(2, 0, 1),
+						createPiece(3, 1, 1)
+					]
+				},
+				{
+					...createMockPuzzle(),
+					imageWidth: 320,
+					imageHeight: 180
+				}
+			];
+
+			for (const puzzle of puzzles) {
+				vi.mocked(fetchPuzzle).mockResolvedValue(puzzle);
+				const view = render(PuzzlePage);
+				await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+				const boardPanel = document.querySelector<HTMLElement>('.board-panel');
+				const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
+				expect(boardPanel).not.toBeNull();
+				expect(boardCanvas).not.toBeNull();
+
+				const boardWidth = Number.parseFloat(boardCanvas!.style.getPropertyValue('--board-width'));
+				expect(boardWidth).toBeLessThanOrEqual(boardPanel!.getBoundingClientRect().width + 0.01);
+				view.unmount();
+			}
+		} finally {
+			await page.viewport(originalInnerWidth, originalInnerHeight);
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
+	});
+
 	it('applies keyboard tray resizing against measured layout width', async () => {
 		const restoreViewport = setDesktopViewport();
 		try {
