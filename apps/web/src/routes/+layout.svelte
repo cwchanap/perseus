@@ -1,18 +1,58 @@
 <script lang="ts">
+	import '@fontsource/orbitron/600.css';
+	import '@fontsource/orbitron/700.css';
+	import '@fontsource/orbitron/900.css';
+	import '@fontsource/rajdhani/400.css';
+	import '@fontsource/rajdhani/500.css';
+	import '@fontsource/rajdhani/600.css';
+	import '@fontsource/rajdhani/700.css';
+	import '@fontsource/share-tech-mono/400.css';
 	import './layout.css';
 	import { onMount } from 'svelte';
-	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
 	import favicon from '$lib/assets/favicon.svg';
+	import ArcadeShell from '$lib/components/ArcadeShell.svelte';
+	import { getPlayerProgression } from '$lib/services/api';
 	import { playerAuth } from '$lib/stores/playerAuth';
 
 	let { children } = $props();
 
 	const isOnPuzzleRoute = $derived($page.url.pathname.startsWith('/puzzle/'));
+	const shellVisible = $derived(!isOnPuzzleRoute && $page.url.pathname !== '/admin');
 	const playerDisplayName = $derived($playerAuth.user?.name ?? $playerAuth.user?.email ?? '');
+	let shellScore = $state<number | null>(null);
+	let shellRank = $state<number | null>(null);
 
 	onMount(() => {
 		void playerAuth.refresh();
+	});
+
+	$effect(() => {
+		const pathname = $page.url.pathname;
+		const authenticated = $playerAuth.status === 'authenticated';
+		const canShowShell = !pathname.startsWith('/puzzle/') && pathname !== '/admin';
+
+		if (!authenticated || !canShowShell) {
+			shellScore = null;
+			shellRank = null;
+			return;
+		}
+
+		const controller = new AbortController();
+		void getPlayerProgression(controller.signal)
+			.then((summary) => {
+				if (controller.signal.aborted) return;
+				shellScore = summary.score;
+				shellRank = summary.rank;
+			})
+			.catch((error) => {
+				if (controller.signal.aborted) return;
+				console.error('Failed to load shell progression', error);
+				shellScore = null;
+				shellRank = null;
+			});
+
+		return () => controller.abort();
 	});
 
 	function handlePlayerLogout() {
@@ -26,63 +66,16 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if !isOnPuzzleRoute}
-	<nav
-		aria-label="Player navigation"
-		class="fixed top-2 right-3 z-2000 flex max-w-[calc(100vw-1.5rem)] items-center gap-3
-			overflow-hidden text-[0.58rem] font-(--font-mono) tracking-[0.16em]
-			max-sm:gap-2 max-sm:text-[0.52rem]"
-	>
-		<a
-			href={resolve('/leaderboard')}
-			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
-			data-testid="leaderboard-link"
-		>
-			LEADERBOARD
-		</a>
-		<a
-			href={resolve('/quick')}
-			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
-			data-testid="quick-puzzle-link"
-		>
-			→ QUICK PUZZLE
-		</a>
-		<a
-			href={resolve('/upload')}
-			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
-			data-testid="upload-puzzle-link"
-		>
-			UPLOAD
-		</a>
-
-		{#if $playerAuth.status === 'loading'}
-			<!-- auth status pending -->
-		{:else if $playerAuth.status === 'authenticated' && $playerAuth.user}
-			<a
-				href={resolve('/profile')}
-				class="min-w-0 truncate text-(--text-2) transition-colors hover:text-(--accent)"
-				title={playerDisplayName}
-				data-testid="profile-link"
-			>
-				{playerDisplayName}
-			</a>
-			<button
-				type="button"
-				class="shrink-0 text-(--hot) opacity-70 transition-opacity duration-150 hover:opacity-100"
-				onclick={handlePlayerLogout}
-			>
-				SIGN OUT
-			</button>
-		{:else}
-			<a
-				href={resolve('/login')}
-				class="shrink-0 text-(--text-2) opacity-70 transition-colors duration-150
-					hover:text-(--accent) hover:opacity-100"
-			>
-				SIGN IN
-			</a>
-		{/if}
-	</nav>
+{#if shellVisible}
+	<ArcadeShell
+		currentPath={$page.url.pathname}
+		authStatus={$playerAuth.status}
+		{playerDisplayName}
+		score={shellScore}
+		rank={shellRank}
+		onLogout={handlePlayerLogout}
+		{children}
+	/>
+{:else}
+	{@render children()}
 {/if}
-
-{@render children()}

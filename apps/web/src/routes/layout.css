@@ -1,34 +1,33 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;900&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
 @import 'tailwindcss';
 
 /* ===== DESIGN TOKENS ===== */
 :root {
-	--bg-0: #04040d;
-	--bg-1: #0a0a18;
-	--bg-2: #111122;
-	--bg-3: #1a1a30;
-	--border: #22224a;
-	--border-bright: #33336a;
+	--bg-0: #0a0620;
+	--bg-1: #150d33;
+	--bg-2: #1c1440;
+	--bg-3: #1f1548;
+	--border: #2c1c60;
+	--border-bright: #38246f;
 
-	--accent: #00f0ff;
+	--accent: #3affff;
 	--accent-dim: rgba(0, 240, 255, 0.5);
 	--accent-glow: rgba(0, 240, 255, 0.12);
 	--accent-glow-strong: rgba(0, 240, 255, 0.28);
 
-	--hot: #ff0066;
-	--hot-dim: rgba(255, 0, 102, 0.5);
-	--hot-glow: rgba(255, 0, 102, 0.2);
+	--hot: #ff2ea6;
+	--hot-dim: rgba(255, 46, 166, 0.5);
+	--hot-glow: rgba(255, 46, 166, 0.2);
 
-	--gold: #ffe600;
-	--gold-dim: rgba(255, 230, 0, 0.5);
-	--gold-glow: rgba(255, 230, 0, 0.18);
+	--gold: #ffcc00;
+	--gold-dim: rgba(255, 204, 0, 0.5);
+	--gold-glow: rgba(255, 204, 0, 0.18);
 
 	--green: #00ff88;
 	--green-glow: rgba(0, 255, 136, 0.2);
 
-	--text-0: #dcdcff;
-	--text-1: #8888bb;
-	--text-2: #505080;
+	--text-0: #ffffff;
+	--text-1: #cfc4ff;
+	--text-2: #8f7fd0;
 
 	--font-display: 'Orbitron', 'Courier New', monospace;
 	--font-mono: 'Share Tech Mono', 'Courier New', monospace;
@@ -46,22 +45,6 @@ body {
 	color: var(--text-0);
 	font-family: var(--font-body);
 	min-height: 100vh;
-}
-
-/* Scanline CRT overlay */
-body::after {
-	content: '';
-	position: fixed;
-	inset: 0;
-	background: repeating-linear-gradient(
-		0deg,
-		transparent,
-		transparent 3px,
-		rgba(0, 0, 0, 0.04) 3px,
-		rgba(0, 0, 0, 0.04) 4px
-	);
-	pointer-events: none;
-	z-index: 9999;
 }
 
 /* ===== ANIMATIONS ===== */
@@ -162,66 +145,95 @@ body::after {
 /* ===== GLOBAL COMPONENT STYLES ===== */
 
 .arcade-btn {
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	font-family: var(--font-display);
-	font-size: 0.62rem;
+	font-size: 0.68rem;
 	font-weight: 700;
-	letter-spacing: 0.2em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
-	text-decoration: none;
-	border: 1px solid var(--accent);
-	color: var(--accent);
-	background: transparent;
+	border: 0;
+	border-radius: 18px;
+	color: #03202a;
+	background: linear-gradient(160deg, #5affff, #00c2dc);
+	box-shadow:
+		0 4px 0 #00707f,
+		0 8px 20px rgba(0, 240, 255, 0.32);
 	padding: 0.625rem 1.75rem;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition:
+		transform 0.2s ease,
+		box-shadow 0.2s ease,
+		filter 0.2s ease;
 }
 
 .arcade-btn:hover {
-	background: var(--accent-glow);
-	box-shadow: 0 0 25px var(--accent-glow-strong);
-	text-shadow: 0 0 10px var(--accent);
+	transform: translateY(-2px);
+	box-shadow:
+		0 6px 0 #00707f,
+		0 12px 26px rgba(0, 240, 255, 0.42);
+	filter: brightness(1.05);
 }
 
 .arcade-btn-ghost {
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	font-family: var(--font-display);
-	font-size: 0.62rem;
+	font-size: 0.68rem;
 	font-weight: 700;
-	letter-spacing: 0.2em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
-	border: 1px solid var(--border);
+	border: 1px solid var(--border-bright);
+	border-radius: 16px;
 	color: var(--text-1);
-	background: transparent;
+	background: rgba(28, 20, 64, 0.85);
 	padding: 0.625rem 1.75rem;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition:
+		border-color 0.2s ease,
+		background 0.2s ease,
+		color 0.2s ease;
 }
 
 .arcade-btn-ghost:hover {
 	border-color: var(--border-bright);
 	color: var(--text-0);
+	background: var(--bg-3);
 }
 
 .arcade-btn-danger {
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	font-family: var(--font-display);
-	font-size: 0.62rem;
+	font-size: 0.68rem;
 	font-weight: 700;
-	letter-spacing: 0.2em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
-	border: 1px solid var(--hot);
+	border: 1px solid rgba(255, 46, 166, 0.45);
+	border-radius: 16px;
 	color: var(--hot);
-	background: transparent;
+	background: rgba(255, 46, 166, 0.1);
 	padding: 0.625rem 1.75rem;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition:
+		border-color 0.2s ease,
+		background 0.2s ease,
+		box-shadow 0.2s ease;
 }
 
 .arcade-btn-danger:hover {
-	background: rgba(255, 0, 102, 0.08);
+	background: rgba(255, 46, 166, 0.16);
 	box-shadow: 0 0 20px var(--hot-glow);
-	text-shadow: 0 0 10px var(--hot);
+}
+
+.arcade-btn:focus-visible,
+.arcade-btn-ghost:focus-visible,
+.arcade-btn-danger:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
 }
 
 /* Skeleton loading */
