@@ -55,10 +55,16 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByText('CONTINUE 7/16')).toBeVisible();
 	});
 
+	it('exposes the mastery stars as a named image', async () => {
+		render(PuzzleCard, { family: mockFamily });
+
+		await expect.element(page.getByRole('img', { name: 'Mastery 0 of 3' })).toBeVisible();
+	});
+
 	it('should render thumbnail image with correct alt text', async () => {
 		render(PuzzleCard, { family: mockFamily });
 
-		const img = page.getByRole('img');
+		const img = page.getByRole('img', { name: 'Test Puzzle' });
 		await expect.element(img).toHaveAttribute('alt', 'Test Puzzle');
 		await expect.element(img).toHaveAttribute('src', getFamilyThumbnailUrl(mockFamily.id));
 	});

@@ -105,6 +105,7 @@
 			<div
 				class="mt-1.5 flex gap-1"
 				data-testid="card-mastery"
+				role="img"
 				aria-label={`Mastery ${masteryStars} of 3`}
 			>
 				{#each starIndexes as index (index)}

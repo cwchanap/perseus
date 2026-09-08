@@ -64,24 +64,12 @@ function props(overrides: Record<string, unknown> = {}) {
 		referenceImageUrl: image,
 		referenceActive: false,
 		referenceToggled: false,
-		canUndo: true,
-		canRedo: true,
-		canOpenSetup: true,
-		canPause: true,
-		rotationEnabled: false,
-		rotationToggleDisabled: false,
 		interactionBlocked: false,
 		viewResetVersion: 0,
 		onPiecePlaced: vi.fn(),
-		onUndo: vi.fn(),
-		onRedo: vi.fn(),
-		onHint: vi.fn(),
 		onReferenceDown: vi.fn(),
 		onReferenceUp: vi.fn(),
 		onReferenceToggle: vi.fn(),
-		onRotationToggle: vi.fn(),
-		onPause: vi.fn(),
-		onOpenSetup: vi.fn(),
 		...overrides
 	};
 }
@@ -103,12 +91,9 @@ function scaleOf(transform: string): number {
 }
 
 async function beginRealPan(pointerId: number): Promise<Element> {
-	// The unit surface is below 1024px, so toolbar zoom lives behind the
-	// compact More disclosure.
-	await page.getByLabelText('More puzzle actions').click();
-	await page.getByLabelText('Zoom in').click();
 	const board = await page.getByTestId('puzzle-board').element();
 	const frame = await page.getByTestId('zoomable-board-frame').element();
+	frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 
 	board.dispatchEvent(
 		new PointerEvent('pointerdown', {
@@ -141,26 +126,11 @@ async function beginRealPan(pointerId: number): Promise<Element> {
 }
 
 describe('PuzzleBoardPanel', () => {
-	it('forwards toolbar actions and shows Reference when available', async () => {
-		const input = props();
-		render(PuzzleBoardPanel, input);
+	it('keeps the board panel toolbar-free while showing the reference overlay', async () => {
+		render(PuzzleBoardPanel, props());
 
-		await page.getByLabelText('Undo').click();
-		await page.getByLabelText('Redo').click();
-		await page.getByLabelText('Hint').click();
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Rotation mode').click();
-		await page.getByLabelText('Pause mission').click();
-		await page.getByLabelText('Open mission setup').click();
-
-		expect(input.onUndo).toHaveBeenCalledOnce();
-		expect(input.onRedo).toHaveBeenCalledOnce();
-		expect(input.onHint).toHaveBeenCalledOnce();
-		expect(input.onRotationToggle).toHaveBeenCalledOnce();
-		expect(input.onPause).toHaveBeenCalledOnce();
-		expect(input.onOpenSetup).toHaveBeenCalledOnce();
-		await expect.element(page.getByLabelText('Toggle reference')).toBeVisible();
-		await expect.element(page.getByLabelText('Hold to peek reference')).toBeVisible();
+		expect(page.getByTestId('puzzle-toolbar').query()).toBeNull();
+		await expect.element(page.getByTestId('board-viewport')).toBeVisible();
 	});
 
 	it('hides Reference when puzzle.hasReference is not true', async () => {
@@ -169,17 +139,16 @@ describe('PuzzleBoardPanel', () => {
 		expect(page.getByLabelText('Hold to peek reference').query()).toBeNull();
 	});
 
-	it('disables REF and Peek when a reference is declared but the image URL is missing', async () => {
+	it('keeps the reference overlay available to the route even without an image', async () => {
 		render(PuzzleBoardPanel, props({ referenceImageUrl: null }));
 
-		await expect.element(page.getByLabelText('Toggle reference')).toBeDisabled();
-		await expect.element(page.getByLabelText('Hold to peek reference')).toBeDisabled();
+		expect(page.getByTestId('puzzle-toolbar').query()).toBeNull();
 	});
 
 	it('starts panning only from the board target, not viewport padding', async () => {
 		render(PuzzleBoardPanel, props());
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		const viewport = await page.getByTestId('board-viewport').element();
 		const board = await page.getByTestId('puzzle-board').element();
 
@@ -254,8 +223,8 @@ describe('PuzzleBoardPanel', () => {
 
 	it('does not start pan while a piece is selected', async () => {
 		render(PuzzleBoardPanel, props({ selectedPieceId: 0 }));
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		const board = await page.getByTestId('puzzle-board').element();
 
 		board.dispatchEvent(
@@ -296,8 +265,8 @@ describe('PuzzleBoardPanel', () => {
 	it('allows pan again after selection clears', async () => {
 		const input = props({ selectedPieceId: 0 });
 		const view = render(PuzzleBoardPanel, input);
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		await view.rerender({ ...input, selectedPieceId: null });
 		const board = await page.getByTestId('puzzle-board').element();
 
@@ -321,8 +290,7 @@ describe('PuzzleBoardPanel', () => {
 		const view = render(PuzzleBoardPanel, input);
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		await expect.poll(() => scaleOf(transformOf(frame))).toBeGreaterThan(0);
 		const zoomBeforeResize = scaleOf(transformOf(frame));
 
@@ -353,16 +321,21 @@ describe('PuzzleBoardPanel', () => {
 		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 	});
 
-	it('zooms out via the toolbar button', async () => {
-		render(PuzzleBoardPanel, props());
+	it('zooms out via the exported board methods', async () => {
+		const view = render(PuzzleBoardPanel, props());
+		const boardHandle = view.component as unknown as {
+			zoomIn: () => void;
+			zoomOut: () => void;
+		};
 		const frame = await page.getByTestId('zoomable-board-frame').element();
+		const initialScale = scaleOf(transformOf(frame));
 
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		boardHandle.zoomIn();
+		await expect.poll(() => scaleOf(transformOf(frame))).toBeGreaterThan(initialScale);
 		const zoomedInScale = scaleOf(transformOf(frame));
 		expect(zoomedInScale).toBeGreaterThan(0);
 
-		await page.getByLabelText('Zoom out').click();
+		boardHandle.zoomOut();
 		await expect.poll(() => scaleOf(transformOf(frame))).toBeLessThan(zoomedInScale);
 	});
 
@@ -454,8 +427,8 @@ describe('PuzzleBoardPanel', () => {
 
 	it('does not start panning when interactionBlocked is true', async () => {
 		render(PuzzleBoardPanel, props({ interactionBlocked: true }));
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		const board = await page.getByTestId('puzzle-board').element();
 
 		board.dispatchEvent(
@@ -473,8 +446,8 @@ describe('PuzzleBoardPanel', () => {
 
 	it('ignores right-click (non-primary button) for pan initiation', async () => {
 		render(PuzzleBoardPanel, props());
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByLabelText('Zoom in').click();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		const board = await page.getByTestId('puzzle-board').element();
 
 		board.dispatchEvent(
