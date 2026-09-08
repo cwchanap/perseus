@@ -1812,6 +1812,10 @@
 		:global(.game-layout > .puzzle-toolbar:has(.toolbar-secondary[data-open='true'])) {
 			z-index: 5;
 		}
+
+		:global(.game-layout > .puzzle-toolbar .toolbar-secondary) {
+			right: calc(100% + 0.5rem);
+		}
 	}
 
 	@media (min-width: 1024px) {

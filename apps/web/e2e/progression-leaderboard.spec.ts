@@ -160,7 +160,9 @@ test.describe('Progression and leaderboards @smoke', () => {
 		await expect(page.getByTestId('leaderboard-me')).toContainText('#5');
 
 		await page.goto('/leaderboard');
-		await expect(page.getByTestId('leaderboard-link')).toBeVisible();
+		await expect(
+			page.locator('nav:visible').getByRole('link', { name: 'Ranks', exact: true })
+		).toBeVisible();
 		await expect(page.getByTestId('overall-leaderboard-table')).toContainText('Top Scorer');
 		await expect(page.getByTestId('overall-leaderboard-me')).toContainText('142');
 
