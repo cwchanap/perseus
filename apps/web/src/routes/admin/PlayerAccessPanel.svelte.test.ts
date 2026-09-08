@@ -66,6 +66,16 @@ describe('PlayerAccessPanel', () => {
 		await expect.element(page.getByText('No account created')).toBeVisible();
 	});
 
+	it('reports the allowlist count through the callback', async () => {
+		vi.mocked(fetchPlayerAllowlist).mockResolvedValue(mockAllowlist);
+		const onCountChange = vi.fn();
+
+		render(PlayerAccessPanel, { active: false, onCountChange });
+
+		await expect.element(page.getByText('linked@example.com')).toBeVisible();
+		expect(onCountChange).toHaveBeenLastCalledWith(2);
+	});
+
 	it('shows an API error when loading player access fails', async () => {
 		vi.mocked(fetchPlayerAllowlist).mockRejectedValue(
 			new ApiError(500, 'internal_error', 'Player access unavailable')
@@ -114,7 +124,7 @@ describe('PlayerAccessPanel', () => {
 		render(PlayerAccessPanel);
 
 		await expect.element(page.getByText('linked@example.com')).toBeVisible();
-		await page.getByRole('button', { name: 'REMOVE' }).first().click();
+		await page.getByRole('button', { name: /remove linked@example.com/i }).click();
 
 		await vi.waitFor(() => {
 			expect(removePlayerAllowlistEntry).toHaveBeenCalledWith('linked@example.com');
@@ -130,7 +140,7 @@ describe('PlayerAccessPanel', () => {
 		render(PlayerAccessPanel);
 
 		await expect.element(page.getByText('linked@example.com')).toBeVisible();
-		await page.getByRole('button', { name: 'REMOVE' }).first().click();
+		await page.getByRole('button', { name: /remove linked@example.com/i }).click();
 
 		await expect.element(page.getByText('Could not remove player')).toBeVisible();
 	});

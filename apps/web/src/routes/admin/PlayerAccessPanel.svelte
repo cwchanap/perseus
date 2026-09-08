@@ -8,6 +8,13 @@
 	} from '$lib/services/api';
 	import type { PlayerAllowlistEntry } from '$lib/types/puzzle';
 
+	interface PlayerAccessPanelProps {
+		active?: boolean;
+		onCountChange?: (count: number) => void;
+	}
+
+	let { active = true, onCountChange }: PlayerAccessPanelProps = $props();
+
 	let allowlist: PlayerAllowlistEntry[] = $state([]);
 	let allowlistEmail = $state('');
 	let loadingAllowlist = $state(true);
@@ -28,12 +35,14 @@
 			const latestAllowlist = await fetchPlayerAllowlist();
 			if (loadSequence !== allowlistLoadSequence) return allowlist;
 			allowlist = latestAllowlist;
+			onCountChange?.(latestAllowlist.length);
 			return latestAllowlist;
 		} catch (error) {
 			console.error('Failed to load player access', error);
 			if (loadSequence !== allowlistLoadSequence) return allowlist;
 			allowlistError = error instanceof ApiError ? error.message : 'Failed to load player access';
 			allowlist = [];
+			onCountChange?.(0);
 			return [];
 		} finally {
 			if (loadSequence === allowlistLoadSequence) {
@@ -76,48 +85,66 @@
 	}
 </script>
 
-<div class="border border-(--border) bg-(--bg-1)">
-	<div class="flex items-center justify-between border-b border-(--border) bg-(--bg-2) px-4 py-3">
+<div
+	data-active={active}
+	class="overflow-hidden rounded-[20px] border border-(--border) bg-[rgba(21,13,51,0.62)]"
+>
+	<div
+		class="flex flex-wrap items-end justify-between gap-4 border-b border-(--border) bg-[rgba(28,20,64,0.7)] px-5 py-5 sm:px-6"
+	>
+		<div>
+			<h2 class="text-xl font-(--font-display) font-black tracking-[0.08em] text-(--text-0)">
+				PLAYER ACCESS
+			</h2>
+			<p
+				class="mt-1 text-[0.95rem] font-(--font-body) font-semibold tracking-[0.02em] text-(--text-2)"
+			>
+				Only allowlisted emails can sign in
+			</p>
+		</div>
 		<span
-			class="text-[0.6rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
+			data-testid="player-count"
+			class="rounded-xl border border-(--border-bright) bg-(--bg-3) px-3 py-2 text-xs font-(--font-mono) tracking-[0.1em] text-(--green)"
 		>
-			PLAYER ACCESS
-		</span>
-		<span class="text-[0.6rem] font-(--font-mono) tracking-[0.1em] text-(--accent)">
 			{allowlist.length} ALLOWED
 		</span>
 	</div>
 
-	<div class="flex flex-col gap-4 p-5">
+	<div class="flex flex-col gap-4 p-5 sm:p-6">
 		<form onsubmit={handleAllowlistSubmit} class="flex flex-col gap-3 sm:flex-row">
+			<label class="sr-only" for="player-email">Player email</label>
 			<input
+				id="player-email"
 				type="email"
 				aria-label="Player email"
 				bind:value={allowlistEmail}
-				class="min-w-0 flex-1 border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)
-transition-[border-color,box-shadow] duration-150 placeholder:text-(--text-2)
-focus:border-(--accent) focus:[box-shadow:0_0_12px_var(--accent-glow)]
-focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+				class="min-w-0 flex-1 rounded-[18px] border border-(--border-bright) bg-(--bg-0) px-4 py-3
+				text-[0.95rem] font-(--font-body) font-semibold tracking-[0.03em] text-(--text-0)
+				transition-[border-color,box-shadow] duration-150 placeholder:text-(--text-2)
+				focus:border-(--accent) focus:[box-shadow:0_0_12px_var(--accent-glow)] focus:outline-none
+				disabled:cursor-not-allowed disabled:opacity-50"
 				placeholder="player@example.com"
 				disabled={allowlistSaving}
 			/>
 			<button
 				type="submit"
 				disabled={allowlistSaving || removingAllowlistEmail !== null || !allowlistEmail.trim()}
-				class="border border-(--accent) px-4 py-2.5 text-[0.6rem]
-font-(--font-display) font-bold tracking-[0.2em] text-(--accent)
-transition-all duration-200 hover:bg-(--accent-glow)
-disabled:cursor-not-allowed disabled:opacity-40"
+				class="inline-flex items-center justify-center gap-2 rounded-[18px] border border-(--accent)
+				bg-[linear-gradient(160deg,#5affff,#00c2dc)] px-5 py-3 text-[0.65rem] font-(--font-display)
+				font-black tracking-[0.12em] text-[#03202a] shadow-[0_4px_0_#00707f]
+				transition-all duration-200 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
 			>
+				<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+					<path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" />
+				</svg>
 				{allowlistSaving ? 'ADDING...' : 'ADD PLAYER'}
 			</button>
 		</form>
 
 		{#if allowlistError}
 			<div
-				class="border border-(--hot-dim) bg-[rgba(255,0,102,0.06)] px-4 py-3
-text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
+				class="rounded-xl border border-(--hot-dim) bg-[rgba(255,0,102,0.06)] px-4 py-3
+				text-sm font-(--font-body) font-semibold tracking-[0.04em] text-(--hot)"
 				role="alert"
 			>
 				{allowlistError}
@@ -126,47 +153,68 @@ text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
 
 		{#if loadingAllowlist}
 			<div
-				class="border border-(--border) bg-(--bg-0) px-4 py-6 text-center
-text-[0.72rem] font-(--font-mono) tracking-[0.08em] text-(--text-2)"
+				class="rounded-xl border border-(--border) bg-(--bg-0) px-4 py-8 text-center
+				text-sm font-(--font-body) font-semibold tracking-[0.06em] text-(--text-2)"
 			>
 				LOADING ACCESS LIST...
 			</div>
 		{:else if allowlist.length === 0}
 			<div
-				class="border border-(--border) bg-(--bg-0) px-4 py-6 text-center
-text-[0.72rem] font-(--font-mono) tracking-[0.08em] text-(--text-2)"
+				class="rounded-xl border border-(--border) bg-(--bg-0) px-4 py-8 text-center
+				text-sm font-(--font-body) font-semibold tracking-[0.06em] text-(--text-2)"
 			>
 				No players allowlisted.
 			</div>
 		{:else}
-			<div class="flex flex-col border border-(--border) bg-(--bg-0)">
+			<div class="overflow-hidden rounded-xl border border-(--border) bg-(--bg-0)">
+				<div
+					class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-(--border)
+					bg-(--bg-2) px-4 py-3 text-xs font-(--font-body) font-bold tracking-[0.1em] text-(--text-2) uppercase"
+				>
+					<span></span>
+					<span>Email</span>
+					<span>Account</span>
+					<span class="text-right">Actions</span>
+				</div>
 				{#each allowlist as entry (entry.email)}
 					<div
-						class="flex flex-col gap-3 border-b border-(--border) px-4 py-3
-last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+						class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-[rgba(44,28,96,0.7)]
+						px-4 py-3.5 last:border-b-0"
 					>
-						<div class="flex min-w-0 flex-col gap-[0.2rem]">
-							<span
-								class="truncate text-[0.8rem] font-(--font-mono) tracking-[0.03em] text-(--text-0)"
-							>
-								{entry.email}
-							</span>
-							<span class="text-[0.65rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-								{entry.player?.name ?? 'No account created'}
-							</span>
-						</div>
-
-						<button
-							type="button"
-							onclick={() => handleAllowlistRemove(entry.email)}
-							disabled={allowlistSaving || removingAllowlistEmail !== null}
-							class="shrink-0 border border-(--hot-dim) px-2.5 py-[0.35rem]
-text-[0.55rem] font-(--font-display) font-semibold tracking-[0.15em]
-text-(--hot) transition-all duration-150 hover:border-(--hot)
-hover:bg-(--hot-glow) disabled:cursor-not-allowed disabled:opacity-40"
+						<div
+							class="flex h-10 w-10 items-center justify-center rounded-xl bg-[linear-gradient(160deg,#ff5cc0,#e0148c)]
+							text-xs font-(--font-display) font-bold text-white"
+							aria-hidden="true"
 						>
-							{removingAllowlistEmail === entry.email ? '...' : 'REMOVE'}
-						</button>
+							{entry.email.slice(0, 2).toUpperCase()}
+						</div>
+						<div
+							class="min-w-0 truncate text-[0.95rem] font-(--font-body) font-semibold tracking-[0.02em] text-(--text-0)"
+						>
+							{entry.email}
+						</div>
+						<div
+							class="truncate text-sm font-(--font-body) font-semibold tracking-[0.02em] text-(--text-2)"
+						>
+							{entry.player?.name ?? 'No account created'}
+						</div>
+						<div class="flex justify-end">
+							<button
+								type="button"
+								aria-label={`Remove ${entry.email}`}
+								title={`Remove ${entry.email}`}
+								onclick={() => handleAllowlistRemove(entry.email)}
+								disabled={allowlistSaving || removingAllowlistEmail !== null}
+								class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim)
+								bg-[rgba(255,0,102,0.1)] text-(--hot) transition-colors hover:border-(--hot)
+								hover:bg-(--hot-glow) focus-visible:outline-2 focus-visible:outline-(--hot)
+								disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+									<path d="M5 11h14v2H5z" />
+								</svg>
+							</button>
+						</div>
 					</div>
 				{/each}
 			</div>

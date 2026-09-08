@@ -102,9 +102,25 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
 		await expect.element(page.getByText('PROCESSING').nth(1)).toBeVisible();
 		await expect.element(page.getByText('FAILED').nth(1)).toBeVisible();
+		await expect.element(page.getByText('Nature').nth(1)).toBeVisible();
+		await expect.element(page.getByTestId('difficulty-gems')).toHaveLength(9);
+	});
+
+	it('renders 60px thumbnails with accessible preview and delete icon actions', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue([mockFamilies[0]]);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		const thumbnail = await page.getByRole('img', { name: 'Forest Scene' }).element();
+		expect(thumbnail.closest('[data-admin-thumbnail]')).toHaveAttribute(
+			'data-admin-thumbnail',
+			'60'
+		);
 		await expect
-			.element(page.getByText('Easy / Normal / Hard: 16 / 49 / 100 pieces').first())
+			.element(page.getByRole('button', { name: 'View full image for Forest Scene' }))
 			.toBeVisible();
+		await expect.element(page.getByRole('button', { name: /delete forest scene/i })).toBeVisible();
 	});
 
 	it('opens and closes the reference preview for a ready family', async () => {
@@ -288,7 +304,7 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
-		await page.getByRole('button', { name: 'DELETE' }).first().click();
+		await page.getByRole('button', { name: /delete forest scene/i }).click();
 
 		await vi.waitFor(() => {
 			expect(deletePuzzle).toHaveBeenCalledWith('p1', { force: false });
@@ -303,7 +319,7 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('City Lights')).toBeVisible();
-		await page.getByRole('button', { name: 'FORCE DEL' }).click();
+		await page.getByRole('button', { name: /force delete city lights/i }).click();
 
 		await vi.waitFor(() => {
 			expect(deletePuzzle).toHaveBeenCalledWith('p2', { force: true });
@@ -321,7 +337,7 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
-		await page.getByRole('button', { name: 'DELETE' }).first().click();
+		await page.getByRole('button', { name: /delete forest scene/i }).click();
 
 		await vi.waitFor(() => {
 			expect(alertSpy).toHaveBeenCalledWith('Server error occurred');
@@ -341,7 +357,7 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
-		await page.getByRole('button', { name: 'DELETE' }).first().click();
+		await page.getByRole('button', { name: /delete forest scene/i }).click();
 
 		await expect
 			.element(page.getByText('Metadata removed, but one asset could not be deleted'))
@@ -375,14 +391,14 @@ describe('AdminPuzzlesPanel', () => {
 		await page.getByRole('button', { name: 'DELETE' }).first().click();
 		await expect.element(page.getByText('First warning')).toBeVisible();
 
-		await page.getByRole('button', { name: 'DELETE' }).nth(1).click();
+		await page.getByRole('button', { name: /delete city lights/i }).click();
 		await expect.element(page.getByText('Second warning')).toBeVisible();
 
 		await vi.advanceTimersByTimeAsync(5000);
 		await expect.poll(() => page.getByText('Second warning').query()).toBeNull();
 	});
 
-	it('polls for a hidden processing family after three seconds', async () => {
+	it('polls for a processing family after three seconds when active', async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		const readyFamilies: PuzzleFamilySummary[] = [
 			familySummary('p2', { name: 'City Lights', status: 'ready', category: 'Architecture' })
@@ -399,6 +415,25 @@ describe('AdminPuzzlesPanel', () => {
 
 		await vi.advanceTimersByTimeAsync(3000);
 
+		await vi.waitFor(() => {
+			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	it('gates processing polling while inactive and starts it when activated', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		vi.mocked(fetchAdminPuzzles)
+			.mockResolvedValueOnce(mockFamilies)
+			.mockResolvedValueOnce(mockFamilies);
+
+		const view = render(AdminPuzzlesPanel, { active: false });
+
+		await expect.element(page.getByText('City Lights')).toBeVisible();
+		await vi.advanceTimersByTimeAsync(3000);
+		expect(fetchAdminPuzzles).toHaveBeenCalledTimes(1);
+
+		await view.rerender({ active: true });
+		await vi.advanceTimersByTimeAsync(3000);
 		await vi.waitFor(() => {
 			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(2);
 		});
