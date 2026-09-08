@@ -55,8 +55,9 @@ describe('PuzzleDifficultyPicker', () => {
 	it('links play actions to variant routes', async () => {
 		render(PuzzleDifficultyPicker, { family: familySummary() });
 
-		const easy = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' });
+		const easy = page.getByTestId('difficulty-action').nth(0);
 		await expect.element(easy).toHaveAttribute('href', '/puzzle/var-e');
+		await expect.element(page.getByLabelText('Easy difficulty, 16 pieces')).toBeVisible();
 	});
 
 	it('shows per-difficulty best times', async () => {
@@ -69,7 +70,7 @@ describe('PuzzleDifficultyPicker', () => {
 	it('renders non-link rows when playableLinks is false', async () => {
 		render(PuzzleDifficultyPicker, { family: familySummary(), playableLinks: false });
 
-		const easy = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' });
+		const easy = page.getByTestId('difficulty-action').nth(0);
 		await expect.element(easy).not.toHaveAttribute('href');
 	});
 });
