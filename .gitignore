@@ -49,5 +49,8 @@ data/
 # One-shot puzzle family migration artifacts (operator tooling)
 .migration/
 
+# Pulumi state backups from scripts/migrate-workflows-worker-state.sh
+state-backup-*.json
+
 # Local puzzle image assets
 /assets/
