@@ -926,8 +926,17 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByRole('heading', { name: 'Owned Puzzle' })).toBeVisible();
 
-		const playLinks = page.getByRole('link').filter({ hasText: /Easy|Normal|Hard/ });
+		const playLinks = page.getByRole('link', { name: /difficulty, \d+ pieces/ });
 		await expect.element(playLinks).toHaveLength(3);
+		await expect
+			.element(page.getByRole('link', { name: /Easy difficulty, 16 pieces/ }))
+			.toHaveAttribute('href', '/puzzle/fam-owned-e');
+		await expect
+			.element(page.getByRole('link', { name: /Normal difficulty, 49 pieces/ }))
+			.toHaveAttribute('href', '/puzzle/fam-owned-n');
+		await expect
+			.element(page.getByRole('link', { name: /Hard difficulty, 100 pieces/ }))
+			.toHaveAttribute('href', '/puzzle/fam-owned-h');
 	});
 
 	it('does not render play links when family detail enrichment fails', async () => {
@@ -950,7 +959,7 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByRole('heading', { name: 'Owned Puzzle' })).toBeVisible();
 		await expect
-			.element(page.getByRole('link').filter({ hasText: /Easy|Normal|Hard/ }))
+			.element(page.getByRole('link', { name: /difficulty, \d+ pieces/ }))
 			.toHaveLength(0);
 	});
 

@@ -131,6 +131,38 @@ describe('PlayerAccessPanel', () => {
 		});
 	});
 
+	it('keeps the remove action reachable on a 390px viewport', async () => {
+		vi.mocked(fetchPlayerAllowlist).mockResolvedValue(mockAllowlist);
+		vi.mocked(removePlayerAllowlistEntry).mockResolvedValue(undefined);
+
+		const originalWidth = window.innerWidth;
+		const originalHeight = window.innerHeight;
+		try {
+			await page.viewport(390, 844);
+			render(PlayerAccessPanel);
+
+			const remove = page.getByRole('button', { name: /remove linked@example.com/i });
+			await expect.element(remove).toBeVisible();
+			const tableLocator = page.getByTestId('player-access-table');
+			await expect.element(tableLocator).toHaveClass(/overflow-x-auto/);
+			const table = await tableLocator.element();
+			table.scrollLeft = table.scrollWidth;
+			const removeRect = (await remove.element()).getBoundingClientRect();
+			expect(removeRect.left).toBeGreaterThanOrEqual(0);
+			expect(removeRect.right).toBeLessThanOrEqual(window.innerWidth);
+			expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+				document.documentElement.clientWidth
+			);
+			await remove.click();
+
+			await vi.waitFor(() => {
+				expect(removePlayerAllowlistEntry).toHaveBeenCalledWith('linked@example.com');
+			});
+		} finally {
+			await page.viewport(originalWidth, originalHeight);
+		}
+	});
+
 	it('shows an API error when removing a player fails', async () => {
 		vi.mocked(fetchPlayerAllowlist).mockResolvedValue(mockAllowlist);
 		vi.mocked(removePlayerAllowlistEntry).mockRejectedValue(
