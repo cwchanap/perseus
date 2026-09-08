@@ -31,13 +31,17 @@
 #   - pulumi CLI authenticated for the production stack
 #   - jq installed
 #   - `import` options present in packages/infrastructure/src/workers.ts
-#   - Build artifacts present (execute migration only — dry-run needs none):
+#   - Build artifacts (execute migration only — dry-run needs none). The
+#     script runs these from the repo root before any state mutation:
 #       bun run build --filter=@perseus/web
 #       bun run build --filter=@perseus/api
 #       bun run build --filter=@perseus/workflows
 #       bun run build --filter=@perseus/infrastructure
-#     The script checks these before deleting any state and fails fast if
-#     any are missing.
+#     This guarantees the Pulumi program (packages/infrastructure/dist/index.js)
+#     reflects the current source — including this PR's `import` options —
+#     before any production state is removed. All four outputs are gitignored,
+#     so an existence check alone is unsafe (stale dist can survive a branch
+#     switch and still pass the gate).
 
 set -euo pipefail
 
@@ -143,37 +147,40 @@ required_artifact_paths() {
 		'apps/web/build'
 }
 
-# Verify the build artifacts exist. Exits 1 with the build commands to run
-# if any are missing. Args: <repo-root>
-check_build_artifacts() {
+# Build all four artifacts from the repo root before any state mutation.
+# Existence checks are insufficient — every output in required_artifact_paths
+# is gitignored, so stale dist from a prior branch/checkout can pass an
+# existence gate while lacking this PR's `import` options in
+# packages/infrastructure/dist/index.js. Running the builds guarantees the
+# Pulumi program and worker dists reflect the current source before any
+# production state is removed. Args: <repo-root>
+build_artifacts() {
 	local repo_root="$1"
-	local missing=()
-	while IFS= read -r rel; do
-		if [[ ! -e "$repo_root/$rel" ]]; then
-			missing+=("$rel")
-		fi
-	done < <(required_artifact_paths)
-	if ((${#missing[@]} > 0)); then
-		echo "ERROR: build artifacts missing — pulumi preview/up would fail." >&2
-		echo "       Missing:" >&2
-		for rel in "${missing[@]}"; do
-			echo "         $rel" >&2
-		done
-		echo "       Build them from the repo root:" >&2
-		echo "         bun run build --filter=@perseus/web" >&2
-		echo "         bun run build --filter=@perseus/api" >&2
-		echo "         bun run build --filter=@perseus/workflows" >&2
-		echo "         bun run build --filter=@perseus/infrastructure" >&2
-		return 1
-	fi
+	local filters=(
+		'@perseus/web'
+		'@perseus/api'
+		'@perseus/workflows'
+		'@perseus/infrastructure'
+	)
+	echo "=== Building artifacts (from $repo_root) ==="
+	for filter in "${filters[@]}"; do
+		echo "  bun run build --filter=$filter"
+		(cd "$repo_root" && bun run build "--filter=$filter")
+	done
 }
 
 # Delete stale state entries in reverse dependency order.
-# Args: <pulumi-cmd-prefix> <dry-run>
-# Reads: DELETION_ORDER (set by build_deletion_order)
+# Args: <dry-run>
+# Reads: DELETION_ORDER (set by build_deletion_order), PULUMI_CMD and
+# STACK_FLAGS (set by main). --stack is appended to the `state delete`
+# subcommand, not the root `pulumi` command (Pulumi defines -s/--stack on
+# subcommands only).
 delete_stale_state() {
-	local pulumi_cmd="$1"
-	local dry_run="$2"
+	local dry_run="$1"
+	local stack_disp=""
+	if ((${#STACK_FLAGS[@]} > 0)); then
+		stack_disp="${STACK_FLAGS[*]} "
+	fi
 	for entry in "${DELETION_ORDER[@]}"; do
 		local label="${entry%%:*}"
 		local urn="${entry#*:}"
@@ -183,10 +190,9 @@ delete_stale_state() {
 		fi
 		echo "  DELETE $label"
 		if [[ "$dry_run" == "true" ]]; then
-			echo "         [dry-run] $pulumi_cmd state delete '$urn' -y"
+			echo "         [dry-run] pulumi state delete ${stack_disp}'$urn' -y"
 		else
-			# shellcheck disable=SC2086
-			$pulumi_cmd state delete "$urn" -y
+			"${PULUMI_CMD[@]}" state delete "${STACK_FLAGS[@]}" "$urn" -y
 		fi
 	done
 }
@@ -229,18 +235,25 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	INFRA_DIR="$REPO_ROOT/packages/infrastructure"
 	cd "$INFRA_DIR"
 
-	# Build artifacts must exist before any state is deleted — otherwise an
-	# operator could remove production state and then fail at preview because
-	# the Pulumi program or worker dists are missing. Dry-run needs none: it
-	# only exports state and prints the deletion plan (no preview/up).
+	# Build artifacts before any state is deleted — otherwise an operator
+	# could remove production state and then fail at preview because the
+	# Pulumi program or worker dists are missing or stale. Dry-run needs
+	# none: it only exports state and prints the deletion plan (no preview/up).
 	if [[ "$DRY_RUN" != "true" ]]; then
-		check_build_artifacts "$REPO_ROOT" || exit 1
+		build_artifacts "$REPO_ROOT" || exit 1
 	fi
 
-	# Build pulumi command prefix
-	PULUMI_CMD="pulumi"
+	# Pulumi command. -s/--stack is defined on Pulumi subcommands (stack,
+	# state, preview, up), not on the root `pulumi` command, so --stack is
+	# appended to each subcommand invocation via STACK_FLAGS rather than
+	# prefixed to the executable. PULUMI_CMD and STACK_FLAGS are arrays so
+	# the invocations stay word-split-safe (no SC2086).
+	PULUMI_CMD=(pulumi)
+	STACK_FLAGS=()
+	STACK_FLAG_DISPLAY=""
 	if [[ -n "$STACK_ARG" ]]; then
-		PULUMI_CMD="pulumi -s $STACK_ARG"
+		STACK_FLAGS=(--stack "$STACK_ARG")
+		STACK_FLAG_DISPLAY="--stack $STACK_ARG"
 	fi
 
 	# Step 0: Backup state
@@ -250,15 +263,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	if [[ "$DRY_RUN" == "true" ]]; then
 		echo "  [dry-run] skipped"
 	else
-		# shellcheck disable=SC2086
-		$PULUMI_CMD stack export > "$BACKUP_FILE"
+		"${PULUMI_CMD[@]}" stack export "${STACK_FLAGS[@]}" > "$BACKUP_FILE"
 		echo "  Backup saved."
 	fi
 
 	# Step 1: Discover URNs
 	echo ""
 	echo "=== Step 1: Discover stale URNs ==="
-	STACK_JSON=$($PULUMI_CMD stack export)
+	STACK_JSON=$("${PULUMI_CMD[@]}" stack export "${STACK_FLAGS[@]}")
 	resolve_urns "$STACK_JSON"
 	build_deletion_order
 
@@ -270,7 +282,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		echo ""
 		echo "ERROR: 'workflows-worker' not found in stack state." >&2
 		echo "       It may have already been migrated. Inspect with:" >&2
-		echo "         $PULUMI_CMD stack --show-urns" >&2
+		echo "         pulumi stack --show-urns${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
 		exit 1
 	fi
 
@@ -282,14 +294,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		echo ""
 		echo "ERROR: workflows-worker physical name is '$WORKER_NAME', not 'perseus-workflows'." >&2
 		echo "       The migration may have already run. Aborting to avoid deleting valid state." >&2
-		echo "       Inspect with: $PULUMI_CMD stack --show-urns" >&2
+		echo "       Inspect with: pulumi stack --show-urns${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
 		exit 1
 	fi
 
 	# Step 2: Delete stale state entries
 	echo ""
 	echo "=== Step 2: Delete stale state (reverse dependency order) ==="
-	delete_stale_state "$PULUMI_CMD" "$DRY_RUN"
+	delete_stale_state "$DRY_RUN"
 
 	# Dry-run stops here. A `pulumi preview` in dry-run would run against the
 	# pre-migration state: the stale URNs still exist (delete_stale_state only
@@ -314,22 +326,19 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	echo "  The Worker and Workflow should show as 'import' (adopted)."
 	echo "  WorkerVersion and WorkersDeployment will be freshly created"
 	echo "  (new version upload + deployment — safe, additive operations)."
-	# shellcheck disable=SC2086
-	$PULUMI_CMD preview --diff
+	"${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}" --diff
 
 	# Step 4: Apply
 	echo ""
 	echo "=== Step 4: pulumi up ==="
-	# shellcheck disable=SC2086
-	$PULUMI_CMD up -y
+	"${PULUMI_CMD[@]}" up "${STACK_FLAGS[@]}" -y
 
 	# Step 5: Verify
 	echo ""
 	echo "=== Step 5: Verify ==="
 	echo "  1. Check 'pulumi preview' shows no create/replace for workflows-worker"
 	echo "     or perseus-workflow."
-	# shellcheck disable=SC2086
-	$PULUMI_CMD preview
+	"${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}"
 
 	echo ""
 	echo "=== Migration complete ==="

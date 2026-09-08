@@ -396,6 +396,67 @@ if [[ "$all_match" == true ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Test 10: --stack is appended to Pulumi subcommands, not the root command.
+# Pulumi defines -s/--stack on subcommands (stack, state, preview, up), not on
+# the root `pulumi` command, so `pulumi -s <stack> <subcommand>` fails before
+# the first export. This stubs `pulumi`, runs the script with --dry-run --stack,
+# and asserts the recorded argv never leads with --stack and that `stack
+# export` carries --stack after the subcommand.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 10: --stack placed on subcommands, not root pulumi"
+
+STUB_DIR=$(mktemp -d)
+ARGV_LOG=$(mktemp)
+cat > "$STUB_DIR/pulumi" <<EOF
+#!/usr/bin/env bash
+# Record the full argv on one line (space-joined) so the test can grep the
+# complete command shape, then answer stack export with empty-state JSON so
+# the script reaches its WORKER_URN safety check and exits cleanly.
+printf '%s\n' "\$*" >> "$ARGV_LOG"
+if [[ \$1 == "stack" && \$2 == "export" ]]; then
+	printf '{"version":3,"deployment":{"resources":[]}}\n'
+fi
+exit 0
+EOF
+chmod +x "$STUB_DIR/pulumi"
+
+# Run the script (not sourced) with the stub on PATH. Dry-run skips the
+# build step and the state backup, but still calls `pulumi stack export`.
+# Empty resources → WORKER_URN empty → clean exit 1 at the safety check.
+PATH="$STUB_DIR:$PATH" bash "$SCRIPT" --dry-run --stack "cwchanap/perseus-infrastructure/production" >/dev/null 2>&1 || true
+
+# No recorded invocation may lead with --stack (that would mean it was
+# passed to the root `pulumi` command).
+root_stack_count=$(grep -c '^--stack' "$ARGV_LOG" || true)
+if [[ "$root_stack_count" -eq 0 ]]; then
+	ok "no invocation passed --stack to the root pulumi command"
+else
+	fail "$root_stack_count invocation(s) passed --stack to root pulumi"
+fi
+
+# The `stack export` invocation must carry --stack <stack> after the
+# subcommand, not before it.
+export_line=$(grep '^stack export' "$ARGV_LOG" | head -1)
+if [[ "$export_line" == "stack export --stack cwchanap/perseus-infrastructure/production" ]]; then
+	ok "stack export appends --stack after subcommand: '$export_line'"
+else
+	fail "stack export argv wrong; expected 'stack export --stack ...', got '$export_line'"
+fi
+
+# Sanity: without --stack, the recorded argv must not contain --stack at all.
+: > "$ARGV_LOG"
+PATH="$STUB_DIR:$PATH" bash "$SCRIPT" --dry-run >/dev/null 2>&1 || true
+no_stack_count=$(grep -c -- '--stack' "$ARGV_LOG" || true)
+if [[ "$no_stack_count" -eq 0 ]]; then
+	ok "no --stack flag emitted when --stack arg is absent"
+else
+	fail "$no_stack_count --stack flag(s) emitted without --stack arg"
+fi
+
+rm -rf "$STUB_DIR" "$ARGV_LOG"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
