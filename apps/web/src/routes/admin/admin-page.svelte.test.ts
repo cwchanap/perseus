@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPage from './+page.svelte';
+import type { PuzzleFamilySummary } from '@perseus/types';
 import { fetchAdminPuzzles, fetchPlayerAllowlist } from '$lib/services/api';
 
 vi.mock('$lib/services/api', () => {
@@ -39,18 +40,32 @@ vi.mock('$app/paths', () => ({
 }));
 
 describe('Admin Page', () => {
+	const family: PuzzleFamilySummary = {
+		id: 'family-1',
+		name: 'Mission One',
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1,
+		category: 'Nature',
+		variants: {
+			easy: { id: 'family-1-easy', difficulty: 'easy', pieceCount: 16, status: 'ready' },
+			normal: { id: 'family-1-normal', difficulty: 'normal', pieceCount: 49, status: 'ready' },
+			hard: { id: 'family-1-hard', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+		}
+	};
+	const allowlist = [{ email: 'player@example.com', createdAt: 1, addedBy: 'admin' }];
+
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
-		vi.mocked(fetchPlayerAllowlist).mockResolvedValue([]);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue([family]);
+		vi.mocked(fetchPlayerAllowlist).mockResolvedValue(allowlist);
 	});
 
-	it('defaults to puzzles and lazily loads Player Access', async () => {
+	it('mounts both panels, reports both counts, and hides inactive tabpanels', async () => {
 		render(AdminPage);
 
-		await expect.element(page.getByRole('heading', { name: /control panel/i })).toBeVisible();
-		const puzzlesTab = page.getByRole('tab', { name: 'PUZZLES' });
-		const playersTab = page.getByRole('tab', { name: 'PLAYER ACCESS' });
+		const puzzlesTab = page.getByRole('tab', { name: 'Missions' });
+		const playersTab = page.getByRole('tab', { name: 'Player access' });
 		await expect.element(puzzlesTab).toHaveAttribute('aria-selected', 'true');
 		await expect.element(playersTab).toHaveAttribute('aria-selected', 'false');
 		await expect
@@ -61,24 +76,32 @@ describe('Admin Page', () => {
 			.toHaveAttribute('href', '/');
 		await vi.waitFor(() => {
 			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(1);
+			expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(1);
 		});
-		expect(fetchPlayerAllowlist).not.toHaveBeenCalled();
+		await expect.element(page.getByTestId('admin-missions-count')).toHaveTextContent('1');
+		await expect.element(page.getByTestId('admin-players-count')).toHaveTextContent('1');
+
+		const puzzlesPanel = document.getElementById('admin-panel-puzzles');
+		const playersPanel = document.getElementById('admin-panel-players');
+		expect(puzzlesPanel).not.toBeNull();
+		expect(playersPanel).not.toBeNull();
+		expect(puzzlesPanel).not.toHaveAttribute('hidden');
+		expect(playersPanel).toHaveAttribute('hidden');
+		await expect.element(page.getByText('Mission One')).toBeVisible();
 
 		await playersTab.click();
 
 		await expect.element(playersTab).toHaveAttribute('aria-selected', 'true');
-		await vi.waitFor(() => {
-			expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(1);
-		});
-		await expect.poll(() => page.getByText('MISSION DATABASE', { exact: true }).query()).toBeNull();
-		await expect.poll(() => page.getByLabelText('Filter by category').query()).toBeNull();
+		expect(puzzlesPanel).toHaveAttribute('hidden');
+		expect(playersPanel).not.toHaveAttribute('hidden');
+		await expect.element(page.getByText('player@example.com')).toBeVisible();
 	});
 
 	it('supports standard keyboard navigation between tabs', async () => {
 		render(AdminPage);
 
-		const puzzlesTab = page.getByRole('tab', { name: 'PUZZLES' });
-		const playersTab = page.getByRole('tab', { name: 'PLAYER ACCESS' });
+		const puzzlesTab = page.getByRole('tab', { name: 'Missions' });
+		const playersTab = page.getByRole('tab', { name: 'Player access' });
 		const puzzlesButton = await puzzlesTab.element();
 		const playersButton = await playersTab.element();
 
