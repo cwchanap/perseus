@@ -4,12 +4,11 @@
 
 Redesign the Perseus web UI around the approved **Galaxy Arcade** mockup while preserving the
 existing SvelteKit routes, gameplay/session behavior, persistence, APIs, search/filtering,
-progression, admin operations, and accessibility contracts.
+progression rules, admin operations, and accessibility contracts.
 
-This is a web presentation and responsive-composition change. It is **not** a gameplay, persistence,
-API, or mobile rewrite. The implementation remains one ticket and one implementation PR; the PR
-must stop for a hard review gate after the gameplay composition lands before completion/admin work
-continues.
+This is a web presentation and responsive-composition change. It is **not** a gameplay,
+persistence, API, or NativeScript rewrite. The implementation remains one ticket and one
+implementation PR, with a mandatory review gate immediately after the gameplay composition lands.
 
 ## Canonical mockup targets
 
@@ -25,9 +24,14 @@ are implementation targets:
 
 Turn 1 is design exploration only. Admin 4b is not part of this work.
 
-When prose and the rendered canonical mock disagree, the rendered canonical mock and its local note
-win. In particular, 3a renders a **three-column** desktop poster wall; Perseus must not adopt the
+When prose and a rendered canonical screen disagree, the rendered screen and its local note win.
+In particular, 3a renders a **three-column** desktop poster wall; Perseus must not adopt the
 turn-level prose that mentions four columns.
+
+The phone mock is authored at 393×852. Perseus already standardizes phone behavior at 390×844 in
+Playwright, so automated behavior and visual baselines use **390×844** as the single implementation
+viewport. This is the only deliberate outer-frame normalization; composition and proportions still
+follow 2a/2b/2c.
 
 Mock puzzle names, art, scores, times, piece counts, and records are illustrative. Production data
 remains authoritative.
@@ -35,12 +39,14 @@ remains authoritative.
 ## Goals
 
 1. Make puzzle art the dominant discovery and completion surface.
-2. Replace small text-heavy arcade chrome with a readable gem/icon/progress vocabulary.
-3. Give phone, landscape tablet, and desktop deliberately different composition without changing
+2. Replace text-heavy chrome with readable gem/icon/progress vocabulary.
+3. Give phone, landscape tablet, and desktop intentionally different composition without changing
    puzzle semantics.
-4. Give desktop navigation and admin tools stable sidebars rather than floating link clusters.
-5. Preserve the existing keyboard, touch, focus, announcement, and session contracts.
-6. Make visual parity reproducible without putting pixel-diff tests in the normal smoke lane.
+4. Give desktop navigation and admin tools stable sidebars instead of floating link clusters.
+5. Preserve keyboard, touch, focus, announcement, and session behavior.
+6. Make the two highest-risk responsive rules executable: 1440px shell activation and three-column
+   tablet/desktop gallery layout.
+7. Make visual parity reproducible without putting pixel-diff tests in normal smoke CI.
 
 ## Non-goals
 
@@ -55,49 +61,65 @@ remains authoritative.
 - No next-puzzle recommendation algorithm just to reproduce a `NEXT` label.
 - No backwards-compatibility layer for superseded web markup or CSS classes.
 
-## Existing owners and the one required composition change
+## Existing owners and required composition changes
 
-Keep the current ownership boundaries unless explicitly listed below:
+Keep current ownership unless explicitly listed below:
 
-- `apps/web/src/routes/+layout.svelte` owns player auth refresh and root route composition.
+- `apps/web/src/routes/+layout.svelte` owns auth refresh and root player-shell composition.
 - `apps/web/src/routes/+page.svelte` owns gallery loading/search/category/pagination/quick/saved
   progress behavior.
-- `apps/web/src/routes/puzzle/[id]/+page.svelte` owns browser gameplay orchestration and the outer
-  board/tray layout.
-- `PuzzleBoardPanel.svelte` owns the board viewport, pan/zoom state, reference overlay, and board
+- `apps/web/src/routes/puzzle/[id]/+page.svelte` owns gameplay orchestration and the outer workspace.
+- `PuzzleBoardPanel.svelte` owns board viewport, pan/zoom state, reference overlay, and board
   rendering.
-- `PuzzleToolbar.svelte` owns the single accessible toolbar action tree and roving focus behavior.
-- `PuzzleInventoryPanel.svelte` owns tray presentation plus tray-local keyboard navigation while
-  canonical filter/order/selection stay in the session.
+- `PuzzleToolbar.svelte` owns the single accessible toolbar action tree and roving focus.
+- `PuzzleInventoryPanel.svelte` owns tray-local presentation and keyboard navigation while canonical
+  filter/order/selection remain in the session.
 - `PuzzleCompletionDialog.svelte` owns the one completion flow.
-- Admin keeps route-local `AdminTab` state and separate `AdminPuzzlesPanel` /
-  `PlayerAccessPanel` data owners.
-- `puzzleLayout.ts` remains the sole responsive board-metric owner.
+- Admin keeps route-local `AdminTab`; `AdminPuzzlesPanel` and `PlayerAccessPanel` retain their data
+  owners.
+- `puzzleLayout.ts` remains the sole JavaScript gameplay-layout metric owner.
 
 ### Gameplay toolbar lift
 
-Today `PuzzleToolbar` is nested inside `PuzzleBoardPanel`, while the outer puzzle route grid owns
-`board | tray-resizer | tray`. The Galaxy Arcade tablet/desktop composition requires
-`control rail | board | tray`, so the toolbar must be lifted into the puzzle route grid.
+Today `PuzzleToolbar` is nested inside `PuzzleBoardPanel`, while the route owns
+`board | tray-resizer | tray`. Galaxy Arcade requires `rail | board | tray`, so the toolbar moves to
+`puzzle/[id]/+page.svelte`.
 
-This is one planned composition refactor, not a new layout framework:
+The board panel keeps viewport state. Only two new imperative presentation controls are exposed:
 
-- `PuzzleToolbar` moves from `PuzzleBoardPanel.svelte` to `puzzle/[id]/+page.svelte`.
-- `PuzzleBoardPanel` remains the owner of zoom/pan state and reference/board rendering.
-- `PuzzleBoardPanel` exposes exactly three imperative presentation controls through component
-  exports: `zoomIn()`, `zoomOut()`, and `resetView()`.
-- The route binds the panel instance with `bind:this` and wires toolbar zoom/reset callbacks to those
-  exports. The route does **not** adopt zoom or pan state.
-- Existing `viewResetVersion` behavior remains valid for route-driven reset events that already
-  exist; the imperative methods are only the user-control seam needed after lifting the toolbar.
+- `zoomIn()`
+- `zoomOut()`
 
-No other `PuzzleBoardPanel` state is promoted upward.
+`FIT` does **not** get a third imperative reset seam. The route already owns
+`boardViewResetVersion`; the lifted toolbar invokes the existing route reset path and the panel
+continues resetting from that signal.
+
+No zoom or pan state moves into the route.
+
+### Deliberate HPA-217 reversal
+
+HPA-217 hid Fit and Pause behind `MORE` on phone because the old toolbar was a horizontal/wrapping
+row that consumed board **height**. Galaxy Arcade moves high-frequency controls into a vertical
+right rail, so direct Fit and Pause consume reserved **width** instead. The earlier product cut is
+therefore intentionally reversed for the canonical phone layout, not forgotten.
+
+At 390×844 these actions are direct:
+
+- Hint
+- Reference
+- Undo
+- Fit
+- Pause
+
+`MORE` remains available for lower-frequency actions when needed. The shared E2E helper keeps its
+fallback behavior for narrower/noncanonical layouts, while the 390×844 test explicitly proves the
+direct Pause path.
 
 ## Visual language
 
 ### Palette and typography
 
-Retune the current `layout.css` token system instead of creating a second theme:
+Retune the existing token system rather than creating a second theme:
 
 - primary ground: `#0a0620`
 - elevated surface: approximately `#150d33`
@@ -106,29 +128,30 @@ Retune the current `layout.css` token system instead of creating a second theme:
 - cyan primary: `#3affff` / `#00b4d8`
 - magenta accent: `#ff2ea6` / `#ff5cc0`
 - gold accent: `#ffcc00` / `#ffe06b`
-- success: retain the existing green semantic token
+- success: existing green semantic token
 - body hierarchy: white/lavender with Rajdhani rather than tiny mono copy everywhere
 
-Keep Orbitron for short display/numeric emphasis, Rajdhani for normal UI copy, and Share Tech Mono
-only where mono metadata is useful.
+Keep Orbitron, Rajdhani, and Share Tech Mono, but stop loading them from the Google Fonts runtime
+CDN. Bundle them locally through Fontsource so functional tests and visual baselines use the same
+font bytes without a network stub.
 
 Remove the full-screen CRT/scanline overlay. The canonical mock uses radial glow blooms rather than
 scanlines.
 
 ### Candy controls
 
-Primary actions use a rounded cyan glossy treatment with a hard lower edge/shadow. Secondary actions
+Primary actions use rounded cyan glossy treatment with a hard lower edge/shadow. Secondary actions
 use dark glass/indigo surfaces. Gold is reserved for hint/reward emphasis. Magenta is used for wrong
 placement and destructive emphasis, not as a generic secondary color.
 
-Icon-only controls retain stable textual `aria-label`s, pressed state, disabled state, focus-visible
-state, and minimum 44px coarse-pointer targets.
+Icon-only controls retain stable textual `aria-label`s, pressed/disabled state, focus-visible state,
+and 44px coarse-pointer targets.
 
 ## Closed visual vocabularies
 
 ### Difficulty gems
 
-Use existing `PuzzleDifficulty` values from `@perseus/types`; do not redeclare the domain union.
+Use `PuzzleDifficulty` from `@perseus/types`; do not redeclare it.
 
 | Difficulty | Visual | Accent |
 | --- | --- | --- |
@@ -136,15 +159,13 @@ Use existing `PuzzleDifficulty` values from `@perseus/types`; do not redeclare t
 | `normal` | 2 gems + piece count | magenta |
 | `hard` | 3 gems + piece count | gold |
 
-`DifficultyGems.svelte` is presentational only. Screen readers still receive `Easy`, `Normal`, or
-`Hard` in the accessible label even when the visible word is omitted.
+`DifficultyGems.svelte` is presentational only. Accessible labels still say Easy/Normal/Hard.
 
 ### Category icons
 
-`CategoryBadge.svelte` is the **only** category-to-icon mapping site. `CategoryFilter` reuses
-`CategoryBadge` in compact/icon mode instead of creating a second icon table.
+`CategoryBadge.svelte` is the **only** `PuzzleCategory -> icon` mapping site.
 
-| `PuzzleCategory` | Icon metaphor | Accent family |
+| Category | Icon metaphor | Accent family |
 | --- | --- | --- |
 | `Animals` | paw | amber/gold |
 | `Nature` | leaf | green |
@@ -154,9 +175,11 @@ Use existing `PuzzleDifficulty` values from `@perseus/types`; do not redeclare t
 | `Food` | plate/fork | orange |
 | `Travel` | compass | sky/cyan |
 
-Icons are inline SVG and decorative; the category name remains the accessible name. Existing
-`CATEGORY_COLORS` may be retuned/replaced by token-backed classes, but callers do not define their
-own category visuals.
+Icons are inline SVG and decorative. Compact mode keeps the category name as `sr-only` text so the
+radio label remains named. `CATEGORY_ALL` is not a `PuzzleCategory`; `CategoryFilter` renders its
+All control directly rather than routing it through `CategoryBadge`.
+
+The current `CATEGORY_COLORS` constant is obsolete and removed rather than retuned.
 
 ### Progress rings
 
@@ -166,17 +189,17 @@ comes from current placed count / total pieces.
 
 ### Completion stars
 
-Stars are a deterministic **presentation-only** summary over data the completion dialog already
-receives. They are never written to saves, APIs, progression, or stats.
+Stars are a deterministic **presentation-only** summary over existing dialog data:
 
 | Stars | Rule |
 | --- | --- |
-| 3 | `standard_timed` or `rotation_timed`, `hintsUsed === 0`, and `incorrectAttempts === 0` |
-| 2 | any timed result (`standard_timed`, `rotation_timed`, or `assisted_timed`) that is not a 3-star result |
+| 3 | competitive timed result, `hintsUsed === 0`, `incorrectAttempts === 0` |
+| 2 | any other timed result |
 | 1 | `relaxed` |
 
-`PuzzleCompletionDialog` owns this mapping in one local helper/derived value. Awards/mastery remain
-separate truthful data and are not used to silently increase or decrease the star count.
+The implementation reuses the dialog's existing `competitiveTimedResult` derived value instead of
+encoding `standard_timed || rotation_timed` a second time. Stars are never written to saves, APIs,
+progression, or stats.
 
 ## Player application shell
 
@@ -185,17 +208,15 @@ Create one thin `ArcadeShell.svelte` for non-puzzle, non-admin player routes.
 ### Exact breakpoint
 
 The persistent desktop sidebar appears at **`min-width: 1440px`** only. Below 1440px the shell uses
-compact header/navigation chrome.
+compact chrome.
 
-This number is intentionally separate from gameplay board tiers. It guarantees:
-
-- canonical 1080×810 tablet gallery gets the full content width
-- canonical 1440×900 desktop gets the 232px sidebar
-- Task 1 and Task 3 cannot choose different shell breakpoints
+This requirement is tested from rendered CSS at 1439px and 1440px using the repository's existing
+`page.viewport()` + `getComputedStyle()` browser-test pattern. Do not add a data attribute that only
+repeats the breakpoint number.
 
 ### Desktop contents
 
-At ≥1440px:
+At >=1440px:
 
 - 232px sidebar
 - Perseus brand
@@ -205,278 +226,343 @@ At ≥1440px:
 - Quick
 - Profile/sign-in state
 - authenticated score and rank near the foot
-- sign-out available but visually secondary
+- sign-out visually secondary
 
-`+layout.svelte` reuses the existing `getPlayerProgression()` call after authenticated state is
-known. No progression store is added. Failure to load score/rank is non-blocking.
+### Progression refresh
 
-`/puzzle/*` and `/admin` bypass the player shell.
+Adding score/rank to the shell creates a **new** `getPlayerProgression()` call site; it is not an
+existing root-layout request.
+
+Keep it route-local to `+layout.svelte` rather than adding a store. The request is keyed to the
+current pathname while the authenticated player shell is visible, with an `AbortController` for
+superseded navigation. Returning from a completed puzzle to Arcade/Profile therefore refetches and
+shows fresh progression.
+
+`/profile` already fetches progression for its own page content. A direct/profile navigation may
+therefore issue two progression reads; that small duplicate is accepted explicitly to avoid adding
+shared progression state solely for deduplication.
+
+`/puzzle/*` and `/admin` bypass the player shell and do not trigger the shell progression request.
 
 ## Gallery
 
-Preserve all existing gallery behavior: puzzle fetch, 300ms debounced search, category filtering,
-cursor pagination, quick puzzle discovery, per-variant saved progress, newest resumable session,
-all-saved-progress dialog, discard flow, and loading/error/empty states.
+Preserve puzzle fetch, 300ms search debounce, category filtering, cursor pagination, quick puzzle
+discovery, per-variant saved progress, newest resumable session, all-saved-progress dialog, discard
+flow, and loading/error/empty states.
 
 Use one `PuzzleCard` implementation across form factors.
 
 ### Phone — 2a
 
-Canonical 393×852:
+Implementation viewport 390×844:
 
 - compact shell/header
-- one-column scrolling art-first feed
+- one-column art-first feed
 - resume banner with progress ring and one cyan resume action
-- square dominant artwork
+- dominant square art
 - icon category chip
 - title + compact progress/best/mastery data
 - gem difficulty actions
 
 ### Landscape tablet — 2d
 
-Canonical 1080×810:
+At 1080×810:
 
 - compact shell; no 232px sidebar
-- three-column square poster wall
+- **exactly three** poster columns
 - full-width resume strip
 - compact category/search controls
 
-Portrait 768×1024 remains supported and may use a different intermediate column count as needed;
-canonical parity is required at 1080×810.
-
 ### Desktop — 3a
 
-Canonical 1440×900:
+At 1440×900:
 
 - 232px shell sidebar
-- three-column poster wall in the content region
+- **exactly three** poster columns
 - search/categories across the top
 - wide resume banner with ~74px ring
 - score/rank in sidebar
 
-## Gameplay
+The three-column rule at 1080 and 1440 is asserted from `getComputedStyle(...).gridTemplateColumns`,
+not left to screenshot review.
 
-All action semantics remain wired to the existing session/orchestration methods.
+## Gameplay layout metrics
 
-### One toolbar tree
+The new rail is part of the measured gameplay workspace and must be represented in the math.
 
-Keep one `PuzzleToolbar` DOM/action tree and its roving-focus logic. Do not create separate mobile
-and desktop toolbars.
-
-Phone must expose these high-frequency actions directly without opening overflow:
-
-- Hint
-- Reference/peek affordance
-- Undo
-- Fit/reset view
-- Pause
-
-`MORE` is **not deleted as a product requirement**. It may remain on phone only for low-frequency
-actions such as redo, zoom in/out, rotation, or setup when showing every action would reduce board
-usable space. Tablet and desktop expose the complete action set directly in the rail.
-
-This preserves the responsive-toolbar reason for the existing overflow while still matching the
-mock's direct high-frequency rail.
-
-### Phone — 2b
-
-Canonical 393×852; regression viewport 390×844:
-
-- full-screen/full-bleed board focal surface
-- compact floating HUD with clock, pieces remaining, progress ring
-- right rail with direct high-frequency actions
-- bottom floating tray sheet
-- magenta rejected-placement feedback
-
-Extend the current tray-local `drawerOpen` presentation state into:
+`puzzleLayout.ts` owns:
 
 ```ts
-type MobileSheetState = 'peek' | 'half' | 'full';
+export const GAMEPLAY_RAIL_WIDTH = {
+  small: 56,
+  medium: 56,
+  large: 88,
+  'extra-large': 96
+} as const;
+
+export const MOBILE_SHEET_HEIGHT = {
+  peek: 140,
+  half: 300,
+  full: 528
+} as const;
 ```
 
-Targets:
+The same rail width is subtracted from:
 
-- `peek`: 140px
-- `half`: 300px default
-- `full`: 528px
-- handle cycle: `peek -> half -> full -> peek`
-- hint reveal raises the tray to at least `half` before scrolling the hinted piece into view
+- small/medium horizontal board reserve
+- desktop `desktopWidthCap`
+- `clampTrayWidth` so the remaining board column still satisfies `DESKTOP_BOARD_MIN_WIDTH`
 
-Sheet state is never serialized.
+The half-sheet constant is the small/medium vertical reserve; the board metric must not silently
+hardcode another `300` with a different owner.
 
-Before finalizing phone toolbar geometry, tests must prove at 390×844:
+Tests pin the rail-aware board/tray invariant at 1080 and 1440: after tray clamping,
 
-- the 6×8 portrait board keeps a useful cell-size range (36–48px)
-- the board remains visible with the default half sheet
-- the default half sheet is visible and usable
-- the five high-frequency actions are reachable without opening `MORE`
-- all low-frequency actions remain keyboard/touch reachable, either directly or through overflow
+```text
+layout width - rail - tray - separator >= DESKTOP_BOARD_MIN_WIDTH
+```
 
-Do not replace overflow with a scrollable icon rail that steals the board height.
+and the reported board metric never exceeds the actual board column.
 
-### Landscape tablet — 2e
-
-Canonical 1080×810:
-
-- ~88px left toolbar rail
-- board centered
-- docked right tray
-- default tray width approximately 300px
-- arbitrary aspect/grid sizing stays dynamic
-
-Portrait tablet may use the stacked phone-style tray if docking would starve the board.
-
-### Desktop — 3b
-
-Canonical 1440×900:
-
-- ~96px left rail
-- centered board
-- `DESKTOP_TRAY_BASE_WIDTH` becomes **352px**
-- redo and full action set visible
-
-Mock 48/72/84px cells are fixture-specific visual targets, not constants.
-
-### Board metrics
-
-Keep the current tiers:
+Keep the current viewport tiers:
 
 - small `<640`
 - medium `<1024`
 - large `<1440`
 - extra-large `>=1440`
 
-`puzzleLayout.ts` remains the only JavaScript board-metric owner. CSS may use orientation for
-composition but must not duplicate board-size calculations in another service.
+Mock cell sizes remain fixture-specific targets, not constants.
+
+### Tiered docked tray defaults
+
+A 300px tablet tray must be reachable. The base width is therefore tier-aware:
+
+- large / 1080-class docked layout: **300px base**
+- extra-large / desktop: **352px base**
+
+Existing coarse-puzzle widening may still produce a wider tray when needed; the 300/352 values are
+base floors, not hard maximums.
+
+## Phone gameplay — 2b
+
+At 390×844:
+
+- board is the focal surface
+- floating HUD shows clock, pieces remaining, progress ring
+- direct right rail exposes Hint/Reference/Undo/Fit/Pause
+- bottom tray defaults to `half`
+- rejected placement uses magenta
+
+### Tri-state sheet semantics
+
+Extend private `drawerOpen` to:
+
+```ts
+type MobileSheetState = 'peek' | 'half' | 'full';
+```
+
+The sheet handle is no longer a binary disclosure, so it does **not** use `aria-expanded`.
+It is a plain button with `aria-controls` and a next-action label:
+
+- `peek`: `Expand piece tray to half`
+- `half`: `Expand piece tray to full`
+- `full`: `Collapse piece tray to peek`
+
+After a transition, `PuzzleInventoryPanel` calls an optional presentation callback supplied by the
+route, and the route sends `Piece tray: peek/half/full.` through the existing gameplay announcer.
+Sheet state is never persisted.
+
+Hint reveal raises the sheet to at least half before scrolling the hinted piece into view.
+
+### Phone proof
+
+Rendered E2E proves geometry rather than mere DOM visibility:
+
+- sheet root reports `data-sheet-state="half"`
+- board and sheet bounding boxes do not overlap in the usable layout
+- board top remains on-screen
+- all five direct actions have boxes and are reachable without opening `MORE`
+- one visible enabled toolbar action remains the roving `tabindex="0"` stop
+- Pause is clicked directly at 390×844 and opens the pause dialog
+
+## Landscape tablet gameplay — 2e
+
+At 1080×810:
+
+- ~88px left rail
+- centered board
+- docked right tray with 300px base floor
+- dynamic arbitrary-grid/aspect sizing
+
+Portrait tablet may use the stacked phone-style sheet when docking would starve the board.
+
+## Desktop gameplay — 3b
+
+At 1440×900:
+
+- ~96px left rail
+- centered board
+- 352px tray base floor
+- full action set visible including redo
 
 ## Completion
 
-Keep one `PuzzleCompletionDialog.svelte`.
-
-Add `referenceImageUrl: string | null`, sourced from the already-loaded
-`LoadedPuzzleSource.resolveReferenceImage()` result. No extra fetch is introduced.
+Keep one `PuzzleCompletionDialog.svelte` and add `referenceImageUrl: string | null` from the
+already-loaded `LoadedPuzzleSource.resolveReferenceImage()` result. No extra fetch.
 
 Preserve focus trap, Escape/dismiss, result class, elapsed/best time, local failure state, server
 retry, clear points, achievements, mastery, family rank, Play Again, and Back to Arcade.
 
-- phone 2c: finished art, star summary, large result/time, four compact stat tiles
-- tablet 2f: two columns; ~396px art for the mock fixture; no unnecessary scrolling
-- desktop 3c: large two-column/result-over-board treatment; ~504px art; remove the 24rem large-screen cap
+- phone 2c: finished art, stars, large result/time, four compact stats
+- tablet 2f: two columns; ~396px art for the mock fixture
+- desktop 3c: large two-column result; ~504px art; remove 24rem large-screen cap
 
 Do not rename Back to Arcade to `NEXT`.
 
 ## Admin — canonical 4a
 
-Keep admin route-local tabs and existing panel data ownership.
+The mock shows counts for both sidebar tabs. To preserve that parity without moving data ownership,
+both existing panels mount once when `/admin` loads:
+
+- `AdminPuzzlesPanel active={activeTab === 'puzzles'}`
+- `PlayerAccessPanel active={activeTab === 'players'}`
+
+Each panel performs its normal initial read once and reports its list length through optional
+`onCountChange(count)`. This intentionally makes Player Access eager on the initial Missions view;
+the small extra admin-only read is accepted for the visible count.
+
+`AdminPuzzlesPanel.active` gates its processing poll interval, so an inactive hidden panel does not
+poll in the background. The inactive tabpanel remains mounted but `hidden`/inert to users.
+
+No duplicate fetch of the same panel data is added.
 
 At 1440×900:
 
 - 232px admin sidebar
-- Missions + live count
-- Player access + live count
+- Missions + count
+- Player access + count
 - Upload
 - View arcade
-- selected tool in the content column
+- selected panel in content
 
-Counts come from the lists the panels already loaded. Each panel exposes optional
-`onCountChange(count)`; the route stores display counts only. No second fetch.
-
-Mission rows retain search/filter/paging/polling/preview/delete/session-cleanup behavior and become:
+Mission rows keep search/filter/paging/polling/preview/delete/session cleanup and become:
 
 - ~60px thumbnail/status placeholder
 - mission/category text
-- passive dot + status text
+- passive status dot + text
 - three `DifficultyGems`
 - accessible preview icon
 - accessible delete icon
 - delete is the only red row action
 
-Player Access retains add/remove behavior and adopts readable 13–15px Rajdhani tool styling.
-
-Admin parity is desktop-only because the board defines 4a only at desktop size; smaller admin
-layouts must remain functional but are not pixel-parity targets.
+Player Access keeps add/remove behavior and uses readable 13–15px Rajdhani.
 
 ## Unmocked routes
 
 Leaderboard, Profile, Quick Puzzle, Upload, Login, and Error keep their current information
-architecture. They inherit the new tokens/shell and receive only spacing/readability fixes required
-to avoid overlap or broken shared controls.
+architecture. They inherit the new tokens/shell and receive only spacing/readability fixes needed to
+avoid overlap or broken shared controls.
 
 ## Visual-regression contract
 
-Visual screenshots are a **manual parity lane**, not a normal smoke gate.
+Visual screenshots are a **manual parity lane**, not a smoke gate.
+
+### Local fonts
+
+Task 1 replaces the remote Google Fonts import with locally bundled Fontsource packages for
+Orbitron, Rajdhani, and Share Tech Mono. The existing gameplay-E2E Google Fonts stub is then deleted;
+there is no `PERSEUS_E2E_VISUAL` flag.
 
 ### Deterministic data/art
 
 `ui-redesign-visual.spec.ts` must:
 
-- explicitly fulfill gallery/admin JSON
-- explicitly fulfill `/api/puzzle-families/:id/thumbnail` with the checked-in
-  `e2e/fixtures/test-image.jpg`
-- seed a deterministic saved session for gallery cases so the canonical resume banner is present
-- use the existing deterministic gameplay harness for gameplay/completion cases
-- wait for `document.fonts.ready` before every capture
-- use reduced motion for every capture
+- fulfill gallery/admin JSON locally
+- fulfill gallery/admin thumbnail requests with checked-in `e2e/fixtures/test-image.jpg`
+- seed saved progress so the gallery resume banner exists
+- use the deterministic gameplay harness for gameplay/completion
+- wait for `document.fonts.ready` and all rendered images before capture
+- emulate reduced motion
+- use `maxDiffPixelRatio: 0.005`
 
-### Font handling
+### Correct device contexts
 
-The gameplay E2E fixture currently stubs Google Fonts for offline-safe functional tests. Add a
-`PERSEUS_E2E_VISUAL=1` escape in `e2e/support/test.ts` so the manual visual lane does not install
-that font stub. Functional lanes keep their current offline-safe behavior.
+The manual visual lane reuses Chromium but creates context-appropriate describe blocks:
+
+- phone: `390×844`, `hasTouch: true`, `isMobile: true`
+- landscape tablet: `1080×810`, `hasTouch: true`, `isMobile: true`
+- desktop/admin: `1440×900`, desktop pointer semantics
+
+This ensures coarse-pointer CSS is represented in phone/tablet baselines.
 
 ### Lane isolation
 
-Add scripts in `apps/web/package.json`:
+- normal `test:e2e` excludes `@visual`
+- `test:e2e:visual` runs `@visual` with one worker on Chromium
+- no screenshot update command is added to CI
 
-- normal `test:e2e` excludes both `@extended` and `@visual`
-- `test:e2e:visual` sets `PERSEUS_E2E_VISUAL=1`, selects `@visual`, pins
-  `chromium-desktop`, and uses one worker
+Behavioral tests must be green before candidate baselines are generated.
 
-The visual spec changes viewport size inside the single Chromium project for 393×852, 1080×810,
-and 1440×900 captures. No extra Playwright project is required.
+## Testing and acceptance
 
-Each screenshot uses an explicit small `maxDiffPixelRatio` (0.005) so antialiasing noise does not
-mask structural differences or make the lane unusably exact.
+### Functional contracts
 
-Baselines are generated/updated only after all functional gates are green and every candidate is
-manually compared side-by-side with its canonical mock variant.
+Keep current unit/E2E coverage for:
 
-## Review gates
+- search/category/pagination/quick/resume/discard
+- gameplay placement/selection/rejection
+- toolbar roving focus and shortcuts
+- reference hold/toggle
+- inventory roving focus/filter/hint behavior
+- undo/redo/rotation/pause/setup
+- completion focus/actions/retry/awards
+- admin filter/poll/delete/allowlist behavior
+- portrait-tablet support
 
-### Gate A — mandatory after gameplay
+`apps/web/src/routes/page.svelte.spec.ts` is explicitly part of the gallery regression set.
 
-After Tasks 1–4 are implemented and gameplay behavior tests are green, stop on the same PR and
-review the accumulated diff before starting completion/admin work. Gate A specifically verifies:
+### Hard Gate A
 
-- shell breakpoint is exactly 1440px
-- gallery is art-first and three columns at canonical tablet/desktop sizes
-- toolbar was lifted cleanly from `PuzzleBoardPanel`
-- board-panel zoom ownership stayed local
-- 390×844 board/sheet/action invariants are green
-- keyboard/touch/announcer behavior remains green
+After Task 4, stop on the same PR and review before completion/admin work. Gate A requires:
 
-This gate replaces the reviewer's proposed two-PR split while preserving this project's one-PR
-constraint.
+- no non-web scope
+- rendered shell breakpoint tests green at 1439/1440
+- rendered gallery three-column tests green at 1080/1440
+- toolbar lifted out of `PuzzleBoardPanel`
+- board panel still owns zoom/pan
+- rail-aware layout invariants green at 1080/1440
+- 390×844 board/sheet geometry proof green
+- direct Pause path green
+- sheet state local/unpersisted with correct next-state labels/announcements
+- existing keyboard/touch/announcer tests green
 
-### Gate B — before visual baselines
+### Gate B
 
-Completion/admin/unmocked-route work must pass unit/check/lint plus smoke/a11y/extended functional
-E2E before screenshot candidates are generated. Do not bless screenshots around functional
-failures.
+Before visual baseline generation:
 
-## Acceptance
+```bash
+bun run --cwd apps/web lint
+bun run --cwd apps/web check
+bun run --cwd apps/web test:unit
+bun run --cwd apps/web test:e2e:smoke
+bun run --cwd apps/web test:e2e:a11y
+bun run --cwd apps/web test:e2e:extended
+```
 
-The work is complete only when:
+All must pass.
 
-- canonical 2a–2f, 3a–3c, and 4a composition is visually matched at target viewports
-- 3a is three columns
-- player sidebar activates only at ≥1440px
-- toolbar is a route-grid sibling of the board/tray on tablet/desktop
-- phone high-frequency actions do not require overflow
-- phone tray state remains local/unpersisted
-- arbitrary puzzle dimensions remain supported
-- completion stars follow the closed table above and remain presentation-only
-- category icons come from the single `CategoryBadge` mapping
-- admin counts use panel-owned data, not duplicate fetches
-- current behavioral/accessibility E2E contracts pass
-- visual tests run only through the manual `@visual` lane and include real deterministic art
+## Success criteria
+
+The redesign is complete when:
+
+1. 2a–2f, 3a–3c, and 4a are materially matched at the standardized target viewports.
+2. Player sidebar is hidden at 1439px and visible at 1440px by computed style.
+3. Gallery computes exactly three columns at 1080×810 and 1440×900.
+4. Rail-aware metrics preserve the 480px minimum desktop board column after tray clamping.
+5. Phone board/sheet geometry is proven at 390×844, not merely visible.
+6. Tri-state sheet semantics no longer misuse `aria-expanded`.
+7. Tablet tray can start around 300px and desktop around 352px.
+8. Shell progression refreshes after route changes without a global store.
+9. Fonts are local and visual phone/tablet captures use touch/mobile contexts.
+10. Functional behavior is green before visual baselines are approved.
+11. No game-core, persistence, API, D1, workflow, infrastructure, or NativeScript scope is added.
