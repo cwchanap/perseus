@@ -104,6 +104,22 @@ describe('/+page.svelte', () => {
 		await expect.element(page.getByText('City Skyline')).toBeVisible();
 	});
 
+	it('should render art-first cards with compact category icons and gem actions', async () => {
+		vi.mocked(fetchPuzzles).mockResolvedValue({
+			families: mockFamilies,
+			total: mockFamilies.length,
+			offset: 0,
+			limit: 20
+		});
+		render(Page);
+
+		await expect.element(page.getByTestId('puzzle-card-art').first()).toBeVisible();
+		await expect
+			.element(page.getByTestId('puzzle-card').first().getByTestId('category-badge'))
+			.toHaveAttribute('data-category-icon', 'leaf');
+		await expect.element(page.getByTestId('difficulty-action').first()).toBeVisible();
+	});
+
 	it('should show error state when fetchPuzzles fails with ApiError', async () => {
 		const { ApiError } = await import('$lib/services/api');
 		vi.mocked(fetchPuzzles).mockRejectedValue(new ApiError(500, 'internal_error', 'Server error'));

@@ -30,6 +30,17 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByText('Test Puzzle')).toBeVisible();
 	});
 
+	it('renders an art-first card with a compact category icon and three actions', async () => {
+		render(PuzzleCard, { family: { ...mockFamily, category: 'Nature' } });
+
+		await expect.element(page.getByTestId('puzzle-card-art')).toBeVisible();
+		await expect.element(page.getByTestId('puzzle-card-title')).toBeVisible();
+		await expect
+			.element(page.getByTestId('category-badge'))
+			.toHaveAttribute('data-category-icon', 'leaf');
+		await expect.element(page.getByTestId('difficulty-action').nth(2)).toBeVisible();
+	});
+
 	it('shows difficulty picker with three actions', async () => {
 		render(PuzzleCard, { family: mockFamily });
 
@@ -61,7 +72,8 @@ describe('PuzzleCard', () => {
 
 		const badge = page.getByTestId('category-badge');
 		await expect.element(badge).toBeVisible();
-		await expect.element(badge).toHaveTextContent('Animals');
+		await expect.element(badge).toHaveAttribute('aria-label', 'Animals');
+		await expect.element(badge).toHaveAttribute('data-category-icon', 'paw');
 	});
 
 	it('should render a non-clickable card with status overlay for processing families', async () => {

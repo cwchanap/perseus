@@ -146,7 +146,9 @@ test.describe('Main Gallery Page', () => {
 		await page.goto('/');
 		await expect(page.getByTestId('loading-state')).toBeHidden();
 
-		const easyLink = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' }).first();
+		const easyLink = page
+			.locator('[data-testid="difficulty-action"][data-difficulty="easy"]')
+			.first();
 		await expect(easyLink).toBeVisible();
 		await easyLink.click();
 		await expect(page).toHaveURL(new RegExp(`/puzzle/${family.variants.easy.id}`));
@@ -183,9 +185,9 @@ test.describe('Main Gallery Page', () => {
 		const actions = page.getByTestId('difficulty-action');
 		await expect(actions).toHaveCount(3);
 
-		const easy = actions.filter({ hasText: 'Easy' });
-		const normal = actions.filter({ hasText: 'Normal' });
-		const hard = actions.filter({ hasText: 'Hard' });
+		const easy = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
+		const normal = page.locator('[data-testid="difficulty-action"][data-difficulty="normal"]');
+		const hard = page.locator('[data-testid="difficulty-action"][data-difficulty="hard"]');
 
 		await expect(easy).toHaveAttribute('href', /00000000-0000-4000-8000-000000000e01/);
 		await expect(normal).toHaveAttribute('href', /00000000-0000-4000-8000-000000000e02/);
@@ -226,8 +228,8 @@ test.describe('Main Gallery Page', () => {
 		await seedApiVariantProgress(page, STANDARD_EASY_VARIANT, '1:1', 16);
 		await page.reload();
 
-		const easyRow = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' });
-		const normalRow = page.getByTestId('difficulty-action').filter({ hasText: 'Normal' });
+		const easyRow = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
+		const normalRow = page.locator('[data-testid="difficulty-action"][data-difficulty="normal"]');
 		await expect(easyRow).toContainText('CONTINUE 1/16');
 		await expect(normalRow).not.toContainText('CONTINUE');
 		const stored = await page.evaluate(
@@ -277,7 +279,7 @@ test.describe('Main Gallery Page', () => {
 		await page.reload();
 
 		await expect(page.getByTestId('continue-on-device')).toHaveCount(0);
-		const easyRow = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' });
+		const easyRow = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
 		await expect(easyRow).not.toContainText('CONTINUE');
 
 		await seedApiVariantProgress(page, variantId, '1:1', 16);
@@ -363,7 +365,7 @@ test.describe('Main Gallery Page', () => {
 
 		await expect(page.getByTestId('continue-on-device')).toContainText('Resume Fixture');
 		await expect(page.getByTestId('continue-on-device')).toContainText('1/16 PLACED');
-		const easyRow = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' });
+		const easyRow = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
 		await expect(easyRow).toContainText('CONTINUE 1/16');
 
 		await page.getByTestId('continue-on-device').getByRole('link', { name: 'CONTINUE' }).click();

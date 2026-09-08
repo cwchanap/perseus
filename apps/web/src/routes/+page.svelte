@@ -3,6 +3,7 @@
 	import { fetchPuzzles, fetchPuzzle, ApiError } from '$lib/services/api';
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
+	import ProgressRing from '$lib/components/ProgressRing.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
 	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
@@ -264,112 +265,128 @@
 <main
 	inert={discardTarget !== null || savedProgressOpen}
 	aria-hidden={discardTarget !== null || savedProgressOpen}
-	class="min-h-screen bg-(--bg-0)
-[background-image:linear-gradient(rgba(0,240,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(0,240,255,0.025)_1px,transparent_1px)]
-[background-size:48px_48px]"
+	class="min-h-screen bg-transparent"
 >
-	<div class="mx-auto max-w-[80rem] px-6 pt-8 pb-16 sm:px-8 sm:pt-10">
-		<header class="mb-12">
-			<div
-				class="h-px bg-[linear-gradient(90deg,transparent_0%,var(--accent)_30%,var(--accent)_70%,transparent_100%)] opacity-40"
-			></div>
-			<div class="flex items-end justify-between gap-4 py-5 max-sm:flex-col max-sm:items-start">
+	<div class="mx-auto max-w-[80rem] px-[18px] pt-6 pb-16 sm:px-6 sm:pt-8 md:px-8">
+		<header class="mb-6 border-b border-(--border) pb-5">
+			<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
 				<div class="shrink-0">
 					<div
-						class="mb-1 text-[0.65rem] font-(--font-mono) tracking-[0.2em] text-(--accent) opacity-60"
+						class="mb-1 text-[0.6rem] font-(--font-mono) tracking-[0.2em] text-(--accent) opacity-60"
 					>
 						// PERSEUS SYSTEM v1.0
 					</div>
 					<h1
-						class="text-[clamp(1.75rem,5vw,3.25rem)] leading-none font-(--font-display)
-font-black tracking-[0.06em] text-(--text-0) uppercase"
+						class="text-[clamp(1.6rem,4vw,2.4rem)] leading-none font-(--font-display) font-black
+						tracking-[0.06em] text-(--text-0) uppercase"
 					>
 						PUZZLE
 						<span
 							class="ml-[0.3em] text-(--accent)
-[text-shadow:0_0_20px_var(--accent),0_0_50px_var(--accent-glow-strong)]"
+							[text-shadow:0_0_20px_var(--accent),0_0_50px_var(--accent-glow-strong)]"
 						>
 							ARCADE
 						</span>
 					</h1>
 				</div>
-				<div
-					class="flex flex-col items-end gap-[0.3rem] text-right max-sm:items-start max-sm:text-left"
-				>
-					<span
-						class="text-[0.7rem] font-(--font-mono) tracking-[0.25em] text-(--text-2) uppercase"
-					>
-						SELECT YOUR MISSION
-					</span>
-					{#if total > 0}
-						<span
-							class="text-[0.7rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
-							data-testid="availability-badge"
-						>
-							{total} AVAILABLE
-						</span>
-					{/if}
-				</div>
-			</div>
-			<div
-				class="h-px bg-[linear-gradient(90deg,transparent_0%,var(--accent)_30%,var(--accent)_70%,transparent_100%)] opacity-40"
-			></div>
 
-			{#if initialLoadComplete}
-				<div class="flex flex-col gap-3 pt-5">
-					<SearchBar value={searchQuery} onInput={(v) => (searchQuery = v)} />
-					<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
-				</div>
-			{/if}
+				{#if initialLoadComplete}
+					<div
+						class="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-end"
+					>
+						<div class="min-w-0 sm:w-full sm:max-w-[26rem]">
+							<SearchBar value={searchQuery} onInput={(v) => (searchQuery = v)} />
+						</div>
+						<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
+					</div>
+				{/if}
+			</div>
+
+			<div class="mt-4 flex items-center justify-between gap-3">
+				<span class="text-[0.65rem] font-(--font-mono) tracking-[0.2em] text-(--text-2) uppercase">
+					SELECT YOUR MISSION
+				</span>
+				{#if total > 0}
+					<span
+						class="text-[0.65rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
+						data-testid="availability-badge"
+					>
+						{total} AVAILABLE
+					</span>
+				{/if}
+			</div>
 		</header>
 
 		{#if latestProgress || savedProgressCandidateIds.length > 0}
 			<section
 				data-testid="continue-on-device"
 				aria-labelledby="continue-on-device-title"
-				class="mb-8 flex flex-wrap items-center gap-x-6 gap-y-3 border border-(--accent) bg-(--bg-1)
-				px-6 py-4 [box-shadow:0_0_25px_var(--accent-glow)]"
+				class="mb-6 flex flex-wrap items-center gap-4 overflow-hidden rounded-[22px] border border-(--accent)
+				bg-(--bg-1) px-4 py-4 [box-shadow:0_12px_30px_rgba(0,0,0,0.5),0_0_0_1px_var(--accent-dim)]
+				sm:px-5"
 			>
 				{#if latestProgress}
-					<div class="min-w-40">
+					<div class="continue-progress-ring">
+						<ProgressRing
+							percent={latestProgress.pieceCount > 0
+								? (latestProgress.placedCount / latestProgress.pieceCount) * 100
+								: 0}
+							label={`${latestProgress.name} progress`}
+						/>
+					</div>
+					<div class="min-w-[10rem] flex-1">
 						<h2
 							id="continue-on-device-title"
-							class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+							class="text-[0.62rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
 						>
-							Continue on this device
+							CONTINUE ON THIS DEVICE
 						</h2>
-						<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
+						<p class="mt-1 truncate text-[1rem] font-(--font-display) font-black text-(--text-0)">
 							{latestProgress.name}
 						</p>
+						<span
+							class="mt-1 block text-[0.68rem] font-(--font-mono) tracking-[0.1em] text-(--text-1)"
+						>
+							{latestProgress.placedCount}/{latestProgress.pieceCount} PLACED
+						</span>
 					</div>
-					<span class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
-						{latestProgress.placedCount}/{latestProgress.pieceCount} PLACED
-					</span>
 					<a
 						href={resolve(`/puzzle/${latestProgress.puzzleId}`)}
-						class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-						tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
+						class="arcade-btn shrink-0 px-5 py-3 xl:min-h-[70px] xl:px-[34px] xl:text-[1.05rem]"
 					>
-						CONTINUE
+						<svg
+							class="h-5 w-5 xl:h-7 xl:w-7"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								d="M8 5.2v13.6c0 .9 1 1.5 1.8 1l10.4-6.8c.7-.5.7-1.5 0-2L9.8 4.2C9 3.7 8 4.3 8 5.2z"
+							/>
+						</svg>
+						<span>CONTINUE</span>
 					</a>
 					<button
 						type="button"
 						aria-label="Discard saved progress"
-						class="border border-(--border) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-						tracking-[0.2em] text-(--text-1) uppercase transition-colors hover:bg-(--border)"
+						class="shrink-0 border border-(--border-bright) px-4 py-3 text-[0.6rem]
+						font-(--font-display) font-bold tracking-[0.15em] text-(--text-1) uppercase transition-colors
+						hover:border-(--accent) hover:text-(--accent)"
 						onclick={() => (discardTarget = latestProgress)}
 					>
 						DISCARD
 					</button>
 				{:else}
-					<div class="min-w-40">
+					<div class="min-w-40 flex-1">
 						<h2
 							id="continue-on-device-title"
-							class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+							class="text-[0.62rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
 						>
-							Continue on this device
+							CONTINUE ON THIS DEVICE
 						</h2>
-						<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
+						<p
+							class="mt-1 truncate text-[0.95rem] font-(--font-display) font-black text-(--text-0)"
+						>
 							SAVED PROGRESS AVAILABLE
 						</p>
 					</div>
@@ -519,8 +536,8 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 			</div>
 		{:else}
 			<div
-				class="grid grid-cols-1 gap-5 motion-safe:animate-[slide-up_0.4s_ease-out]
-motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
+				class="puzzle-grid grid grid-cols-1 gap-4 motion-safe:animate-[slide-up_0.4s_ease-out]
+				motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 md:gap-5"
 				data-testid="puzzle-grid"
 			>
 				{#each families as family (family.id)}
@@ -580,3 +597,44 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		onClose={closeSavedProgress}
 	/>
 {/if}
+
+<style>
+	.continue-progress-ring {
+		display: flex;
+		width: 58px;
+		height: 58px;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+	}
+
+	@media (min-width: 80rem) {
+		.continue-progress-ring {
+			width: 74px;
+			height: 74px;
+		}
+
+		.continue-progress-ring :global(.progress-ring) {
+			transform: scale(1.276);
+		}
+	}
+
+	.puzzle-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 1rem;
+	}
+
+	@media (min-width: 40rem) {
+		.puzzle-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	@media (min-width: 48rem) {
+		.puzzle-grid {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 1.25rem;
+		}
+	}
+</style>

@@ -8,13 +8,8 @@
 </script>
 
 <div class="relative w-full">
-	<div class="pointer-events-none absolute inset-y-0 left-3 flex items-center" aria-hidden="true">
-		<svg
-			class="h-3.5 w-3.5 text-(--accent) opacity-50"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke="currentColor"
-		>
+	<div class="pointer-events-none absolute inset-y-0 left-4 flex items-center" aria-hidden="true">
+		<svg class="h-4 w-4 text-(--text-2)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 			<path
 				stroke-linecap="round"
 				stroke-linejoin="round"
@@ -30,10 +25,10 @@
 		placeholder="SEARCH MISSIONS..."
 		aria-label="Search puzzles"
 		data-testid="search-input"
-		class="w-full border border-(--border) bg-(--bg-1) py-2.5 pr-4 pl-9
-		text-[0.65rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)
+		class="w-full rounded-[20px] border border-(--border-bright) bg-[rgba(28,20,64,0.85)] py-2.5 pr-4 pl-11
+		text-[0.78rem] font-(--font-body) font-semibold tracking-[0.05em] text-(--text-1)
 		transition-[border-color,box-shadow] duration-150
-		placeholder:text-(--text-2) placeholder:opacity-40
+		placeholder:text-(--text-2) placeholder:opacity-80
 		focus:border-(--accent) focus:[box-shadow:0_0_15px_var(--accent-glow)]
 		focus:outline-none"
 	/>
