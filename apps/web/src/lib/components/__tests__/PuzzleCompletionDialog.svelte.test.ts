@@ -6,6 +6,7 @@ import PuzzleCompletionDialog from '../PuzzleCompletionDialog.svelte';
 function standardTimedProps() {
 	return {
 		puzzleName: 'Test Mission',
+		referenceImageUrl: null,
 		resultClass: 'standard_timed' as const,
 		elapsedSeconds: 75,
 		pieceCount: 12,
@@ -25,6 +26,67 @@ function standardTimedProps() {
 }
 
 describe('PuzzleCompletionDialog', () => {
+	it.each([
+		[
+			'standard timed, no hints or misses',
+			{ resultClass: 'standard_timed', hintsUsed: 0, incorrectAttempts: 0 },
+			3
+		],
+		[
+			'rotation timed, no hints or misses',
+			{ resultClass: 'rotation_timed', hintsUsed: 0, incorrectAttempts: 0 },
+			3
+		],
+		[
+			'standard timed, one hint',
+			{ resultClass: 'standard_timed', hintsUsed: 1, incorrectAttempts: 0 },
+			2
+		],
+		[
+			'standard timed, one miss',
+			{ resultClass: 'standard_timed', hintsUsed: 0, incorrectAttempts: 1 },
+			2
+		],
+		['assisted timed', { resultClass: 'assisted_timed', hintsUsed: 1, incorrectAttempts: 1 }, 2],
+		['relaxed', { resultClass: 'relaxed', elapsedSeconds: null }, 1]
+	] as const)('renders %s completion stars', async (_label, overrides, expectedStars) => {
+		render(PuzzleCompletionDialog, { ...standardTimedProps(), ...overrides });
+
+		const dialog = await page.getByTestId('celebration-modal').element();
+		expect(dialog.querySelectorAll('[data-testid="completion-star"]')).toHaveLength(expectedStars);
+	});
+
+	it('renders finished reference art and keeps completion affordances', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference',
+			awards: {
+				clearPoints: 200,
+				achievements: ['first_clear'],
+				mastery: ['hintless'],
+				puzzleRank: 3
+			}
+		});
+
+		await expect
+			.element(page.getByTestId('completion-reference-art'))
+			.toHaveAttribute('src', '/api/puzzles/test-puzzle/reference');
+		await expect.element(page.getByTestId('completion-final-time')).toBeVisible();
+		await expect.element(page.getByTestId('completion-best-time')).toBeVisible();
+		await expect.element(page.getByTestId('completion-result-label')).toBeVisible();
+		await expect.element(page.getByTestId('completion-clear-points')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'PLAY AGAIN' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'BACK TO ARCADE' })).toBeVisible();
+	});
+
+	it('renders a graceful fallback when finished reference art is unavailable', async () => {
+		render(PuzzleCompletionDialog, standardTimedProps());
+
+		await expect.element(page.getByTestId('completion-reference-fallback')).toBeVisible();
+		expect(page.getByTestId('completion-reference-art').query()).toBeNull();
+	});
+
 	it('preserves backdrop Escape, inner dialog focus, and current actions', async () => {
 		const input = standardTimedProps();
 		render(PuzzleCompletionDialog, input);

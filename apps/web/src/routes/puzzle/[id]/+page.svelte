@@ -1424,6 +1424,7 @@
 {#if showCelebration && sessionState}
 	<PuzzleCompletionDialog
 		puzzleName={puzzle?.name ?? ''}
+		referenceImageUrl={puzzleSource?.resolveReferenceImage() ?? null}
 		resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
 		elapsedSeconds={sessionState.sealedCompletion
 			? sessionState.sealedCompletion.elapsedActiveSeconds
