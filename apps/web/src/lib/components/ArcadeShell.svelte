@@ -4,6 +4,7 @@
 
 	interface ArcadeShellProps {
 		children?: Snippet;
+		showChrome?: boolean;
 		currentPath: string;
 		authStatus: 'loading' | 'authenticated' | 'anonymous';
 		playerDisplayName: string;
@@ -24,6 +25,7 @@
 
 	let {
 		children,
+		showChrome = true,
 		currentPath,
 		authStatus,
 		playerDisplayName,
@@ -85,62 +87,12 @@
 	}
 </script>
 
-<div class="arcade-shell" data-testid="arcade-shell">
-	<aside class="arcade-sidebar" data-testid="arcade-sidebar" aria-label="Arcade sidebar">
-		<a class="brand" href={resolve('/')} aria-label="Perseus Arcade">
-			<span class="brand-mark" aria-hidden="true">
-				<svg viewBox="0 0 24 24" fill="currentColor"
-					><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /></svg
-				>
-			</span>
-			<span class="brand-name">PERSEUS</span>
-		</a>
-
-		<nav aria-label="Arcade navigation" class="sidebar-nav">
-			{#each navItems as item (item.path)}
-				<a
-					href={resolve(item.href)}
-					class={isActive(item.path) ? 'nav-link nav-link-active' : 'nav-link'}
-					aria-current={isActive(item.path) ? 'page' : undefined}
-					data-testid={`sidebar-${item.testId}`}
-				>
-					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-						><path d={item.icon} /></svg
-					>
-					<span>{item.label}</span>
-				</a>
-			{/each}
-		</nav>
-
-		<div class="sidebar-spacer"></div>
-		{#if authStatus === 'authenticated'}
-			<div class="score-card" aria-label={`Score ${score ?? 0}, rank ${rank ?? 'unranked'}`}>
-				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-					<path d="M12 2l2.9 6.3 6.9.8-5 4.7 1.3 6.8L12 17.4 5.9 20.6 7.2 13.8l-5-4.7 6.9-.8z" />
-				</svg>
-				<span data-testid="arcade-score">{score ?? '—'}</span>
-				<span class="score-spacer"></span>
-				<span data-testid="arcade-rank">#{rank ?? '—'}</span>
-			</div>
-			<div class="profile-card">
-				<a
-					href={resolve('/profile')}
-					class="profile-avatar"
-					aria-label={`Profile for ${playerDisplayName}`}
-				>
-					{initials}
-				</a>
-				<button type="button" class="logout-button" onclick={onLogout}>SIGN OUT</button>
-			</div>
-		{:else if authStatus === 'loading'}
-			<span class="auth-pending" role="status">CHECKING PLAYER…</span>
-		{:else}
-			<a href={resolve('/login')} class="sign-in-link">SIGN IN</a>
-		{/if}
-	</aside>
-
-	<div class="arcade-content">
-		<header class="compact-header" data-testid="arcade-mobile-header">
+<div
+	class={showChrome ? 'arcade-shell' : 'arcade-shell-bypass'}
+	data-testid={showChrome ? 'arcade-shell' : undefined}
+>
+	{#if showChrome}
+		<aside class="arcade-sidebar" data-testid="arcade-sidebar" aria-label="Arcade sidebar">
 			<a class="brand" href={resolve('/')} aria-label="Perseus Arcade">
 				<span class="brand-mark" aria-hidden="true">
 					<svg viewBox="0 0 24 24" fill="currentColor"
@@ -149,45 +101,102 @@
 				</span>
 				<span class="brand-name">PERSEUS</span>
 			</a>
-			<div class="compact-spacer"></div>
-			{#if authStatus === 'authenticated'}
-				<div class="compact-score" aria-label={`Score ${score ?? 0}, rank ${rank ?? 'unranked'}`}>
-					<span aria-hidden="true">★</span>
-					<span data-testid="arcade-compact-score">{score ?? '—'}</span>
-				</div>
-				<span class="compact-profile-name">{playerDisplayName || 'Player'}</span>
-				<a
-					href={resolve('/profile')}
-					class="profile-avatar compact-avatar"
-					aria-label={`Profile for ${playerDisplayName}`}
-				>
-					{initials}
-				</a>
-				<button type="button" class="compact-logout" onclick={onLogout}>SIGN OUT</button>
-			{:else if authStatus === 'anonymous'}
-				<a href={resolve('/login')} class="compact-sign-in">SIGN IN</a>
-			{/if}
-		</header>
 
-		<nav class="compact-nav" data-testid="arcade-mobile-nav" aria-label="Player navigation">
-			{#each navItems as item (item.path)}
-				<a
-					href={resolve(item.href)}
-					class={isActive(item.path) ? 'compact-nav-link nav-link-active' : 'compact-nav-link'}
-					aria-current={isActive(item.path) ? 'page' : undefined}
-					data-testid={item.testId}
-				>
-					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-						><path d={item.icon} /></svg
+			<nav aria-label="Arcade navigation" class="sidebar-nav">
+				{#each navItems as item (item.path)}
+					<a
+						href={resolve(item.href)}
+						class={isActive(item.path) ? 'nav-link nav-link-active' : 'nav-link'}
+						aria-current={isActive(item.path) ? 'page' : undefined}
+						data-testid={`sidebar-${item.testId}`}
 					>
-					<span>{item.label}</span>
-				</a>
-			{/each}
-		</nav>
+						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+							><path d={item.icon} /></svg
+						>
+						<span>{item.label}</span>
+					</a>
+				{/each}
+			</nav>
 
-		<main class="arcade-page">
+			<div class="sidebar-spacer"></div>
+			{#if authStatus === 'authenticated'}
+				<div class="score-card" aria-label={`Score ${score ?? 0}, rank ${rank ?? 'unranked'}`}>
+					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+						<path d="M12 2l2.9 6.3 6.9.8-5 4.7 1.3 6.8L12 17.4 5.9 20.6 7.2 13.8l-5-4.7 6.9-.8z" />
+					</svg>
+					<span data-testid="arcade-score">{score ?? '—'}</span>
+					<span class="score-spacer"></span>
+					<span data-testid="arcade-rank">#{rank ?? '—'}</span>
+				</div>
+				<div class="profile-card">
+					<a
+						href={resolve('/profile')}
+						class="profile-avatar"
+						aria-label={`Profile for ${playerDisplayName}`}
+					>
+						{initials}
+					</a>
+					<button type="button" class="logout-button" onclick={onLogout}>SIGN OUT</button>
+				</div>
+			{:else if authStatus === 'loading'}
+				<span class="auth-pending" role="status">CHECKING PLAYER…</span>
+			{:else}
+				<a href={resolve('/login')} class="sign-in-link">SIGN IN</a>
+			{/if}
+		</aside>
+	{/if}
+
+	<div class="arcade-content">
+		{#if showChrome}
+			<header class="compact-header" data-testid="arcade-mobile-header">
+				<a class="brand" href={resolve('/')} aria-label="Perseus Arcade">
+					<span class="brand-mark" aria-hidden="true">
+						<svg viewBox="0 0 24 24" fill="currentColor"
+							><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /></svg
+						>
+					</span>
+					<span class="brand-name">PERSEUS</span>
+				</a>
+				<div class="compact-spacer"></div>
+				{#if authStatus === 'authenticated'}
+					<div class="compact-score" aria-label={`Score ${score ?? 0}, rank ${rank ?? 'unranked'}`}>
+						<span aria-hidden="true">★</span>
+						<span data-testid="arcade-compact-score">{score ?? '—'}</span>
+					</div>
+					<span class="compact-profile-name">{playerDisplayName || 'Player'}</span>
+					<a
+						href={resolve('/profile')}
+						class="profile-avatar compact-avatar"
+						aria-label={`Profile for ${playerDisplayName}`}
+					>
+						{initials}
+					</a>
+					<button type="button" class="compact-logout" onclick={onLogout}>SIGN OUT</button>
+				{:else if authStatus === 'anonymous'}
+					<a href={resolve('/login')} class="compact-sign-in">SIGN IN</a>
+				{/if}
+			</header>
+
+			<nav class="compact-nav" data-testid="arcade-mobile-nav" aria-label="Player navigation">
+				{#each navItems as item (item.path)}
+					<a
+						href={resolve(item.href)}
+						class={isActive(item.path) ? 'compact-nav-link nav-link-active' : 'compact-nav-link'}
+						aria-current={isActive(item.path) ? 'page' : undefined}
+						data-testid={item.testId}
+					>
+						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+							><path d={item.icon} /></svg
+						>
+						<span>{item.label}</span>
+					</a>
+				{/each}
+			</nav>
+		{/if}
+
+		<div class="arcade-page">
 			{#if children}{@render children()}{/if}
-		</main>
+		</div>
 	</div>
 </div>
 
@@ -200,6 +209,10 @@
 			radial-gradient(circle at 92% 12%, rgba(0, 240, 255, 0.16), transparent 36%),
 			radial-gradient(circle at 60% 104%, rgba(255, 204, 0, 0.1), transparent 42%);
 		color: var(--text-0);
+	}
+
+	.arcade-shell-bypass {
+		display: contents;
 	}
 
 	.arcade-sidebar {
