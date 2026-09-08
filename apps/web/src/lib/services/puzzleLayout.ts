@@ -30,9 +30,22 @@ const TIER_LONG_EDGE: Record<PuzzleBoardViewportTier, number> = {
 const MIN_BOARD_CELL_SIZE = 24;
 
 export const DESKTOP_TRAY_MIN_WIDTH = 300;
-export const DESKTOP_TRAY_BASE_WIDTH = 360;
+export const DESKTOP_TRAY_BASE_WIDTH = 352;
 export const DESKTOP_BOARD_MIN_WIDTH = 480;
 export const DESKTOP_TRAY_SEPARATOR_WIDTH = 20;
+
+export const GAMEPLAY_RAIL_WIDTH = {
+	small: 56,
+	medium: 56,
+	large: 88,
+	'extra-large': 96
+} as const;
+
+export const MOBILE_SHEET_HEIGHT = {
+	peek: 140,
+	half: 300,
+	full: 528
+} as const;
 
 const DESKTOP_TRAY_TARGET_COLUMNS = 3;
 const DESKTOP_TRAY_CHROME_WIDTH = 42;
@@ -44,13 +57,19 @@ export function getPuzzleBoardViewportTier(width: number): PuzzleBoardViewportTi
 	return 'extra-large';
 }
 
+export function getGameplayRailWidth(viewportWidth: number): number {
+	return GAMEPLAY_RAIL_WIDTH[getPuzzleBoardViewportTier(viewportWidth)];
+}
+
 function getWidthReserve(tier: PuzzleBoardViewportTier): number {
-	return tier === 'small' ? 32 : 64;
+	if (tier === 'small' || tier === 'medium') {
+		return GAMEPLAY_RAIL_WIDTH[tier] + (tier === 'small' ? 32 : 64);
+	}
+	return 64;
 }
 
 function getHeightReserve(tier: PuzzleBoardViewportTier): number {
-	if (tier === 'small') return 300;
-	if (tier === 'medium') return 280;
+	if (tier === 'small' || tier === 'medium') return MOBILE_SHEET_HEIGHT.half;
 	return 260;
 }
 
@@ -89,18 +108,16 @@ export function getDefaultPuzzleTrayWidth(
 	puzzle: PuzzleBoardSource,
 	viewport: PuzzleViewportSize
 ): number {
-	const { width } = getPreferredBoardWidth(puzzle, viewport);
+	const { tier, width } = getPreferredBoardWidth(puzzle, viewport);
 	const cellSize = width / Math.max(1, puzzle.gridCols);
-	return Math.max(
-		DESKTOP_TRAY_BASE_WIDTH,
-		cellSize * DESKTOP_TRAY_TARGET_COLUMNS + DESKTOP_TRAY_CHROME_WIDTH
-	);
+	const baseWidth = tier === 'large' ? 300 : DESKTOP_TRAY_BASE_WIDTH;
+	return Math.max(baseWidth, cellSize * DESKTOP_TRAY_TARGET_COLUMNS + DESKTOP_TRAY_CHROME_WIDTH);
 }
 
-export function clampTrayWidth(layoutWidth: number, requestedWidth: number): number {
+export function clampTrayWidth(layoutWidth: number, requestedWidth: number, railWidth = 0): number {
 	const maxTrayWidth = Math.max(
 		DESKTOP_TRAY_MIN_WIDTH,
-		layoutWidth - DESKTOP_BOARD_MIN_WIDTH - DESKTOP_TRAY_SEPARATOR_WIDTH
+		layoutWidth - railWidth - DESKTOP_BOARD_MIN_WIDTH - DESKTOP_TRAY_SEPARATOR_WIDTH
 	);
 	return Math.min(Math.max(requestedWidth, DESKTOP_TRAY_MIN_WIDTH), maxTrayWidth);
 }
@@ -124,12 +141,17 @@ export function getResponsivePuzzleBoardMetrics(
 	// width is unavailable (pre-measurement), fall back to the viewport width
 	// to preserve the prior behavior until the ResizeObserver fires.
 	const desktopCapSource = layoutWidth ?? viewport.width;
+	const railWidth = getGameplayRailWidth(viewport.width);
 	const desktopWidthCap =
 		tier === 'small' || tier === 'medium'
 			? Number.POSITIVE_INFINITY
 			: Math.max(
 					MIN_BOARD_CELL_SIZE * gridCols,
-					desktopCapSource - getWidthReserve(tier) - trayWidth - DESKTOP_TRAY_SEPARATOR_WIDTH
+					desktopCapSource -
+						railWidth -
+						getWidthReserve(tier) -
+						trayWidth -
+						DESKTOP_TRAY_SEPARATOR_WIDTH
 				);
 
 	const boardWidth = Math.max(

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
-	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import { calculateFitZoom, type PlacedPiece } from '@perseus/game-core';
@@ -12,8 +11,6 @@
 
 	const ZOOM_STEP = 0.2;
 
-	type ReferenceHoldEvent = PointerEvent | KeyboardEvent;
-
 	interface Props {
 		puzzle: Puzzle;
 		boardMetrics: ResponsivePuzzleBoardMetrics | null;
@@ -23,25 +20,11 @@
 		resolveImage: (piece: Pick<PuzzlePiece, 'id'>) => string;
 		referenceImageUrl: string | null;
 		referenceActive: boolean;
-		canUndo: boolean;
-		canRedo: boolean;
-		canOpenSetup: boolean;
-		canPause: boolean;
-		rotationEnabled: boolean;
-		rotationToggleDisabled: boolean;
 		interactionBlocked: boolean;
 		viewResetVersion: number;
 		referenceToggled: boolean;
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
-		onUndo: () => void;
-		onRedo: () => void;
-		onHint: () => void;
-		onReferenceDown: (event?: ReferenceHoldEvent) => void;
-		onReferenceUp: (event?: ReferenceHoldEvent) => void;
 		onReferenceToggle: () => void;
-		onRotationToggle: () => void;
-		onPause: () => void;
-		onOpenSetup: () => void;
 	}
 
 	let {
@@ -53,25 +36,11 @@
 		resolveImage,
 		referenceImageUrl,
 		referenceActive,
-		canUndo,
-		canRedo,
-		canOpenSetup,
-		canPause,
-		rotationEnabled,
-		rotationToggleDisabled,
 		interactionBlocked,
 		viewResetVersion,
 		referenceToggled,
 		onPiecePlaced,
-		onUndo,
-		onRedo,
-		onHint,
-		onReferenceDown,
-		onReferenceUp,
-		onReferenceToggle,
-		onRotationToggle,
-		onPause,
-		onOpenSetup
+		onReferenceToggle
 	}: Props = $props();
 
 	let boardViewportElement = $state<HTMLElement | null>(null);
@@ -90,9 +59,6 @@
 	const canPanBoard = $derived(selectedPieceId === null && zoom > minZoom + 0.001);
 	const puzzleId = $derived(puzzle.id);
 	const viewResetSignal = $derived(viewResetVersion);
-	// A declared reference with no image URL cannot be shown: REF and Peek
-	// render (hasReference gates that) but stay disabled.
-	const referenceAvailable = $derived(puzzle.hasReference === true && referenceImageUrl !== null);
 
 	$effect(() => {
 		void puzzleId;
@@ -205,6 +171,14 @@
 		setView(zoom - ZOOM_STEP);
 	}
 
+	export function zoomIn(): void {
+		handleZoomIn();
+	}
+
+	export function zoomOut(): void {
+		handleZoomOut();
+	}
+
 	function handleBoardWheel(event: WheelEvent) {
 		event.preventDefault();
 		const zoomFactor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
@@ -262,31 +236,6 @@
 <div class="board-panel">
 	<div class="panel-header">
 		<span class="panel-tag">PUZZLE BOARD</span>
-	</div>
-	<div class="board-toolbar px-4 pt-3">
-		<PuzzleToolbar
-			{onUndo}
-			{onRedo}
-			{onHint}
-			{onReferenceDown}
-			{onReferenceUp}
-			{onReferenceToggle}
-			onZoomIn={handleZoomIn}
-			onZoomOut={handleZoomOut}
-			onResetView={resetViewport}
-			{onRotationToggle}
-			{onPause}
-			{onOpenSetup}
-			{canOpenSetup}
-			{canPause}
-			{canUndo}
-			{canRedo}
-			{rotationEnabled}
-			{rotationToggleDisabled}
-			{referenceToggled}
-			{referenceAvailable}
-			hasReference={puzzle.hasReference === true}
-		/>
 	</div>
 	<div class="board-wrap">
 		<div
@@ -367,8 +316,7 @@
 			min-height: 0;
 		}
 
-		.panel-header,
-		.board-toolbar {
+		.panel-header {
 			flex-shrink: 0;
 		}
 

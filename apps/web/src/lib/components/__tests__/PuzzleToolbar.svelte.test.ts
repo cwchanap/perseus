@@ -174,14 +174,17 @@ describe('PuzzleToolbar', () => {
 			const toolbar = await page.getByTestId('puzzle-toolbar').element();
 			const moreButton = toolbar.querySelector<HTMLButtonElement>('[data-toolbar-action="more"]')!;
 
-			// Arrow to MORE so it becomes the active roving tab stop. In
-			// compact layout the visible enabled actions are HINT, REF, MORE,
-			// so two ArrowRights are needed to reach MORE.
+			// Arrow through the visible primary actions until MORE becomes the
+			// active roving tab stop.
 			const hint = await page.getByRole('button', { name: 'Hint' }).element();
 			hint.focus();
-			hint.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-			const ref = document.activeElement as HTMLButtonElement;
-			ref.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+			const actions = visibleEnabledActions();
+			const moreIndex = actions.indexOf(moreButton);
+			for (let index = 0; index < moreIndex; index += 1) {
+				(document.activeElement as HTMLButtonElement).dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+				);
+			}
 			expect(document.activeElement).toBe(moreButton);
 			await expect.poll(() => moreButton.tabIndex).toBe(0);
 
@@ -294,6 +297,7 @@ describe('PuzzleToolbar', () => {
 			const onRedo = vi.fn();
 			renderToolbar({ onRedo, canRedo: true });
 
+			await userEvent.click(page.getByLabelText('More puzzle actions'));
 			await userEvent.click(page.getByLabelText('Redo'));
 			expect(onRedo).toHaveBeenCalledOnce();
 		});

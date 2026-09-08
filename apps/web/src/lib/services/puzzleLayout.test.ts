@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	DESKTOP_TRAY_BASE_WIDTH,
+	DESKTOP_BOARD_MIN_WIDTH,
 	DESKTOP_TRAY_SEPARATOR_WIDTH,
 	clampTrayWidth,
 	getDefaultPuzzleTrayWidth,
+	GAMEPLAY_RAIL_WIDTH,
 	getPuzzleBoardViewportTier,
 	getResponsivePuzzleBoardMetrics
 } from './puzzleLayout';
@@ -112,9 +114,7 @@ describe('puzzle layout', () => {
 			gridRows: 15
 		};
 
-		expect(getDefaultPuzzleTrayWidth(dense, { width: 1280, height: 900 })).toBe(
-			DESKTOP_TRAY_BASE_WIDTH
-		);
+		expect(getDefaultPuzzleTrayWidth(dense, { width: 1280, height: 900 })).toBe(300);
 	});
 
 	it('does not narrow a coarse three-column tray to 360px', () => {
@@ -130,10 +130,35 @@ describe('puzzle layout', () => {
 		expect(getDefaultPuzzleTrayWidth(coarse, { width: 1280, height: 900 })).toBe(582);
 	});
 
+	it('uses the tiered docked tray base for a portrait puzzle', () => {
+		expect(getDefaultPuzzleTrayWidth(portraitPuzzle, { width: 1080, height: 810 })).toBe(300);
+		expect(getDefaultPuzzleTrayWidth(portraitPuzzle, { width: 1440, height: 900 })).toBe(352);
+	});
+
 	it('clamps the requested tray against board and tray minimums', () => {
 		expect(clampTrayWidth(1000, 200)).toBe(300);
 		expect(clampTrayWidth(1000, 700)).toBe(500);
 		expect(clampTrayWidth(760, 360)).toBe(300);
+	});
+
+	it('reserves the gameplay rail when clamping desktop tray width', () => {
+		const layoutWidth = 1408;
+		const railWidth = GAMEPLAY_RAIL_WIDTH['extra-large'];
+		const tray = clampTrayWidth(layoutWidth, 1000, railWidth);
+
+		expect(layoutWidth - railWidth - tray - DESKTOP_TRAY_SEPARATOR_WIDTH).toBeGreaterThanOrEqual(
+			DESKTOP_BOARD_MIN_WIDTH
+		);
+	});
+
+	it('reserves the tablet rail when clamping the 1080 layout', () => {
+		const layoutWidth = 1080;
+		const railWidth = GAMEPLAY_RAIL_WIDTH.large;
+		const tray = clampTrayWidth(layoutWidth, 1000, railWidth);
+
+		expect(layoutWidth - railWidth - tray - DESKTOP_TRAY_SEPARATOR_WIDTH).toBeGreaterThanOrEqual(
+			DESKTOP_BOARD_MIN_WIDTH
+		);
 	});
 
 	it('reduces board width when the applied desktop tray is wider', () => {
@@ -166,14 +191,15 @@ describe('puzzle layout', () => {
 		const outerViewport = { width: 1920, height: 1000 };
 		const layoutWidth = 1536;
 		const trayWidth = 720;
+		const railWidth = GAMEPLAY_RAIL_WIDTH['extra-large'];
 
 		// Without the measured layout width (prior behavior), the desktop cap
 		// is derived from the outer viewport and the board overflows the board
 		// column: boardWidth + tray + separator exceeds the layout box.
 		const uncapped = getResponsivePuzzleBoardMetrics(coarsePuzzle, outerViewport, trayWidth);
-		expect(uncapped.boardWidth + trayWidth + DESKTOP_TRAY_SEPARATOR_WIDTH).toBeGreaterThan(
-			layoutWidth
-		);
+		expect(
+			uncapped.boardWidth + trayWidth + DESKTOP_TRAY_SEPARATOR_WIDTH + railWidth
+		).toBeGreaterThan(layoutWidth);
 
 		// With the measured layout width, the board fits inside the board
 		// column (layout - tray - separator), so getFitZoom() stays at 1.
@@ -183,9 +209,9 @@ describe('puzzle layout', () => {
 			trayWidth,
 			layoutWidth
 		);
-		expect(capped.boardWidth + trayWidth + DESKTOP_TRAY_SEPARATOR_WIDTH).toBeLessThanOrEqual(
-			layoutWidth
-		);
+		expect(
+			capped.boardWidth + trayWidth + DESKTOP_TRAY_SEPARATOR_WIDTH + railWidth
+		).toBeLessThanOrEqual(layoutWidth);
 		expect(capped.boardWidth).toBeLessThan(uncapped.boardWidth);
 	});
 });

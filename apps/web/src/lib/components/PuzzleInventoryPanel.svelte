@@ -8,6 +8,7 @@
 		type Rotation
 	} from '@perseus/game-core';
 	import type { Puzzle, PuzzlePiece as PuzzlePieceModel } from '$lib/types/puzzle';
+	import { MOBILE_SHEET_HEIGHT } from '$lib/services/puzzleLayout';
 
 	interface Props {
 		puzzle: Puzzle;
@@ -25,6 +26,7 @@
 		activeFilter: InventoryFilter;
 		onFilterChange: (filter: InventoryFilter) => void;
 		onShuffle: () => void;
+		onAnnouncement?: (message: string) => void;
 	}
 
 	let {
@@ -42,7 +44,8 @@
 		onCancelSelection,
 		activeFilter,
 		onFilterChange,
-		onShuffle
+		onShuffle,
+		onAnnouncement
 	}: Props = $props();
 
 	const placedPieceIds = $derived.by(
@@ -87,10 +90,27 @@
 		return base;
 	}
 
-	// Binary drawer state. Kept private to this panel: the route owns canonical
-	// session state (selectedPieceId, tray order); the drawer's open/collapsed
-	// presentation is a purely local UI concern and is never serialized.
-	let drawerOpen = $state(true);
+	type MobileSheetState = 'peek' | 'half' | 'full';
+	let sheetState = $state<MobileSheetState>('half');
+	const sheetHeight = $derived(MOBILE_SHEET_HEIGHT[sheetState]);
+	const sheetActionLabel = $derived(
+		sheetState === 'peek'
+			? 'Expand piece tray to half'
+			: sheetState === 'half'
+				? 'Expand piece tray to full'
+				: 'Collapse piece tray to peek'
+	);
+
+	function nextSheetState(): MobileSheetState {
+		if (sheetState === 'peek') return 'half';
+		if (sheetState === 'half') return 'full';
+		return 'peek';
+	}
+
+	function cycleSheet(): void {
+		sheetState = nextSheetState();
+		onAnnouncement?.(`Piece tray: ${sheetState}.`);
+	}
 
 	// Roving tab stop: exactly one unplaced piece is sequentially tabbable,
 	// and Left/Right move the active piece through the visible tray. R
@@ -114,7 +134,10 @@
 	});
 
 	async function revealHintedPiece(pieceId: number): Promise<void> {
-		drawerOpen = true;
+		if (sheetState === 'peek') {
+			sheetState = 'half';
+			onAnnouncement?.('Piece tray: half.');
+		}
 		// PuzzleSession.doUseHint resets the canonical organization filter to
 		// 'all' before emitting hint_target and notifying subscribers, so the
 		// route observes activeFilter='all' atomically with activeHintPieceId.
@@ -185,7 +208,12 @@
 	}
 </script>
 
-<div class="inventory-panel" class:drawer-open={drawerOpen} data-testid="puzzle-inventory-panel">
+<div
+	class="inventory-panel"
+	data-testid="puzzle-inventory-panel"
+	data-sheet-state={sheetState}
+	style={`--mobile-sheet-height: ${sheetHeight}px`}
+>
 	<div class="panel-header">
 		<div class="panel-heading">
 			<span class="panel-tag">INVENTORY</span>
@@ -218,12 +246,11 @@
 				type="button"
 				class="panel-action drawer-toggle"
 				data-testid="inventory-drawer-toggle"
-				aria-label={drawerOpen ? 'Collapse inventory' : 'Open inventory'}
-				aria-expanded={drawerOpen}
+				aria-label={sheetActionLabel}
 				aria-controls="puzzle-inventory-body"
-				onclick={() => (drawerOpen = !drawerOpen)}
+				onclick={cycleSheet}
 			>
-				{drawerOpen ? 'COLLAPSE' : 'OPEN'}
+				TRAY
 			</button>
 		</div>
 	</div>
@@ -313,7 +340,7 @@
 <style>
 	.inventory-panel {
 		box-sizing: border-box;
-		max-height: 16rem;
+		max-height: none;
 		padding-bottom: env(safe-area-inset-bottom);
 		overflow: hidden;
 		background: var(--bg-1);
@@ -441,7 +468,7 @@
 		overflow: hidden;
 	}
 
-	.inventory-panel:not(.drawer-open) .inventory-body {
+	.inventory-panel[data-sheet-state='peek'] .inventory-body {
 		display: none;
 	}
 
@@ -520,7 +547,8 @@
 	@media (max-width: 1023px) {
 		.inventory-panel {
 			--piece-slot-size: clamp(3rem, 16vw, 4.5rem);
-			max-height: 20rem;
+			height: var(--mobile-sheet-height);
+			max-height: var(--mobile-sheet-height);
 		}
 	}
 
@@ -529,13 +557,12 @@
 	   regardless of local drawer state. */
 	@media (min-width: 1024px) {
 		.inventory-panel {
-			max-height: none;
 			padding-bottom: 0;
 			overflow: visible;
 		}
 
 		.inventory-body,
-		.inventory-panel:not(.drawer-open) .inventory-body {
+		.inventory-panel[data-sheet-state='peek'] .inventory-body {
 			display: flex;
 		}
 
