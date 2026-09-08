@@ -23,6 +23,16 @@
 #           # execute migration (--stack is REQUIRED in execute mode and must
 #           # end in /perseus-infrastructure/production; dry-run needs neither)
 #
+#   ./scripts/migrate-workflows-worker-state.sh --resume --stack <org>/perseus-infrastructure/production
+#           # converge a PARTIALLY-COMPLETED migration (Step 4 `pulumi up`
+#           # failed after Step 2 deleted the stale state). Detects the
+#           # partial-adoption state and runs a guarded preview → up to
+#           # finish the remaining import/create steps. Does NOT re-run
+#           # Step 2 deletion and does NOT restore the pre-migration backup
+#           # (remote mutations may have already happened). --resume also
+#           # requires --stack (production) in execute mode; combine with
+#           # --dry-run for a read-only resume preview.
+#
 # The script self-locates the repo root and cd's into packages/infrastructure
 # (the Pulumi project dir) for all pulumi commands, so it can be run from
 # anywhere.
@@ -203,11 +213,13 @@ delete_stale_state() {
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	DRY_RUN=false
+	RESUME=false
 	STACK_ARG=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--dry-run) DRY_RUN=true; shift ;;
+			--resume) RESUME=true; shift ;;
 			--stack) STACK_ARG="$2"; shift 2 ;;
 			-h|--help)
 				grep '^#' "$0" | sed 's/^# \?//'
@@ -217,23 +229,23 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		esac
 	done
 
-	# Execute mode mutates production state, so require an explicit production
-	# stack. Without --stack, pulumi operates on whichever stack is currently
-	# selected in this checkout — a cheap way to delete state from the wrong
-	# stack. The stale-name guard only proves the selected stack has a
+	# Execute AND resume modes mutate production state, so require an explicit
+	# production stack. Without --stack, pulumi operates on whichever stack is
+	# currently selected in this checkout — a cheap way to delete state from
+	# the wrong stack. The stale-name guard only proves the selected stack has a
 	# 'perseus-workflows' Worker, not that it's production (another stack from
 	# the old config can too). Require --stack ending in
-	# /perseus-infrastructure/production for execute mode; dry-run stays
-	# looser (read-only).
+	# /perseus-infrastructure/production for execute and resume modes; dry-run
+	# stays looser (read-only).
 	if [[ "$DRY_RUN" != "true" ]]; then
 		if [[ -z "$STACK_ARG" ]]; then
-			echo "ERROR: --stack is required for execute mode (one-time production migration)." >&2
+			echo "ERROR: --stack is required for execute/resume mode (one-time production migration)." >&2
 			echo "       Pass --stack <org>/perseus-infrastructure/production." >&2
 			echo "       Use --dry-run for a read-only validation without --stack." >&2
 			exit 1
 		fi
 		if [[ "$STACK_ARG" != */perseus-infrastructure/production ]]; then
-			echo "ERROR: --stack must end in '/perseus-infrastructure/production' for execute mode." >&2
+			echo "ERROR: --stack must end in '/perseus-infrastructure/production' for execute/resume mode." >&2
 			echo "       Got: $STACK_ARG" >&2
 			exit 1
 		fi
@@ -290,6 +302,103 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		echo "  Backup saved."
 	fi
 
+	# --- Resume mode: converge a partially-completed migration ----------------
+	# Use after a failed Step 4 (`pulumi up`) once Step 2 (stale-state deletion)
+	# has already finished. Pulumi does NOT roll back a failed update — it
+	# checkpoints progress as resource steps complete, so a failed `pulumi up`
+	# can leave the live 'workflows' Worker already imported (logical name
+	# 'workflows-worker' now in state with physical name 'workflows') or only
+	# some WorkerVersion/Deployment steps created. A normal rerun aborts at the
+	# Step 1 safety guards (WORKER_URN absent, or physical name 'workflows').
+	#
+	# Resume detects that partial-adoption state and runs a guarded
+	# preview → up to converge the remaining steps. It does NOT re-run Step 2
+	# (state already deleted) and does NOT restore the pre-migration backup
+	# (remote mutations may have already happened — restoring would desync
+	# state from the live Cloudflare resources).
+	if [[ "$RESUME" == "true" ]]; then
+		echo ""
+		echo "=== Resume: detect partial-adoption state ==="
+		RESUME_JSON=$("${PULUMI_CMD[@]}" stack export "${STACK_FLAGS[@]}")
+		RESUME_WORKER_URN=$(extract_urn 'workflows-worker' "$RESUME_JSON")
+		RESUME_WORKER_NAME=""
+		if [[ -n "$RESUME_WORKER_URN" ]]; then
+			RESUME_WORKER_NAME=$(worker_physical_name "$RESUME_WORKER_URN" "$RESUME_JSON")
+		fi
+
+		# Refuse if the stale 'perseus-workflows' Worker is still the managed
+		# Worker — that means Step 2 did not complete, so resume is the wrong
+		# tool. The normal flow resumes Step 2 via SKIP for already-removed URNs.
+		if [[ -n "$RESUME_WORKER_URN" && "$RESUME_WORKER_NAME" == "perseus-workflows" ]]; then
+			echo "" >&2
+			echo "ERROR: the stale 'perseus-workflows' Worker is still in state." >&2
+			echo "       Migration Step 2 (stale-state deletion) has not completed." >&2
+			echo "       --resume is for a failed Step 4 (pulumi up) AFTER Step 2 finished." >&2
+			echo "       Re-run WITHOUT --resume to continue the migration (Step 2" >&2
+			echo "       resumes via SKIP for already-removed URNs, then preview + up)." >&2
+			exit 1
+		fi
+
+		if [[ -n "$RESUME_WORKER_URN" && "$RESUME_WORKER_NAME" == "workflows" ]]; then
+			echo "  Detected: 'workflows' Worker already adopted (physical name 'workflows')."
+			echo "  Resume will converge any remaining WorkerVersion/Deployment steps."
+		elif [[ -z "$RESUME_WORKER_URN" ]]; then
+			echo "  Detected: stale 'workflows-worker' removed from state; import pending."
+			echo "  Resume will import the live 'workflows' Worker + 'perseus' Workflow"
+			echo "  and create WorkerVersion/Deployment."
+		else
+			echo "  WARNING: workflows-worker physical name is '$RESUME_WORKER_NAME'" >&2
+			echo "           (expected 'perseus-workflows' or 'workflows')." >&2
+			echo "  Proceeding with guarded resume — inspect state before continuing." >&2
+		fi
+
+		# Guarded preview (read-only). Shows what remains to converge. Does
+		# NOT restore the backup on failure — remote mutations may have already
+		# happened, so restoring the pre-migration checkpoint would desync
+		# state from live Cloudflare resources.
+		echo ""
+		echo "=== Resume: pulumi preview --diff ==="
+		echo "  Read-only. Shows remaining import + create steps."
+		if ! "${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}" --diff; then
+			echo "" >&2
+			echo "ERROR: pulumi preview failed during resume." >&2
+			echo "       State was NOT modified by preview. Do NOT restore the" >&2
+			echo "       pre-migration backup — remote mutations may have already" >&2
+			echo "       happened (that is why you are resuming)." >&2
+			echo "       Inspect the preview error, fix the program/config, and re-run:" >&2
+			echo "         $0 --resume${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
+			exit 1
+		fi
+
+		if [[ "$DRY_RUN" == "true" ]]; then
+			echo ""
+			echo "=== Resume dry run complete ==="
+			echo "Validated: partial-adoption detection + read-only preview."
+			echo "NOT validated: pulumi up (re-run without --dry-run to converge)."
+			exit 0
+		fi
+
+		# Converge. If this fails again partway, Pulumi checkpoints progress and
+		# the operator re-runs --resume (detection is idempotent).
+		echo ""
+		echo "=== Resume: pulumi up ==="
+		"${PULUMI_CMD[@]}" up "${STACK_FLAGS[@]}" -y
+
+		echo ""
+		echo "=== Resume: verify ==="
+		echo "  Preview should show no create/replace for workflows-worker or perseus-workflow."
+		"${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}"
+		echo ""
+		echo "=== Resume complete ==="
+		echo "Next steps:"
+		echo "  1. Verify the preview above shows no create/replace for the Worker/Workflow."
+		echo "  2. Remove the 'import' options from packages/infrastructure/src/workers.ts"
+		echo "     (both the Worker and the Workflow resources)."
+		echo "  3. Run 'pulumi up' again — preview must be clean (no create/replace)."
+		echo "  4. Commit the removal and deploy normally."
+		exit 0
+	fi
+
 	# Step 1: Discover URNs
 	echo ""
 	echo "=== Step 1: Discover stale URNs ==="
@@ -302,10 +411,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
 	# Safety check: at least the Worker must be in state
 	if [[ -z "$WORKER_URN" ]]; then
-		echo ""
+		echo "" >&2
 		echo "ERROR: 'workflows-worker' not found in stack state." >&2
-		echo "       It may have already been migrated. Inspect with:" >&2
-		echo "         pulumi stack --show-urns${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
+		echo "       It may have already been migrated, OR Step 2 ran and Step 4" >&2
+		echo "       (pulumi up) failed before importing the live 'workflows' Worker." >&2
+		echo "       Inspect with: pulumi stack --show-urns${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
+		echo "       If Step 4 failed partway, converge the partial update with:" >&2
+		echo "         $0 --resume${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
 		exit 1
 	fi
 
@@ -314,10 +426,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	# physical name is 'workflows' — deleting that would destroy valid state.
 	WORKER_NAME=$(worker_physical_name "$WORKER_URN" "$STACK_JSON")
 	if [[ "$WORKER_NAME" != 'perseus-workflows' ]]; then
-		echo ""
+		echo "" >&2
 		echo "ERROR: workflows-worker physical name is '$WORKER_NAME', not 'perseus-workflows'." >&2
-		echo "       The migration may have already run. Aborting to avoid deleting valid state." >&2
+		echo "       The migration may have already run, OR Step 4 (pulumi up) failed" >&2
+		echo "       after importing the live 'workflows' Worker. Aborting to avoid" >&2
+		echo "       deleting valid state." >&2
 		echo "       Inspect with: pulumi stack --show-urns${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
+		echo "       If Step 4 failed partway, converge the partial update with:" >&2
+		echo "         $0 --resume${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
 		exit 1
 	fi
 

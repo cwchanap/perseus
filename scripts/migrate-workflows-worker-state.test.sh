@@ -483,7 +483,7 @@ chmod +x "$STUB_DIR11/pulumi"
 # before any pulumi invocation.
 : > "$ARGV_LOG11"
 out=$(PATH="$STUB_DIR11:$PATH" bash "$SCRIPT" 2>&1 || true)
-if echo "$out" | grep -q "ERROR: --stack is required for execute mode"; then
+if echo "$out" | grep -q "ERROR: --stack is required for execute/resume mode"; then
 	ok "execute mode without --stack fails fast"
 else
 	fail "execute mode without --stack did not fail with the expected error"
@@ -614,6 +614,337 @@ if [[ -n "$new_backups" ]]; then
 		[[ -n "$f" ]] && rm -f "$f"
 	done <<< "$new_backups"
 fi
+
+# ---------------------------------------------------------------------------
+# Helper: build a stub `pulumi` + `bun` for --resume tests. The stub records
+# argv, answers `stack export` with a mock state file, and lets the caller
+# choose the `preview` exit code. `state delete` and `stack import` succeed
+# (so the test can assert they were NOT called — resume must not invoke
+# either). Args: <stub_dir> <argv_log> <mock_state_file> <preview_exit>
+# ---------------------------------------------------------------------------
+make_resume_stub() {
+	local dir="$1" log="$2" state="$3" preview_exit="$4"
+	cat > "$dir/pulumi" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$log"
+if [[ \$1 == "stack" && \$2 == "export" ]]; then
+	cat "$state"
+	exit 0
+fi
+if [[ \$1 == "stack" && \$2 == "import" ]]; then
+	cat > /dev/null
+	exit 0
+fi
+if [[ \$1 == "state" && \$2 == "delete" ]]; then
+	exit 0
+fi
+if [[ \$1 == "preview" ]]; then
+	exit $preview_exit
+fi
+if [[ \$1 == "up" ]]; then
+	exit 0
+fi
+exit 0
+EOF
+	chmod +x "$dir/pulumi"
+	cat > "$dir/bun" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+	chmod +x "$dir/bun"
+}
+
+# Snapshot existing state-backup files in REPO_ROOT so a test can clean up only
+# the ones it creates. Args: <repo_root>; prints the snapshot on stdout.
+snapshot_backups() {
+	find "$1" -maxdepth 1 -name 'state-backup-*.json' 2>/dev/null | sort || true
+}
+
+# Remove state-backup files in REPO_ROOT that did not exist in the given
+# snapshot. Args: <repo_root> <before_snapshot>
+cleanup_new_backups() {
+	local repo_root="$1" before="$2"
+	local after new
+	after=$(find "$repo_root" -maxdepth 1 -name 'state-backup-*.json' 2>/dev/null | sort || true)
+	new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+	if [[ -n "$new" ]]; then
+		while IFS= read -r f; do
+			[[ -n "$f" ]] && rm -f "$f"
+		done <<< "$new"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 13: --resume converges an already-adopted Worker without re-running
+# Step 2 deletion. After a failed Step 4 (`pulumi up`) that imported the live
+# 'workflows' Worker, the logical name 'workflows-worker' exists with physical
+# name 'workflows'. Resume must detect that, run guarded preview → up, and
+# NOT call `state delete` (Step 2 already ran) or `stack import` (resume never
+# restores the backup).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 13: --resume converges adopted Worker (no state delete, no restore)"
+
+STUB_DIR13=$(mktemp -d)
+ARGV_LOG13=$(mktemp)
+STATE13=$(mktemp)
+printf '%s' "$POST_ADOPTION_JSON" > "$STATE13"
+make_resume_stub "$STUB_DIR13" "$ARGV_LOG13" "$STATE13" 0
+
+REPO_ROOT13="$(cd "$SCRIPT_DIR/.." && pwd)"
+before13=$(snapshot_backups "$REPO_ROOT13")
+
+exit_code=0
+PATH="$STUB_DIR13:$PATH" bash "$SCRIPT" --resume --stack "cwchanap/perseus-infrastructure/production" >/dev/null 2>&1 || exit_code=$?
+
+if [[ "$exit_code" -eq 0 ]]; then
+	ok "resume exited 0"
+else
+	fail "resume exited $exit_code (expected 0)"
+fi
+delete_count=$(grep -c '^state delete' "$ARGV_LOG13" || true)
+if [[ "$delete_count" -eq 0 ]]; then
+	ok "resume did not run state delete (Step 2 skipped)"
+else
+	fail "resume ran state delete $delete_count time(s) — must not re-delete"
+fi
+preview_count=$(grep -c '^preview' "$ARGV_LOG13" || true)
+if [[ "$preview_count" -ge 1 ]]; then
+	ok "resume ran guarded preview ($preview_count call(s))"
+else
+	fail "resume did not run preview"
+fi
+up_count=$(grep -c '^up' "$ARGV_LOG13" || true)
+if [[ "$up_count" -ge 1 ]]; then
+	ok "resume ran up ($up_count call(s))"
+else
+	fail "resume did not run up"
+fi
+import_count=$(grep -c '^stack import' "$ARGV_LOG13" || true)
+if [[ "$import_count" -eq 0 ]]; then
+	ok "resume did not run stack import (no backup restore)"
+else
+	fail "resume ran stack import $import_count time(s) — must not restore"
+fi
+
+rm -rf "$STUB_DIR13" "$ARGV_LOG13" "$STATE13"
+cleanup_new_backups "$REPO_ROOT13" "$before13"
+
+# ---------------------------------------------------------------------------
+# Test 14: --resume refuses when the stale 'perseus-workflows' Worker is still
+# in state (Step 2 did not complete). Resume is the wrong tool there — the
+# normal flow resumes Step 2 via SKIP. Must exit non-zero before any
+# preview/up/state-delete.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 14: --resume refuses when stale Worker still in state"
+
+STUB_DIR14=$(mktemp -d)
+ARGV_LOG14=$(mktemp)
+STATE14=$(mktemp)
+printf '%s' "$MOCK_JSON" > "$STATE14"
+make_resume_stub "$STUB_DIR14" "$ARGV_LOG14" "$STATE14" 0
+
+REPO_ROOT14="$(cd "$SCRIPT_DIR/.." && pwd)"
+before14=$(snapshot_backups "$REPO_ROOT14")
+
+exit_code=0
+out14=$(PATH="$STUB_DIR14:$PATH" bash "$SCRIPT" --resume --stack "cwchanap/perseus-infrastructure/production" 2>&1) || exit_code=$?
+
+if [[ "$exit_code" -ne 0 ]]; then
+	ok "resume refused stale state (exit $exit_code)"
+else
+	fail "resume exited 0 despite stale 'perseus-workflows' Worker"
+fi
+if echo "$out14" | grep -q "stale 'perseus-workflows' Worker is still in state"; then
+	ok "refusal message present"
+else
+	fail "refusal message missing"
+fi
+if [[ $(grep -c '^preview' "$ARGV_LOG14" || true) -eq 0 ]]; then
+	ok "no preview after refusal"
+else
+	fail "preview ran after refusal"
+fi
+if [[ $(grep -c '^up' "$ARGV_LOG14" || true) -eq 0 ]]; then
+	ok "no up after refusal"
+else
+	fail "up ran after refusal"
+fi
+if [[ $(grep -c '^state delete' "$ARGV_LOG14" || true) -eq 0 ]]; then
+	ok "no state delete after refusal"
+else
+	fail "state delete ran after refusal"
+fi
+
+rm -rf "$STUB_DIR14" "$ARGV_LOG14" "$STATE14"
+cleanup_new_backups "$REPO_ROOT14" "$before14"
+
+# ---------------------------------------------------------------------------
+# Test 15: --resume converges a pending-import state (stale Worker deleted,
+# live 'workflows' not yet imported). WORKER_URN is absent. Resume must still
+# run preview → up (the `import` options in the program adopt the live Worker).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 15: --resume converges pending-import state (Worker absent)"
+
+STUB_DIR15=$(mktemp -d)
+ARGV_LOG15=$(mktemp)
+STATE15=$(mktemp)
+printf '%s' '{"version":3,"deployment":{"resources":[]}}' > "$STATE15"
+make_resume_stub "$STUB_DIR15" "$ARGV_LOG15" "$STATE15" 0
+
+REPO_ROOT15="$(cd "$SCRIPT_DIR/.." && pwd)"
+before15=$(snapshot_backups "$REPO_ROOT15")
+
+exit_code=0
+out15=$(PATH="$STUB_DIR15:$PATH" bash "$SCRIPT" --resume --stack "cwchanap/perseus-infrastructure/production" 2>&1) || exit_code=$?
+
+if [[ "$exit_code" -eq 0 ]]; then
+	ok "resume exited 0 for pending-import state"
+else
+	fail "resume exited $exit_code for pending-import state (expected 0)"
+fi
+if echo "$out15" | grep -q "import pending"; then
+	ok "detected pending-import state"
+else
+	fail "did not report pending-import state"
+fi
+if [[ $(grep -c '^state delete' "$ARGV_LOG15" || true) -eq 0 ]]; then
+	ok "no state delete for pending-import resume"
+else
+	fail "state delete ran during pending-import resume"
+fi
+if [[ $(grep -c '^up' "$ARGV_LOG15" || true) -ge 1 ]]; then
+	ok "up ran to converge pending-import state"
+else
+	fail "up did not run for pending-import state"
+fi
+
+rm -rf "$STUB_DIR15" "$ARGV_LOG15" "$STATE15"
+cleanup_new_backups "$REPO_ROOT15" "$before15"
+
+# ---------------------------------------------------------------------------
+# Test 16: --resume --dry-run stops after the read-only preview (no up, no
+# state mutation). Validates the partial-adoption detection + preview without
+# converging.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 16: --resume --dry-run stops after preview (no up)"
+
+STUB_DIR16=$(mktemp -d)
+ARGV_LOG16=$(mktemp)
+STATE16=$(mktemp)
+printf '%s' "$POST_ADOPTION_JSON" > "$STATE16"
+make_resume_stub "$STUB_DIR16" "$ARGV_LOG16" "$STATE16" 0
+
+exit_code=0
+out16=$(PATH="$STUB_DIR16:$PATH" bash "$SCRIPT" --resume --dry-run --stack "cwchanap/perseus-infrastructure/production" 2>&1) || exit_code=$?
+
+if [[ "$exit_code" -eq 0 ]]; then
+	ok "resume dry-run exited 0"
+else
+	fail "resume dry-run exited $exit_code (expected 0)"
+fi
+if echo "$out16" | grep -q "Resume dry run complete"; then
+	ok "dry-run completion message present"
+else
+	fail "dry-run completion message missing"
+fi
+if [[ $(grep -c '^up' "$ARGV_LOG16" || true) -eq 0 ]]; then
+	ok "no up in resume dry-run"
+else
+	fail "up ran in resume dry-run"
+fi
+if [[ $(grep -c '^state delete' "$ARGV_LOG16" || true) -eq 0 ]]; then
+	ok "no state delete in resume dry-run"
+else
+	fail "state delete ran in resume dry-run"
+fi
+
+rm -rf "$STUB_DIR16" "$ARGV_LOG16" "$STATE16"
+
+# ---------------------------------------------------------------------------
+# Test 17: --resume requires an explicit production --stack in execute mode
+# (same gate as the normal migration). Without --stack, resume would mutate
+# whichever stack is currently selected. Must fail fast before any pulumi call.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 17: --resume requires explicit production --stack"
+
+STUB_DIR17=$(mktemp -d)
+ARGV_LOG17=$(mktemp)
+make_resume_stub "$STUB_DIR17" "$ARGV_LOG17" /dev/null 0
+
+exit_code=0
+out17=$(PATH="$STUB_DIR17:$PATH" bash "$SCRIPT" --resume 2>&1) || exit_code=$?
+
+if [[ "$exit_code" -ne 0 ]]; then
+	ok "resume without --stack failed fast (exit $exit_code)"
+else
+	fail "resume without --stack exited 0"
+fi
+if echo "$out17" | grep -q "ERROR: --stack is required for execute/resume mode"; then
+	ok "stack-required error present"
+else
+	fail "stack-required error missing"
+fi
+pulumi_calls=$(wc -l < "$ARGV_LOG17" | tr -d ' ')
+if [[ "$pulumi_calls" -eq 0 ]]; then
+	ok "no pulumi call before the stack gate"
+else
+	fail "pulumi called $pulumi_calls time(s) before the stack gate"
+fi
+
+rm -rf "$STUB_DIR17" "$ARGV_LOG17"
+
+# ---------------------------------------------------------------------------
+# Test 18: --resume does NOT restore the pre-migration backup when the guarded
+# preview fails. Remote mutations may have already happened (that is why we
+# are resuming), so restoring the old checkpoint would desync state from live
+# Cloudflare resources. Must exit non-zero with no `stack import` and no `up`.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 18: --resume does not restore backup on preview failure"
+
+STUB_DIR18=$(mktemp -d)
+ARGV_LOG18=$(mktemp)
+STATE18=$(mktemp)
+printf '%s' "$POST_ADOPTION_JSON" > "$STATE18"
+make_resume_stub "$STUB_DIR18" "$ARGV_LOG18" "$STATE18" 1
+
+REPO_ROOT18="$(cd "$SCRIPT_DIR/.." && pwd)"
+before18=$(snapshot_backups "$REPO_ROOT18")
+
+exit_code=0
+PATH="$STUB_DIR18:$PATH" bash "$SCRIPT" --resume --stack "cwchanap/perseus-infrastructure/production" >/dev/null 2>&1 || exit_code=$?
+
+if [[ "$exit_code" -ne 0 ]]; then
+	ok "resume exited non-zero on preview failure (exit $exit_code)"
+else
+	fail "resume exited 0 despite preview failure"
+fi
+import_count=$(grep -c '^stack import' "$ARGV_LOG18" || true)
+if [[ "$import_count" -eq 0 ]]; then
+	ok "no stack import (backup not restored)"
+else
+	fail "stack import ran $import_count time(s) — must not restore during resume"
+fi
+up_count=$(grep -c '^up' "$ARGV_LOG18" || true)
+if [[ "$up_count" -eq 0 ]]; then
+	ok "no up after preview failure"
+else
+	fail "up ran $up_count time(s) after preview failure"
+fi
+delete_count=$(grep -c '^state delete' "$ARGV_LOG18" || true)
+if [[ "$delete_count" -eq 0 ]]; then
+	ok "no state delete during resume"
+else
+	fail "state delete ran $delete_count time(s) during resume"
+fi
+
+rm -rf "$STUB_DIR18" "$ARGV_LOG18" "$STATE18"
+cleanup_new_backups "$REPO_ROOT18" "$before18"
 
 # ---------------------------------------------------------------------------
 # Summary
