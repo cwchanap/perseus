@@ -19,8 +19,9 @@
 # Usage
 # -----
 #   ./scripts/migrate-workflows-worker-state.sh --dry-run   # validate URN plan only
-#   ./scripts/migrate-workflows-worker-state.sh             # execute migration
 #   ./scripts/migrate-workflows-worker-state.sh --stack <org>/perseus-infrastructure/production
+#           # execute migration (--stack is REQUIRED in execute mode and must
+#           # end in /perseus-infrastructure/production; dry-run needs neither)
 #
 # The script self-locates the repo root and cd's into packages/infrastructure
 # (the Pulumi project dir) for all pulumi commands, so it can be run from
@@ -216,6 +217,28 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		esac
 	done
 
+	# Execute mode mutates production state, so require an explicit production
+	# stack. Without --stack, pulumi operates on whichever stack is currently
+	# selected in this checkout — a cheap way to delete state from the wrong
+	# stack. The stale-name guard only proves the selected stack has a
+	# 'perseus-workflows' Worker, not that it's production (another stack from
+	# the old config can too). Require --stack ending in
+	# /perseus-infrastructure/production for execute mode; dry-run stays
+	# looser (read-only).
+	if [[ "$DRY_RUN" != "true" ]]; then
+		if [[ -z "$STACK_ARG" ]]; then
+			echo "ERROR: --stack is required for execute mode (one-time production migration)." >&2
+			echo "       Pass --stack <org>/perseus-infrastructure/production." >&2
+			echo "       Use --dry-run for a read-only validation without --stack." >&2
+			exit 1
+		fi
+		if [[ "$STACK_ARG" != */perseus-infrastructure/production ]]; then
+			echo "ERROR: --stack must end in '/perseus-infrastructure/production' for execute mode." >&2
+			echo "       Got: $STACK_ARG" >&2
+			exit 1
+		fi
+	fi
+
 	# Check dependencies
 	command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required" >&2; exit 1; }
 	command -v pulumi >/dev/null 2>&1 || { echo "ERROR: pulumi is required" >&2; exit 1; }
@@ -320,13 +343,31 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	fi
 
 	# Step 3: Preview (post-deletion — the stale URNs are gone, so the
-	# program's `import` IDs adopt the live resources)
+	# program's `import` IDs adopt the live resources). Preview is read-only:
+	# remote resources are untouched even if it fails. But Step 2 already
+	# stripped the stale URNs from the stack checkpoint, so a failed preview
+	# (bad import ID, transient provider/auth failure) would leave the script
+	# in an unrecoverable state — a rerun fails the WORKER_URN safety check
+	# because that URN is now absent. Catch a non-zero preview and restore the
+	# backup before exiting so the documented flow remains recoverable.
 	echo ""
 	echo "=== Step 3: pulumi preview ==="
 	echo "  The Worker and Workflow should show as 'import' (adopted)."
 	echo "  WorkerVersion and WorkersDeployment will be freshly created"
 	echo "  (new version upload + deployment — safe, additive operations)."
-	"${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}" --diff
+	if ! "${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}" --diff; then
+		echo "" >&2
+		echo "ERROR: pulumi preview failed after state deletion." >&2
+		echo "       Remote resources are untouched. Restoring stack backup before exit." >&2
+		if ! "${PULUMI_CMD[@]}" stack import "${STACK_FLAGS[@]}" < "$BACKUP_FILE"; then
+			echo "ERROR: automatic restore failed. Manually restore with:" >&2
+			echo "  pulumi stack import${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY} < \"$BACKUP_FILE\"" >&2
+			exit 1
+		fi
+		echo "  Restored from $BACKUP_FILE" >&2
+		echo "  Fix the preview error and re-run the migration." >&2
+		exit 1
+	fi
 
 	# Step 4: Apply
 	echo ""
