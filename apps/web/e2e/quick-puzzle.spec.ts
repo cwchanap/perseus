@@ -26,6 +26,13 @@ test.describe('Quick puzzle', () => {
 		await page.waitForURL(/\/puzzle\/q-/, { timeout: 10_000 });
 		const url = page.url();
 		const id = url.match(/\/puzzle\/(q-[\w-]+)/)![1];
+		// Fresh puzzle routes intentionally require Mission Setup by default;
+		// relaxed mode also remains active across reloads without a timed resume dialog.
+		const missionSetup = page.getByRole('dialog', { name: 'Mission Setup' });
+		await expect(missionSetup).toBeVisible();
+		await missionSetup.getByLabel('Relaxed').check();
+		await missionSetup.getByRole('button', { name: 'Start Mission' }).click();
+		await expect(missionSetup).not.toBeVisible();
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 
 		// Inventory has 4 pieces

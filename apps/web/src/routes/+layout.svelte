@@ -66,16 +66,13 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if shellVisible}
-	<ArcadeShell
-		currentPath={$page.url.pathname}
-		authStatus={$playerAuth.status}
-		{playerDisplayName}
-		score={shellScore}
-		rank={shellRank}
-		onLogout={handlePlayerLogout}
-		{children}
-	/>
-{:else}
-	{@render children()}
-{/if}
+<ArcadeShell
+	showChrome={shellVisible}
+	currentPath={$page.url.pathname}
+	authStatus={$playerAuth.status}
+	{playerDisplayName}
+	score={shellScore}
+	rank={shellRank}
+	onLogout={handlePlayerLogout}
+	{children}
+/>
