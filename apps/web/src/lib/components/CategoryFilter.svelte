@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { PUZZLE_CATEGORIES, CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
+	import CategoryBadge from './CategoryBadge.svelte';
 
 	interface Props {
 		selected: PuzzleCategory | typeof CATEGORY_ALL;
@@ -27,8 +28,9 @@
 				onchange={() => onSelect(cat)}
 				class="peer sr-only"
 			/>
-			<span
-				class="
+			{#if cat === CATEGORY_ALL}
+				<span
+					class="
 					relative inline-flex cursor-pointer items-center border border-(--border) px-3.5
 					py-[0.4rem] text-[0.58rem] font-(--font-display) tracking-[0.18em] text-(--text-2)
 					uppercase transition-[color,border-color,background,box-shadow,text-shadow]
@@ -45,9 +47,24 @@
 					peer-checked:after:opacity-100 hover:border-(--accent-dim)
 					hover:bg-(--accent-glow) hover:text-(--accent)
 				"
-			>
-				{cat}
-			</span>
+				>
+					{cat}
+				</span>
+			{:else}
+				<span
+					class="
+						relative inline-flex cursor-pointer items-center justify-center border border-(--border)
+						px-3.5 py-[0.4rem] text-(--text-2) transition-[color,border-color,background,box-shadow]
+						duration-150 ease-in-out peer-checked:border-(--accent) peer-checked:bg-(--accent-glow)
+						peer-checked:text-(--accent) peer-checked:[box-shadow:0_0_18px_var(--accent-glow)]
+						peer-focus-visible:border-(--accent) peer-focus-visible:bg-(--accent-glow)
+						peer-focus-visible:[outline:2px_solid_var(--accent)] peer-focus-visible:[outline-offset:2px]
+						hover:border-(--accent-dim) hover:bg-(--accent-glow) hover:text-(--accent)
+					"
+				>
+					<CategoryBadge category={cat} compact />
+				</span>
+			{/if}
 		</label>
 	{/each}
 </fieldset>

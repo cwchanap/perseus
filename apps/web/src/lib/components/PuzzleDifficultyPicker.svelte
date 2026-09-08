@@ -4,6 +4,7 @@
 	import { getBestTime } from '$lib/services/stats';
 	import { formatTime } from '$lib/stores/timer';
 	import { resolve } from '$app/paths';
+	import DifficultyGems from './DifficultyGems.svelte';
 
 	interface VariantProgress {
 		placedCount: number;
@@ -18,12 +19,6 @@
 	}
 
 	let { family, progressByVariantId, playableLinks = true }: Props = $props();
-
-	const difficultyLabels: Record<string, string> = {
-		easy: 'Easy',
-		normal: 'Normal',
-		hard: 'Hard'
-	};
 
 	function variantProgress(variant: PuzzleVariantSummary): VariantProgress | undefined {
 		return progressByVariantId?.get(variant.id);
@@ -51,11 +46,7 @@
 				data-difficulty={difficulty}
 			>
 				<span class="flex min-w-0 items-center gap-2 text-(--text-0)">
-					<span class="font-(--font-display) font-semibold tracking-[0.12em] uppercase">
-						{difficultyLabels[difficulty]}
-					</span>
-					<span class="text-(--text-2)">·</span>
-					<span>{variant.pieceCount}</span>
+					<DifficultyGems {difficulty} pieceCount={variant.pieceCount} />
 					{#if hasProgress}
 						<span class="text-(--text-2)">·</span>
 						<span class="text-(--accent)">
@@ -86,11 +77,7 @@
 				data-difficulty={difficulty}
 			>
 				<span class="flex min-w-0 items-center gap-2">
-					<span class="font-(--font-display) font-semibold tracking-[0.12em] uppercase">
-						{difficultyLabels[difficulty]}
-					</span>
-					<span>·</span>
-					<span>{variant.pieceCount}</span>
+					<DifficultyGems {difficulty} pieceCount={variant.pieceCount} />
 				</span>
 			</div>
 		{/if}

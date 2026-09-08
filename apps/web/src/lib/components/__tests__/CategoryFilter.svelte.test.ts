@@ -19,6 +19,15 @@ describe('CategoryFilter', () => {
 		}
 	});
 
+	it('uses compact icon badges without losing radio names', async () => {
+		render(CategoryFilter, { selected: CATEGORY_ALL, onSelect: vi.fn() });
+
+		await expect.element(page.getByTestId('category-badge')).toHaveLength(PUZZLE_CATEGORIES.length);
+		for (let i = 0; i < PUZZLE_CATEGORIES.length; i++) {
+			await expect.element(page.getByRole('radio', { name: PUZZLE_CATEGORIES[i] })).toBeVisible();
+		}
+	});
+
 	it('marks only the selected radio as checked', async () => {
 		render(CategoryFilter, { selected: 'Animals', onSelect: vi.fn() });
 
