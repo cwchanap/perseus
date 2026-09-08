@@ -33,6 +33,7 @@
 		getDefaultPuzzleTrayWidth,
 		getGameplayRailWidth,
 		getResponsivePuzzleBoardMetrics,
+		MOBILE_GAMEPLAY_GAP,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
 	import { createGameplayRuntimeDependencies } from '$lib/services/gameplay/runtime';
@@ -1312,7 +1313,7 @@
 				class="game-layout"
 				data-board-tier={currentBoardMetrics?.tier}
 				data-reference-toggled={referenceToggled ? 'true' : 'false'}
-				style={`--gameplay-rail-width: ${gameplayRailWidth}px; --tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
+				style={`--gameplay-rail-width: ${gameplayRailWidth}px; --gameplay-gap: ${MOBILE_GAMEPLAY_GAP}px; --tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
 					currentBoardMetrics
 						? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
 						: ''
@@ -1731,7 +1732,7 @@
 		grid-template-columns: minmax(0, 1fr) var(--gameplay-rail-width);
 		grid-template-rows: minmax(0, 1fr) auto;
 		min-height: 0;
-		gap: 1.25rem;
+		gap: var(--gameplay-gap);
 		max-width: min(96rem, calc(100vw - 2rem));
 		margin: 0 auto;
 	}

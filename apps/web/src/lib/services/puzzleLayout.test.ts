@@ -7,7 +7,8 @@ import {
 	getDefaultPuzzleTrayWidth,
 	GAMEPLAY_RAIL_WIDTH,
 	getPuzzleBoardViewportTier,
-	getResponsivePuzzleBoardMetrics
+	getResponsivePuzzleBoardMetrics,
+	MOBILE_GAMEPLAY_GAP
 } from './puzzleLayout';
 
 const portraitPuzzle = {
@@ -86,6 +87,25 @@ describe('puzzle layout', () => {
 		expect(metrics.boardWidth).toBeCloseTo(metrics.cellSize * portraitPuzzle.gridCols);
 		expect(metrics.boardHeight).toBeCloseTo(metrics.cellSize * portraitPuzzle.gridRows);
 		expect(metrics.pieceSlotSize).toBeCloseTo(metrics.cellSize);
+	});
+
+	it('keeps small square and landscape metrics within the mobile board column', () => {
+		const mobileLayoutWidth = 390 - 40;
+		const boardColumnWidth = mobileLayoutWidth - GAMEPLAY_RAIL_WIDTH.small - MOBILE_GAMEPLAY_GAP;
+		const puzzles = [
+			{ imageWidth: 1200, imageHeight: 1200, gridCols: 4, gridRows: 4 },
+			{ imageWidth: 1600, imageHeight: 1200, gridCols: 4, gridRows: 3 }
+		];
+
+		for (const puzzle of puzzles) {
+			const metrics = getResponsivePuzzleBoardMetrics(
+				puzzle,
+				{ width: 390, height: 844 },
+				DESKTOP_TRAY_BASE_WIDTH
+			);
+
+			expect(metrics.boardWidth).toBeLessThanOrEqual(boardColumnWidth);
+		}
 	});
 
 	it('preserves image-derived aspect ratio for mismatched image/grid', () => {
