@@ -31,6 +31,7 @@
 
 	interface Props {
 		puzzleName: string;
+		referenceImageUrl: string | null;
 		resultClass: ResultClass;
 		elapsedSeconds: number | null;
 		pieceCount: number;
@@ -51,6 +52,7 @@
 
 	let {
 		puzzleName,
+		referenceImageUrl,
 		resultClass,
 		elapsedSeconds,
 		pieceCount,
@@ -73,6 +75,13 @@
 	const timedResult = $derived(resultClass !== 'relaxed');
 	const competitiveTimedResult = $derived(
 		resultClass === 'standard_timed' || resultClass === 'rotation_timed'
+	);
+	const completionStarCount = $derived(
+		resultClass === 'relaxed'
+			? 1
+			: competitiveTimedResult && hintsUsed === 0 && incorrectAttempts === 0
+				? 3
+				: 2
 	);
 	const standardTimedResult = $derived(resultClass === 'standard_timed');
 	const serverPersonalBest = $derived(awards?.personalBest);
@@ -104,115 +113,160 @@
 		<div class="modal-scan-line"></div>
 		<div class="modal-top-line"></div>
 
-		<div class="modal-tag">// MISSION COMPLETE</div>
-		<div class="modal-result" data-testid="completion-result-label">{resultLabel}</div>
-
-		<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
-
-		<div class="modal-stats">
-			{#if timedResult && elapsedSeconds !== null}
-				<div class="modal-stat">
-					<span class="mstat-label">FINAL TIME</span>
-					<span class="mstat-value" data-testid="completion-final-time">
-						{formatTime(elapsedSeconds)}
-					</span>
-				</div>
-			{/if}
-
-			{#if competitiveTimedResult && displayedBestTime !== null}
-				<div class="modal-stat">
-					<span class="mstat-label">PERSONAL BEST</span>
-					<span
-						class="mstat-value"
-						class:gold={displayedIsNewBest}
-						data-testid="completion-best-time"
+		<div class="completion-layout">
+			<div class="completion-art-column">
+				{#if referenceImageUrl}
+					<img
+						class="completion-reference-art"
+						data-testid="completion-reference-art"
+						src={referenceImageUrl}
+						alt={`${puzzleName} finished artwork`}
+					/>
+				{:else}
+					<div
+						class="completion-reference-fallback"
+						data-testid="completion-reference-fallback"
+						role="img"
+						aria-label="Finished artwork unavailable"
 					>
-						{formatTime(displayedBestTime)}
-					</span>
-					{#if displayedIsNewBest}
-						{#if localStatsFailed && !serverPersonalBest}
-							<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
-						{:else}
-							<span class="new-record-badge">NEW RECORD</span>
-						{/if}
+						<span>FINISHED ART</span>
+						<strong>REFERENCE UNAVAILABLE</strong>
+					</div>
+				{/if}
+			</div>
+
+			<div class="completion-result-column">
+				<div class="modal-tag">// MISSION COMPLETE</div>
+				<div class="modal-result" data-testid="completion-result-label">{resultLabel}</div>
+
+				<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
+
+				<div class="completion-stars" aria-label={`${completionStarCount} stars awarded`}>
+					{#each Array.from({ length: completionStarCount }) as _, index (index)}
+						<svg
+							class="completion-star"
+							data-testid="completion-star"
+							viewBox="0 0 24 24"
+							aria-hidden="true"
+							style={`--star-size: ${index === 1 && completionStarCount === 3 ? '5.5rem' : '4rem'}`}
+						>
+							<path
+								d="M12 2l2.9 6.3 6.9.8-5 4.7 1.3 6.8L12 17.4 5.9 20.6 7.2 13.8l-5-4.7 6.9-.8z"
+							/>
+						</svg>
+					{/each}
+				</div>
+
+				<div class="modal-stats">
+					{#if timedResult && elapsedSeconds !== null}
+						<div class="modal-stat modal-stat-primary">
+							<span class="mstat-label">FINAL TIME</span>
+							<span class="mstat-value" data-testid="completion-final-time">
+								{formatTime(elapsedSeconds)}
+							</span>
+						</div>
+					{/if}
+
+					{#if competitiveTimedResult && displayedBestTime !== null}
+						<div class="modal-stat modal-stat-best">
+							<span class="mstat-label">PERSONAL BEST</span>
+							<span
+								class="mstat-value"
+								class:gold={displayedIsNewBest}
+								data-testid="completion-best-time"
+							>
+								{formatTime(displayedBestTime)}
+							</span>
+							{#if displayedIsNewBest}
+								{#if localStatsFailed && !serverPersonalBest}
+									<span class="new-record-badge unsaved" data-testid="new-best-unsaved"
+										>UNSAVED</span
+									>
+								{:else}
+									<span class="new-record-badge">NEW RECORD</span>
+								{/if}
+							{/if}
+						</div>
 					{/if}
 				</div>
-			{/if}
-		</div>
 
-		<div class="completion-summary" data-testid="completion-run-summary">
-			<div class="summary-item">
-				<span class="mstat-label">PIECES</span>
-				<span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
-			</div>
-			<div class="summary-item">
-				<span class="mstat-label">HINTS USED</span>
-				<span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
-			</div>
-			<div class="summary-item">
-				<span class="mstat-label">INCORRECT ATTEMPTS</span>
-				<span class="summary-value" data-testid="completion-incorrect-attempts">
-					{incorrectAttempts}
-				</span>
-			</div>
-			<div class="summary-item">
-				<span class="mstat-label">ROTATION</span>
-				<span class="summary-value" data-testid="completion-rotation">{rotationSummary}</span>
-			</div>
-		</div>
+				<div class="completion-summary" data-testid="completion-run-summary">
+					<div class="summary-item">
+						<span class="mstat-label">PIECES</span>
+						<span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
+					</div>
+					<div class="summary-item">
+						<span class="mstat-label">HINTS USED</span>
+						<span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
+					</div>
+					<div class="summary-item">
+						<span class="mstat-label">INCORRECT ATTEMPTS</span>
+						<span class="summary-value" data-testid="completion-incorrect-attempts">
+							{incorrectAttempts}
+						</span>
+					</div>
+					<div class="summary-item">
+						<span class="mstat-label">ROTATION</span>
+						<span class="summary-value" data-testid="completion-rotation">{rotationSummary}</span>
+					</div>
+				</div>
 
-		{#if awards?.clearPoints}
-			<div class="award-banner" data-testid="completion-clear-points">
-				+{awards.clearPoints} SCORE
+				<div class="completion-awards">
+					{#if awards?.clearPoints}
+						<div class="award-banner" data-testid="completion-clear-points">
+							+{awards.clearPoints} SCORE
+						</div>
+					{/if}
+
+					{#if awards?.achievements?.length}
+						<div class="award-section" data-testid="completion-achievements">
+							<div class="award-heading">NEW ACHIEVEMENTS</div>
+							<ul class="award-list">
+								{#each awards.achievements as achievement (achievement)}
+									<li>{ACHIEVEMENT_LABELS[achievement] ?? achievement}</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+
+					{#if awards?.mastery?.length}
+						<div class="award-section" data-testid="completion-mastery">
+							<div class="award-heading">MASTERY EARNED</div>
+							<ul class="award-list">
+								{#each awards.mastery as badge (badge)}
+									<li>{MASTERY_LABELS[badge] ?? badge}</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+
+					{#if awards?.puzzleRank}
+						<div class="award-banner" data-testid="completion-puzzle-rank">
+							FAMILY RANK #{awards.puzzleRank}
+						</div>
+					{/if}
+				</div>
+
+				<div class="modal-bottom-line"></div>
+
+				{#if serverSubmissionRetryable}
+					<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
+						<span class="server-retry-label">MISSION SYNC FAILED</span>
+						<button
+							onclick={onRetryServerSubmission}
+							class="arcade-btn-ghost"
+							data-testid="retry-server-submission"
+						>
+							RETRY SYNC
+						</button>
+					</div>
+				{/if}
+
+				<div class="modal-actions">
+					<button onclick={onPlayAgain} class="arcade-btn">PLAY AGAIN</button>
+					<button onclick={onBackToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
+				</div>
 			</div>
-		{/if}
-
-		{#if awards?.achievements?.length}
-			<div class="award-section" data-testid="completion-achievements">
-				<div class="award-heading">NEW ACHIEVEMENTS</div>
-				<ul class="award-list">
-					{#each awards.achievements as achievement (achievement)}
-						<li>{ACHIEVEMENT_LABELS[achievement] ?? achievement}</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
-
-		{#if awards?.mastery?.length}
-			<div class="award-section" data-testid="completion-mastery">
-				<div class="award-heading">MASTERY EARNED</div>
-				<ul class="award-list">
-					{#each awards.mastery as badge (badge)}
-						<li>{MASTERY_LABELS[badge] ?? badge}</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
-
-		{#if awards?.puzzleRank}
-			<div class="award-banner" data-testid="completion-puzzle-rank">
-				FAMILY RANK #{awards.puzzleRank}
-			</div>
-		{/if}
-
-		<div class="modal-bottom-line"></div>
-
-		{#if serverSubmissionRetryable}
-			<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
-				<span class="server-retry-label">MISSION SYNC FAILED</span>
-				<button
-					onclick={onRetryServerSubmission}
-					class="arcade-btn-ghost"
-					data-testid="retry-server-submission"
-				>
-					RETRY SYNC
-				</button>
-			</div>
-		{/if}
-
-		<div class="modal-actions">
-			<button onclick={onPlayAgain} class="arcade-btn">PLAY AGAIN</button>
-			<button onclick={onBackToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
 		</div>
 	</div>
 </div>
@@ -234,16 +288,96 @@
 		position: relative;
 		background: var(--bg-1);
 		border: 1px solid var(--accent);
-		padding: 2.5rem 2rem;
-		text-align: center;
-		max-width: 24rem;
-		width: calc(100% - 2rem);
+		padding: clamp(1.25rem, 3vw, 3.5rem);
+		width: min(calc(100% - 2rem), 84rem);
+		max-height: calc(100vh - 2rem);
 		box-shadow:
 			0 0 60px var(--accent-glow-strong),
 			0 0 120px var(--accent-glow),
 			inset 0 0 60px rgba(0, 240, 255, 0.03);
 		animation: celebration-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-		overflow: hidden;
+		overflow-x: hidden;
+		overflow-y: auto;
+	}
+
+	.completion-layout {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		align-items: center;
+		gap: 1.5rem;
+		max-width: 1120px;
+		margin: 0 auto;
+	}
+
+	.completion-art-column {
+		display: flex;
+		justify-content: center;
+		min-width: 0;
+	}
+
+	.completion-reference-art,
+	.completion-reference-fallback {
+		width: min(100%, 230px);
+		aspect-ratio: 3 / 4;
+		border-radius: 1.25rem;
+		box-shadow:
+			0 0 0 3px rgba(255, 204, 0, 0.6),
+			0 0 46px rgba(255, 204, 0, 0.35),
+			0 16px 40px rgba(0, 0, 0, 0.55);
+	}
+
+	.completion-reference-art {
+		display: block;
+		background: var(--bg-2);
+		object-fit: cover;
+	}
+
+	.completion-reference-fallback {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.75rem;
+		padding: 1.5rem;
+		box-sizing: border-box;
+		background:
+			radial-gradient(circle at 50% 30%, var(--accent-glow-strong), transparent 48%), var(--bg-2);
+		border: 1px dashed var(--gold-dim);
+		color: var(--gold);
+		font-family: var(--font-display);
+		font-size: 0.65rem;
+		letter-spacing: 0.14em;
+		text-align: center;
+	}
+
+	.completion-reference-fallback strong {
+		color: var(--text-1);
+		font-size: 0.55rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+	}
+
+	.completion-result-column {
+		min-width: 0;
+		text-align: center;
+	}
+
+	.completion-stars {
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+		gap: 0.5rem;
+		min-height: 4rem;
+		margin: 1rem 0 0.5rem;
+		color: var(--gold);
+		filter: drop-shadow(0 0 14px var(--gold-glow));
+	}
+
+	.completion-star {
+		width: var(--star-size);
+		height: var(--star-size);
+		fill: currentColor;
+		flex: 0 0 auto;
 	}
 
 	/* Animated scan line inside modal */
@@ -285,7 +419,7 @@
 
 	.modal-result {
 		font-family: var(--font-display);
-		font-size: 1.5rem;
+		font-size: clamp(1.2rem, 3vw, 2rem);
 		font-weight: 900;
 		color: var(--accent);
 		text-shadow:
@@ -302,17 +436,19 @@
 		font-weight: 600;
 		letter-spacing: 0.15em;
 		color: var(--text-1);
-		margin-top: 0.5rem;
+		margin: 0.5rem 0 0;
 		text-overflow: ellipsis;
 		overflow: hidden;
 		white-space: nowrap;
 	}
 
 	.modal-stats {
-		margin: 1.25rem 0;
+		margin: 1.25rem 0 0;
 		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		flex-wrap: wrap;
 	}
 
 	.modal-stat {
@@ -320,6 +456,32 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.2rem;
+	}
+
+	.modal-stat-primary .mstat-value {
+		font-size: clamp(3rem, 8vw, 6.5rem);
+		line-height: 0.95;
+		letter-spacing: 0.01em;
+		text-shadow: 0 0 34px var(--accent-glow-strong);
+	}
+
+	.modal-stat-best {
+		padding: 0.65rem 1rem;
+		border-radius: 1rem;
+		background: linear-gradient(160deg, #ffe06b, #ffbb00);
+		box-shadow:
+			0 4px 0 #a37500,
+			0 8px 22px rgba(255, 204, 0, 0.35);
+	}
+
+	.modal-stat-best .mstat-label,
+	.modal-stat-best .mstat-value {
+		color: #3a2600;
+	}
+
+	.modal-stat-best .mstat-value.gold {
+		color: #3a2600;
+		text-shadow: none;
 	}
 
 	.mstat-label {
@@ -342,12 +504,10 @@
 	}
 
 	.completion-summary {
-		margin: 1.25rem 0 0;
+		margin: 1.5rem 0 0;
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: 0.875rem 0.75rem;
-		border-top: 1px solid var(--border);
-		padding-top: 1rem;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.5rem;
 	}
 
 	.summary-item {
@@ -355,13 +515,25 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.2rem;
+		min-width: 0;
+		padding: 0.75rem 0.35rem;
+		border: 1px solid var(--border);
+		border-radius: 1rem;
+		background: var(--bg-2);
 	}
 
 	.summary-value {
 		font-family: var(--font-mono);
-		font-size: 1rem;
+		font-size: clamp(0.8rem, 2vw, 1.3rem);
 		letter-spacing: 0.1em;
 		color: var(--text-0);
+	}
+
+	.completion-awards {
+		max-height: min(16rem, 30vh);
+		margin-top: 1rem;
+		overflow-y: auto;
+		padding-right: 0.35rem;
 	}
 
 	.award-banner {
@@ -417,7 +589,7 @@
 		justify-content: center;
 		gap: 0.875rem;
 		flex-wrap: wrap;
-		padding-top: 0.5rem;
+		padding-top: 0.75rem;
 	}
 
 	.modal-server-retry {
@@ -432,6 +604,75 @@
 		color: var(--accent-warn, #ffb86b);
 		font-size: 0.7rem;
 		letter-spacing: 0.12em;
+	}
+
+	@media (min-width: 900px) {
+		.modal-box {
+			width: min(calc(100% - 2rem), 84rem);
+			padding: 1.5rem;
+		}
+
+		.completion-layout {
+			grid-template-columns: minmax(0, 396px) minmax(0, 560px);
+			gap: clamp(2rem, 4vw, 2.75rem);
+		}
+
+		.completion-reference-art,
+		.completion-reference-fallback {
+			width: 396px;
+		}
+
+		.completion-result-column {
+			text-align: left;
+		}
+
+		.completion-stars,
+		.modal-stats {
+			justify-content: flex-start;
+		}
+
+		.completion-star:nth-child(2) {
+			margin-bottom: 0.75rem;
+		}
+
+		.modal-actions {
+			justify-content: flex-start;
+		}
+	}
+
+	@media (min-width: 1440px) {
+		.modal-box {
+			width: min(calc(100% - 4rem), 84rem);
+			padding: 3rem 4rem;
+		}
+
+		.completion-layout {
+			grid-template-columns: minmax(0, 504px) minmax(0, 560px);
+			gap: 3.5rem;
+		}
+
+		.completion-reference-art,
+		.completion-reference-fallback {
+			width: 504px;
+		}
+	}
+
+	@media (max-width: 639px) {
+		.modal-box {
+			padding: 1.25rem 1rem;
+		}
+
+		.modal-stats {
+			flex-direction: column;
+		}
+
+		.modal-stat-primary .mstat-value {
+			font-size: clamp(3.25rem, 16vw, 4.5rem);
+		}
+
+		.modal-actions > button {
+			flex: 1 1 10rem;
+		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {

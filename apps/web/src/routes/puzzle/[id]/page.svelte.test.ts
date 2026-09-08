@@ -1274,6 +1274,18 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^2$/);
 	});
 
+	it('passes the loaded reference art into the completion dialog', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		await expect
+			.element(page.getByTestId('completion-reference-art'))
+			.toHaveAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAAAAACw=');
+	});
+
 	it('clears pan state on window blur', async () => {
 		await renderPuzzlePage();
 
