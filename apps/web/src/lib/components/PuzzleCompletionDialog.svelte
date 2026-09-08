@@ -141,7 +141,11 @@
 
 				<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 
-				<div class="completion-stars" aria-label={`${completionStarCount} stars awarded`}>
+				<div
+					class="completion-stars"
+					role="img"
+					aria-label={`${completionStarCount} stars awarded`}
+				>
 					{#each Array.from({ length: completionStarCount }) as _, index (index)}
 						<svg
 							class="completion-star"

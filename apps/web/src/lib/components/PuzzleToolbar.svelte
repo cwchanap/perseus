@@ -434,7 +434,7 @@
 		.toolbar-secondary {
 			position: absolute;
 			top: 0;
-			right: calc(100% + 0.5rem);
+			right: 0;
 			z-index: 20;
 			display: none;
 			width: min(18rem, calc(100vw - 2rem));

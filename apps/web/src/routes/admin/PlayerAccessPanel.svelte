@@ -166,57 +166,62 @@
 				No players allowlisted.
 			</div>
 		{:else}
-			<div class="overflow-hidden rounded-xl border border-(--border) bg-(--bg-0)">
-				<div
-					class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-(--border)
-					bg-(--bg-2) px-4 py-3 text-xs font-(--font-body) font-bold tracking-[0.1em] text-(--text-2) uppercase"
-				>
-					<span></span>
-					<span>Email</span>
-					<span>Account</span>
-					<span class="text-right">Actions</span>
-				</div>
-				{#each allowlist as entry (entry.email)}
+			<div
+				data-testid="player-access-table"
+				class="overflow-x-auto rounded-xl border border-(--border) bg-(--bg-0)"
+			>
+				<div class="min-w-[560px]">
 					<div
-						class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-[rgba(44,28,96,0.7)]
-						px-4 py-3.5 last:border-b-0"
+						class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-(--border)
+						bg-(--bg-2) px-4 py-3 text-xs font-(--font-body) font-bold tracking-[0.1em] text-(--text-2) uppercase"
 					>
+						<span></span>
+						<span>Email</span>
+						<span>Account</span>
+						<span class="text-right">Actions</span>
+					</div>
+					{#each allowlist as entry (entry.email)}
 						<div
-							class="flex h-10 w-10 items-center justify-center rounded-xl bg-[linear-gradient(160deg,#ff5cc0,#e0148c)]
+							class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-[rgba(44,28,96,0.7)]
+						px-4 py-3.5 last:border-b-0"
+						>
+							<div
+								class="flex h-10 w-10 items-center justify-center rounded-xl bg-[linear-gradient(160deg,#ff5cc0,#e0148c)]
 							text-xs font-(--font-display) font-bold text-white"
-							aria-hidden="true"
-						>
-							{entry.email.slice(0, 2).toUpperCase()}
-						</div>
-						<div
-							class="min-w-0 truncate text-[0.95rem] font-(--font-body) font-semibold tracking-[0.02em] text-(--text-0)"
-						>
-							{entry.email}
-						</div>
-						<div
-							class="truncate text-sm font-(--font-body) font-semibold tracking-[0.02em] text-(--text-2)"
-						>
-							{entry.player?.name ?? 'No account created'}
-						</div>
-						<div class="flex justify-end">
-							<button
-								type="button"
-								aria-label={`Remove ${entry.email}`}
-								title={`Remove ${entry.email}`}
-								onclick={() => handleAllowlistRemove(entry.email)}
-								disabled={allowlistSaving || removingAllowlistEmail !== null}
-								class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim)
+								aria-hidden="true"
+							>
+								{entry.email.slice(0, 2).toUpperCase()}
+							</div>
+							<div
+								class="min-w-0 truncate text-[0.95rem] font-(--font-body) font-semibold tracking-[0.02em] text-(--text-0)"
+							>
+								{entry.email}
+							</div>
+							<div
+								class="truncate text-sm font-(--font-body) font-semibold tracking-[0.02em] text-(--text-2)"
+							>
+								{entry.player?.name ?? 'No account created'}
+							</div>
+							<div class="flex justify-end">
+								<button
+									type="button"
+									aria-label={`Remove ${entry.email}`}
+									title={`Remove ${entry.email}`}
+									onclick={() => handleAllowlistRemove(entry.email)}
+									disabled={allowlistSaving || removingAllowlistEmail !== null}
+									class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim)
 								bg-[rgba(255,0,102,0.1)] text-(--hot) transition-colors hover:border-(--hot)
 								hover:bg-(--hot-glow) focus-visible:outline-2 focus-visible:outline-(--hot)
 								disabled:cursor-not-allowed disabled:opacity-40"
-							>
-								<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
-									<path d="M5 11h14v2H5z" />
-								</svg>
-							</button>
+								>
+									<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+										<path d="M5 11h14v2H5z" />
+									</svg>
+								</button>
+							</div>
 						</div>
-					</div>
-				{/each}
+					{/each}
+				</div>
 			</div>
 		{/if}
 	</div>
