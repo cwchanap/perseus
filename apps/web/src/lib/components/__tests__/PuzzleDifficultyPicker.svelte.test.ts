@@ -41,15 +41,20 @@ describe('PuzzleDifficultyPicker', () => {
 		await expect.element(actions.nth(2)).toBeVisible();
 	});
 
-	it('shows Continue on multiple difficulties when both have progress', async () => {
+	it('exposes saved progress on multiple difficulties without text-heavy actions', async () => {
 		const progress = new Map([
 			['var-e', { placedCount: 7, pieceCount: 16 }],
 			['var-n', { placedCount: 3, pieceCount: 49 }]
 		]);
 		render(PuzzleDifficultyPicker, { family: familySummary(), progressByVariantId: progress });
 
-		await expect.element(page.getByText('CONTINUE 7/16')).toBeVisible();
-		await expect.element(page.getByText('CONTINUE 3/49')).toBeVisible();
+		await expect.element(page.getByTestId('difficulty-progress').nth(0)).toHaveTextContent('7/16');
+		await expect.element(page.getByTestId('difficulty-progress').nth(1)).toHaveTextContent('3/49');
+		await expect
+			.element(
+				page.getByRole('link', { name: 'Easy difficulty, 16 pieces, continue saved progress' })
+			)
+			.toBeVisible();
 	});
 
 	it('links play actions to variant routes', async () => {
@@ -57,7 +62,9 @@ describe('PuzzleDifficultyPicker', () => {
 
 		const easy = page.getByTestId('difficulty-action').nth(0);
 		await expect.element(easy).toHaveAttribute('href', '/puzzle/var-e');
-		await expect.element(page.getByLabelText('Easy difficulty, 16 pieces')).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Easy difficulty, 16 pieces' }))
+			.toBeVisible();
 	});
 
 	it('shows per-difficulty best times', async () => {

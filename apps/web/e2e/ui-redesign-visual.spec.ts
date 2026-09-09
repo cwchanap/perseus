@@ -218,7 +218,6 @@ test.describe('phone @visual', () => {
 		await prepareVisualGallery(page);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-phone-gallery.png', {
-			fullPage: true,
 			maxDiffPixelRatio: 0.005
 		});
 	});
@@ -298,7 +297,6 @@ test.describe('landscape tablet @visual', () => {
 		await prepareVisualGallery(page);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-tablet-gallery.png', {
-			fullPage: true,
 			maxDiffPixelRatio: 0.005
 		});
 	});
@@ -341,7 +339,6 @@ test.describe('desktop @visual', () => {
 		await prepareVisualGallery(page);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-desktop-gallery.png', {
-			fullPage: true,
 			maxDiffPixelRatio: 0.005
 		});
 	});

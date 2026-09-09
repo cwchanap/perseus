@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { PuzzleFamilySummary, PuzzleVariantSummary } from '@perseus/types';
+	import type { PuzzleDifficulty, PuzzleFamilySummary, PuzzleVariantSummary } from '@perseus/types';
 	import { PUZZLE_DIFFICULTIES } from '@perseus/types';
 	import { getBestTime } from '$lib/services/stats';
 	import { formatTime } from '$lib/stores/timer';
@@ -18,6 +18,16 @@
 		playableLinks?: boolean;
 	}
 
+	interface DifficultyPresentation {
+		label: string;
+	}
+
+	const difficultyPresentation: Record<PuzzleDifficulty, DifficultyPresentation> = {
+		easy: { label: 'Easy' },
+		normal: { label: 'Normal' },
+		hard: { label: 'Hard' }
+	};
+
 	let { family, progressByVariantId, playableLinks = true }: Props = $props();
 
 	function variantProgress(variant: PuzzleVariantSummary): VariantProgress | undefined {
@@ -29,9 +39,10 @@
 	}
 </script>
 
-<div class="flex flex-col gap-2" data-testid="difficulty-picker">
+<div class="difficulty-picker" data-testid="difficulty-picker">
 	{#each PUZZLE_DIFFICULTIES as difficulty (difficulty)}
 		{@const variant = family.variants[difficulty]}
+		{@const presentation = difficultyPresentation[difficulty]}
 		{@const progress = variantProgress(variant)}
 		{@const bestTime =
 			playableLinks && variant.status === 'ready' ? variantBestTime(variant.id) : null}
@@ -39,29 +50,23 @@
 		{#if variant.status === 'ready' && playableLinks}
 			<a
 				href={resolve(`/puzzle/${variant.id}`)}
-				class="group/diff flex items-center justify-between gap-3 border border-(--border) bg-(--bg-0)
-				px-3 py-2 text-[0.65rem] font-(--font-mono) tracking-[0.1em] text-(--text-1)
-				transition-colors hover:border-(--accent) hover:bg-[rgba(0,240,255,0.04)]"
+				class="difficulty-action"
+				class:difficulty-action-active={hasProgress}
+				aria-label={`${presentation.label} difficulty, ${variant.pieceCount} pieces${hasProgress ? ', continue saved progress' : ''}`}
 				data-testid="difficulty-action"
 				data-difficulty={difficulty}
 			>
-				<span class="flex min-w-0 items-center gap-2 text-(--text-0)">
+				<span class="difficulty-gems-wrap">
 					<DifficultyGems {difficulty} pieceCount={variant.pieceCount} />
 					{#if hasProgress}
-						<span class="text-(--text-2)">·</span>
-						<span class="text-(--accent)">
-							CONTINUE {progress.placedCount}/{progress.pieceCount}
-						</span>
-					{:else}
-						<span class="text-(--text-2)">·</span>
-						<span class="text-(--accent) opacity-0 transition-opacity group-hover/diff:opacity-100">
-							PLAY
+						<span class="sr-only" data-testid="difficulty-progress">
+							{progress.placedCount}/{progress.pieceCount}
 						</span>
 					{/if}
 				</span>
 				{#if bestTime !== null}
 					<span
-						class="shrink-0 text-(--gold) [text-shadow:0_0_10px_var(--gold-glow)]"
+						class="difficulty-best-time"
 						data-testid="difficulty-best-time"
 						data-difficulty={difficulty}
 					>
@@ -71,15 +76,74 @@
 			</a>
 		{:else}
 			<div
-				class="flex items-center justify-between gap-3 border border-(--border) bg-(--bg-0) px-3 py-2
-				text-[0.65rem] font-(--font-mono) tracking-[0.1em] text-(--text-2) opacity-70"
+				class="difficulty-action difficulty-action-unavailable"
+				aria-label={`${presentation.label} difficulty, ${variant.pieceCount} pieces, unavailable`}
 				data-testid="difficulty-action"
 				data-difficulty={difficulty}
 			>
-				<span class="flex min-w-0 items-center gap-2">
+				<span class="difficulty-gems-wrap">
 					<DifficultyGems {difficulty} pieceCount={variant.pieceCount} />
 				</span>
 			</div>
 		{/if}
 	{/each}
 </div>
+
+<style>
+	.difficulty-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.difficulty-action {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		min-width: 0;
+		border: 1px solid var(--border);
+		border-radius: 12px;
+		padding: 8px 12px;
+		background: var(--bg-0);
+		color: var(--text-1);
+		font-family: var(--font-mono);
+		font-size: 0.65rem;
+		letter-spacing: 0.1em;
+		text-decoration: none;
+		transition:
+			border-color 150ms ease,
+			background 150ms ease,
+			box-shadow 150ms ease;
+	}
+
+	.difficulty-action:hover,
+	.difficulty-action:focus-visible {
+		border-color: var(--accent);
+		background: rgba(0, 240, 255, 0.04);
+	}
+
+	.difficulty-action-active {
+		border-color: var(--accent);
+		background: linear-gradient(150deg, rgba(0, 240, 255, 0.2), rgba(0, 184, 216, 0.08));
+		box-shadow: 0 3px 0 #00707f;
+	}
+
+	.difficulty-action-unavailable {
+		opacity: 0.7;
+	}
+
+	.difficulty-gems-wrap {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.difficulty-best-time {
+		flex-shrink: 0;
+		color: var(--gold);
+		text-shadow: 0 0 10px var(--gold-glow);
+		white-space: nowrap;
+	}
+</style>
