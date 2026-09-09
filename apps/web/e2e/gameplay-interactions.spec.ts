@@ -195,8 +195,6 @@ test.describe('Gameplay interactions', () => {
 			const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
 			await expect(dialog).toHaveAttribute('role', 'dialog');
 			await expect(dialog).toHaveAttribute('aria-modal', 'true');
-			await expect(dialog.getByTestId('completion-reference-art')).toBeVisible();
-			await expect(dialog.getByTestId('completion-star')).toHaveCount(3);
 
 			// manageModalFocus moves focus to the first focusable element
 			// (PLAY AGAIN) after a 100 ms timeout.

@@ -506,7 +506,7 @@ fi
 # Dry-run without --stack must NOT hit the execute-mode stack gate (it is
 # read-only and allowed to run without an explicit stack).
 out=$(PATH="$STUB_DIR11:$PATH" bash "$SCRIPT" --dry-run 2>&1 || true)
-if ! echo "$out" | grep -q "ERROR: --stack is required for execute mode"; then
+if ! echo "$out" | grep -q "ERROR: --stack is required for execute/resume mode"; then
 	ok "dry-run without --stack does not hit the execute-mode stack gate"
 else
 	fail "dry-run without --stack wrongly hit the execute-mode stack gate"
