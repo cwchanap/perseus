@@ -139,13 +139,35 @@
 		gap: 4px;
 	}
 
-	.card-difficulty-picker :global([data-testid='difficulty-action'] > span:last-child) {
+	.card-difficulty-picker :global([data-testid='difficulty-action'] .difficulty-best-time) {
 		font-size: 0.58rem;
+		letter-spacing: 0.04em;
+	}
+
+	.card-difficulty-picker :global([data-testid='difficulty-action'].difficulty-action-active) {
+		border-color: var(--accent);
+		background: linear-gradient(160deg, #5affff, #00c2dc);
+		box-shadow:
+			0 4px 0 #00707f,
+			0 8px 18px rgba(0, 240, 255, 0.4);
+		color: #03202a;
 	}
 
 	.card-difficulty-picker :global([data-testid='difficulty-action']:hover) {
 		border-color: var(--accent);
 		background: var(--bg-3);
 		box-shadow: 0 4px 0 #00707f;
+	}
+
+	.puzzle-card :global([data-testid='puzzle-card-title']) {
+		font-family: var(--font-display);
+		font-size: 1.2rem;
+		font-weight: 900;
+	}
+
+	.card-difficulty-picker :global([data-testid='difficulty-gems']) {
+		font-family: var(--font-display);
+		font-size: 1rem;
+		font-weight: 900;
 	}
 </style>

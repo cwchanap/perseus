@@ -131,6 +131,14 @@ const mockedListQuick = vi.mocked(listQuick);
 const mockedDiscoverGalleryProgress = vi.mocked(discoverGalleryProgress);
 const mockedDiscoverAllSavedProgress = vi.mocked(discoverAllSavedProgress);
 
+const openGallerySearch = async (): Promise<void> => {
+	await expect.element(page.getByTestId('gallery-search-disclosure')).toBeInTheDocument();
+	const disclosure = (await page
+		.getByTestId('gallery-search-disclosure')
+		.element()) as HTMLDetailsElement;
+	disclosure.open = true;
+};
+
 const observe = vi.fn();
 const disconnect = vi.fn();
 let intersectionCallback: IntersectionObserverCallback | null = null;
@@ -197,6 +205,7 @@ describe('Gallery Page', () => {
 		});
 		expect(mockedListQuick).toHaveBeenCalledTimes(1);
 
+		await openGallerySearch();
 		await page.getByTestId('search-input').fill('filtered');
 		await vi.waitFor(() => {
 			expect(mockedFetchPuzzles).toHaveBeenCalledWith(
@@ -379,6 +388,7 @@ describe('Gallery Page', () => {
 		await vi.waitFor(() => expect(mockedListQuick).toHaveBeenCalledTimes(1));
 		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(1);
 
+		await openGallerySearch();
 		await page.getByTestId('search-input').fill('filtered');
 		await vi.waitFor(() => expect(mockedFetchPuzzles).toHaveBeenCalledTimes(2));
 		expect(mockedListQuick).toHaveBeenCalledTimes(1);
@@ -400,6 +410,7 @@ describe('Gallery Page', () => {
 
 		render(GalleryPage);
 		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
+		await openGallerySearch();
 		await page.getByTestId('search-input').fill('other');
 		await vi.waitFor(() => expect(mockedFetchPuzzles).toHaveBeenCalledTimes(2));
 		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
@@ -697,6 +708,7 @@ describe('Gallery Page', () => {
 		});
 
 		render(GalleryPage);
+		await page.getByTestId('continue-secondary-toggle').click();
 		await page.getByRole('button', { name: 'Discard saved progress' }).click();
 
 		const main = document.querySelector('main')!;
@@ -721,6 +733,7 @@ describe('Gallery Page', () => {
 			.mockReturnValue({ byVariantId: new Map([['p1-e', progress]]), newest: progress });
 
 		render(GalleryPage);
+		await page.getByTestId('continue-secondary-toggle').click();
 		await expect
 			.element(page.getByRole('button', { name: 'Discard saved progress' }))
 			.toBeVisible();
@@ -750,6 +763,7 @@ describe('Gallery Page', () => {
 		});
 
 		render(GalleryPage);
+		await page.getByTestId('continue-secondary-toggle').click();
 		await page.getByRole('button', { name: 'Discard saved progress' }).click();
 		await page
 			.getByRole('dialog', { name: 'Discard saved progress' })
@@ -781,6 +795,7 @@ describe('Gallery Page', () => {
 		mockedFetchPuzzles.mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
 		render(GalleryPage);
 
+		await openGallerySearch();
 		const input = page.getByTestId('search-input');
 		await input.fill('nonexistent');
 
@@ -791,6 +806,7 @@ describe('Gallery Page', () => {
 	it('calls fetchPuzzles with q after debounce', async () => {
 		render(GalleryPage);
 
+		await openGallerySearch();
 		const input = page.getByTestId('search-input');
 		await input.fill('forest');
 
@@ -828,6 +844,7 @@ describe('Gallery Page', () => {
 
 		await expect.element(page.getByText('Initial Result')).toBeVisible();
 
+		await openGallerySearch();
 		const input = page.getByTestId('search-input');
 		await expect.element(input).toBeVisible();
 		await input.fill('forest');
@@ -874,6 +891,7 @@ describe('Gallery Page', () => {
 	it('renders the search input', async () => {
 		render(GalleryPage);
 
+		await openGallerySearch();
 		await expect.element(page.getByTestId('search-input')).toBeVisible();
 	});
 
@@ -916,6 +934,7 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
 
 		const callsBeforeSearch = mockedFetchPuzzles.mock.calls.length;
+		await openGallerySearch();
 		await page.getByTestId('search-input').fill('forest');
 
 		await vi.waitFor(() => {
@@ -1000,6 +1019,7 @@ describe('Gallery Page', () => {
 			);
 		});
 
+		await openGallerySearch();
 		await page.getByTestId('search-input').fill('fresh');
 
 		await vi.waitFor(() => {
@@ -1078,6 +1098,7 @@ describe('Gallery Page', () => {
 		expect(nextPageSignal).toBeInstanceOf(AbortSignal);
 		expect(nextPageSignal?.aborted).toBe(false);
 
+		await openGallerySearch();
 		await page.getByTestId('search-input').fill('fresh');
 
 		await vi.waitFor(() => {
@@ -1115,8 +1136,9 @@ describe('Gallery Page', () => {
 
 		await expect.element(page.getByText('Initial')).toBeVisible();
 		const badgeInitial = page.getByTestId('availability-badge');
-		await expect.element(badgeInitial).toBeVisible();
+		await expect.element(badgeInitial).toBeInTheDocument();
 
+		await openGallerySearch();
 		const input = page.getByTestId('search-input');
 		await input.fill('search');
 
@@ -1140,7 +1162,7 @@ describe('Gallery Page', () => {
 
 		await expect.element(page.getByText('Searched')).toBeVisible();
 		const badgeAfter = page.getByTestId('availability-badge');
-		await expect.element(badgeAfter).toBeVisible();
+		await expect.element(badgeAfter).toBeInTheDocument();
 	});
 
 	it('shows load-more error element when next-page fetch fails', async () => {
@@ -1385,6 +1407,7 @@ describe('Gallery Page', () => {
 		});
 
 		render(GalleryPage);
+		await openGallerySearch();
 		await expect.element(page.getByTestId('search-input')).toBeVisible();
 
 		const input = page.getByTestId('search-input');

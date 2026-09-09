@@ -48,11 +48,16 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByTestId('difficulty-action').nth(2)).toBeVisible();
 	});
 
-	it('shows Continue on a difficulty with saved progress', async () => {
+	it('marks a difficulty with saved progress without a text-heavy action', async () => {
 		const progress = new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]);
 		render(PuzzleCard, { family: mockFamily, progressByVariantId: progress });
 
-		await expect.element(page.getByText('CONTINUE 7/16')).toBeVisible();
+		await expect.element(page.getByTestId('difficulty-progress')).toHaveTextContent('7/16');
+		await expect
+			.element(
+				page.getByRole('link', { name: 'Easy difficulty, 16 pieces, continue saved progress' })
+			)
+			.toBeVisible();
 		await expect.element(page.getByTestId('card-progress')).toHaveTextContent('7/16');
 		const progressBadge = await page.getByTestId('card-progress').element();
 		expect(progressBadge.getAttribute('aria-label')).toBeNull();
