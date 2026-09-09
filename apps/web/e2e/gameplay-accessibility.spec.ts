@@ -21,6 +21,8 @@ import {
 	assertNoSeriousViolations
 } from './support/accessibility';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+import { createAuthPersona } from './gameplay-fixtures/auth-persona';
+import { seedApiVariantProgress } from './gameplay-fixtures/persisted-state';
 
 /**
  * Device preferences that auto-start fresh sessions. HPA-221 made Mission
@@ -79,6 +81,43 @@ test.describe('accessibility @a11y', () => {
 		await expect(page.getByTestId('puzzle-card').first()).toBeVisible();
 
 		await assertPageAccessible(page, { label: 'gallery' });
+	});
+
+	test('authenticated gallery: score chrome and saved card progress have no serious violations', async ({
+		page
+	}) => {
+		const persona = createAuthPersona('authenticated');
+		await persona.install(page);
+		await page.route(/\/api\/player\/progression(?:\?.*)?$/, (route) =>
+			route.fulfill({
+				json: {
+					score: 900,
+					rank: 38,
+					easyClears: 1,
+					normalClears: 0,
+					hardClears: 0,
+					achievementsUnlocked: 0,
+					achievementsTotal: 9,
+					masteryEarned: 0
+				}
+			})
+		);
+		await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
+			route.fulfill({ json: pagedFamilyResponse(GALLERY_FAMILIES) })
+		);
+
+		await page.goto('/');
+		await seedApiVariantProgress(page, GALLERY_FAMILIES[0]!.variants.easy.id, '1:1', 16);
+		await page.reload();
+		await expect(page.getByTestId('puzzle-card')).toBeVisible();
+		await expect(page.getByTestId('card-progress')).toContainText('1/16');
+		if ((page.viewportSize()?.width ?? 0) >= 1440) {
+			await expect(page.getByTestId('arcade-score')).toBeVisible();
+		} else {
+			await expect(page.getByTestId('arcade-compact-score')).toBeVisible();
+		}
+
+		await assertPageAccessible(page, { label: 'authenticated-gallery' });
 	});
 
 	test('active gameplay: no serious/critical violations during play', async ({

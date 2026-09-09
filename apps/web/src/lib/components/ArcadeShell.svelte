@@ -120,7 +120,7 @@
 
 			<div class="sidebar-spacer"></div>
 			{#if authStatus === 'authenticated'}
-				<div class="score-card" aria-label={`Score ${score ?? 0}, rank ${rank ?? 'unranked'}`}>
+				<div class="score-card">
 					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 						<path d="M12 2l2.9 6.3 6.9.8-5 4.7 1.3 6.8L12 17.4 5.9 20.6 7.2 13.8l-5-4.7 6.9-.8z" />
 					</svg>
@@ -159,7 +159,7 @@
 				</a>
 				<div class="compact-spacer"></div>
 				{#if authStatus === 'authenticated'}
-					<div class="compact-score" aria-label={`Score ${score ?? 0}, rank ${rank ?? 'unranked'}`}>
+					<div class="compact-score">
 						<span aria-hidden="true">★</span>
 						<span data-testid="arcade-compact-score">{score ?? '—'}</span>
 					</div>

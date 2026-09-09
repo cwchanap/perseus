@@ -242,20 +242,43 @@ test.describe('phone @visual', () => {
 		});
 		await gameplayPage.solveFixture();
 		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		const playAgain = page.getByRole('button', { name: 'PLAY AGAIN' });
+		await expect(playAgain).toBeFocused();
 		await page.getByTestId('celebration-modal').evaluate((modal) => {
-			modal.querySelector<HTMLElement>('.modal-box')?.scrollTo({ top: 0, left: 0 });
+			const box = modal.querySelector<HTMLElement>('.modal-box');
+			const actions = box?.querySelector<HTMLElement>('.modal-actions');
+			actions?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 		});
 		const phoneCompletionScroll = await page.getByTestId('celebration-modal').evaluate((modal) => {
 			const box = modal.querySelector<HTMLElement>('.modal-box');
+			const actions = box?.querySelector<HTMLElement>('.modal-actions');
+			const boxRect = box?.getBoundingClientRect();
+			const actionsRect = actions?.getBoundingClientRect();
 			return {
 				scrollTop: box?.scrollTop ?? 0,
 				scrollHeight: box?.scrollHeight ?? 0,
-				clientHeight: box?.clientHeight ?? 0
+				clientHeight: box?.clientHeight ?? 0,
+				actionsReachableByScroll:
+					boxRect !== undefined &&
+					actionsRect !== undefined &&
+					actionsRect.top >= boxRect.top &&
+					actionsRect.bottom <= boxRect.bottom,
+				actionCount: actions?.querySelectorAll('button').length ?? 0
 			};
 		});
-		expect(phoneCompletionScroll.scrollTop).toBe(0);
 		expect(phoneCompletionScroll.scrollHeight).toBeGreaterThan(phoneCompletionScroll.clientHeight);
-		await expect(page.getByRole('button', { name: 'PLAY AGAIN' })).toBeAttached();
+		expect(phoneCompletionScroll.actionsReachableByScroll).toBe(true);
+		expect(phoneCompletionScroll.actionCount).toBe(2);
+		await expect(playAgain).toBeFocused();
+		await expect(playAgain).toBeVisible();
+		await page.getByTestId('celebration-modal').evaluate((modal) => {
+			modal.querySelector<HTMLElement>('.modal-box')?.scrollTo({ top: 0, left: 0 });
+		});
+		const resetScrollTop = await page
+			.getByTestId('celebration-modal')
+			.evaluate((modal) => modal.querySelector<HTMLElement>('.modal-box')?.scrollTop ?? 0);
+		expect(resetScrollTop).toBe(0);
+		await expect(playAgain).toBeFocused();
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-phone-completion.png', {
 			maxDiffPixelRatio: 0.005
