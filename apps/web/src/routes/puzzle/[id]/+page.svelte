@@ -1769,8 +1769,8 @@
 	.gameplay-hud {
 		position: absolute;
 		top: 0.75rem;
-		left: calc(var(--gameplay-rail-width) + 1rem);
-		right: 1rem;
+		left: 1rem;
+		right: calc(var(--gameplay-rail-width) + 1rem);
 		z-index: 3;
 		display: flex;
 		align-items: center;

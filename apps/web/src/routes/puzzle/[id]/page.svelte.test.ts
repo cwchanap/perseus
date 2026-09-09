@@ -517,6 +517,38 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('progress-ring')).toHaveAttribute('aria-valuenow', '50');
 	});
 
+	it('keeps the mobile progress ring clear of the enabled undo target', async () => {
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			await page.viewport(390, 844);
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+
+			const ring = await page.getByTestId('progress-ring').element();
+			const undo = await page.getByLabelText('Undo').element();
+			const ringRect = ring.getBoundingClientRect();
+			const undoRect = undo.getBoundingClientRect();
+
+			expect(undo).not.toHaveAttribute('disabled');
+			expect(ringRect.right).toBeLessThanOrEqual(undoRect.left);
+			expect(ringRect.left).toBeGreaterThanOrEqual(0);
+			expect(ringRect.right).toBeLessThanOrEqual(window.innerWidth);
+		} finally {
+			await page.viewport(originalInnerWidth, originalInnerHeight);
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
+	});
+
 	it('shuffles the tray order on a fresh puzzle load (not sorted ascending)', async () => {
 		// The route must supply a shuffled initialTrayOrder for fresh sessions.
 		// Without it, freshState sorts piece IDs ascending, producing a
