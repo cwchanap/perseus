@@ -680,6 +680,28 @@ test.describe('admin @visual', () => {
 		await expect(page.getByText('Sunset Ridge')).toBeVisible();
 		await expect(page.getByTestId('admin-missions-count')).toHaveText('3');
 		await expect(page.getByTestId('admin-players-count')).toHaveText('4');
+		for (const controls of [
+			page.getByRole('button', { name: /^View full image/ }),
+			page.getByRole('button', { name: /delete/i })
+		]) {
+			const bounds = await controls.evaluateAll((elements) =>
+				elements.map((element) => {
+					const rect = element.getBoundingClientRect();
+					return { width: rect.width, height: rect.height };
+				})
+			);
+			for (const bound of bounds) {
+				expect(bound.width).toBeGreaterThanOrEqual(44);
+				expect(bound.height).toBeGreaterThanOrEqual(44);
+			}
+		}
+		const uploadBounds = await page
+			.getByRole('link', { name: 'UPLOAD MISSION' })
+			.evaluate((element) => {
+				const rect = element.getBoundingClientRect();
+				return { width: rect.width, height: rect.height };
+			});
+		expect(uploadBounds.height).toBeGreaterThanOrEqual(47);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-admin-missions.png', {
 			maxDiffPixelRatio: 0.005
@@ -692,6 +714,22 @@ test.describe('admin @visual', () => {
 		await page.getByRole('tab', { name: 'Player access' }).click();
 		await expect(page.getByText('pilot@example.com')).toBeVisible();
 		await expect(page.getByTestId('admin-players-count')).toHaveText('4');
+		const addPlayerBounds = await page
+			.getByRole('button', { name: 'ADD PLAYER' })
+			.evaluate((element) => {
+				const rect = element.getBoundingClientRect();
+				return { width: rect.width, height: rect.height };
+			});
+		expect(addPlayerBounds.width).toBeGreaterThanOrEqual(183);
+		expect(addPlayerBounds.height).toBeGreaterThanOrEqual(47);
+		const removeBounds = await page
+			.getByRole('button', { name: /remove pilot@example.com/i })
+			.evaluate((element) => {
+				const rect = element.getBoundingClientRect();
+				return { width: rect.width, height: rect.height };
+			});
+		expect(removeBounds.width).toBeGreaterThanOrEqual(44);
+		expect(removeBounds.height).toBeGreaterThanOrEqual(44);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-admin-player-access.png', {
 			maxDiffPixelRatio: 0.005

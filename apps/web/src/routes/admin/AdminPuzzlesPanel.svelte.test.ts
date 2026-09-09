@@ -274,12 +274,11 @@ describe('AdminPuzzlesPanel', () => {
 			.toBeVisible();
 	});
 
-	it('shows the filtered and total count while criteria are active', async () => {
+	it('shows the filtered count while criteria are active', async () => {
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockFamilies);
 
 		render(AdminPuzzlesPanel);
 
-		await expect.element(page.getByText('3 TOTAL')).toBeVisible();
 		await page.getByLabelText('Search puzzles').fill('Forest');
 
 		await expect.element(page.getByText('1 OF 3')).toBeVisible();
@@ -293,7 +292,6 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('Puzzle database unavailable')).toBeVisible();
-		await expect.element(page.getByText('0 TOTAL')).toBeVisible();
 	});
 
 	it('deletes a ready family after confirmation', async () => {
