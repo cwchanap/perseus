@@ -2231,10 +2231,6 @@
 			display: none;
 		}
 
-		:global(.game-layout > .puzzle-toolbar .toolbar-button[data-toolbar-action='redo']:disabled) {
-			display: none;
-		}
-
 		.game-workspace .hud-center {
 			text-align: center;
 		}

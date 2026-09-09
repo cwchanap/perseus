@@ -14,6 +14,10 @@
 - Phone accessibility lane on API `3999` / web preview `4273` — passed, 4 tests.
 - Focused phone workspace and inventory-fit checks on API `3999` / web preview `4273` — passed, 2 tests.
 - Required visual lane on API `3999` / web preview `4273`, updating the six affected named baselines — passed, 6 tests (`2a`, `2b`, `2d`, `2e`, `3a`, `3b`).
+- Focused toolbar interaction checks on API `3999` / web preview `4273` — passed, 2 tests, including enabled Redo after Undo staying behind More on phone.
+- Focused inventory component tests — passed, 28 tests after the tray-header sizing change.
+- Fresh gameplay-only visual lane on API `3999` / web preview `4273` — passed, 3 tests while regenerating `2b`, `2e`, and `3b`; the repeat without snapshot updates also passed, 3 tests.
+- The `2e` geometry assertion now checks the count chip, every filter button, and the tray handle for in-tray bounds and pairwise non-overlap at the 1080px tablet viewport.
 - Svelte autofixer — zero issues for all six edited Svelte files.
 
 ## Fresh visual evidence
@@ -29,4 +33,4 @@ Named baselines were regenerated in the final 3999/4273 run and are tracked unde
 
 ## Review follow-ups
 
-The fresh visual captures still show two responsive details for the independent gameplay review: the 300px tablet tray header can clip the first filter against the compact count chip, and the disabled Redo presentation needs the final More-menu placement when it becomes enabled after Undo. The current candidate keeps all handlers and focus semantics intact so those can be corrected in the scoped follow-up without changing the gameplay engine.
+The scoped review findings are addressed in this candidate. The tablet inventory header reserves a count track, uses compact intrinsic filter controls, and keeps the drawer handle reachable inside the 300px tray. The toolbar retains one Redo action in the secondary group: desktop and tablet extract it into the direct rail order, while phone keeps the same action hidden with More closed and visible in the open More menu after Undo. Gallery product behavior and gallery baselines were not changed in this follow-up.

@@ -226,30 +226,6 @@
 		</button>
 		<button
 			type="button"
-			aria-label="Redo"
-			data-toolbar-action="redo"
-			tabindex={toolbarTabIndex('redo')}
-			disabled={!canRedo}
-			onclick={onRedo}
-			class="arcade-btn-ghost toolbar-button"
-			title="Redo"
-		>
-			<svg
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2.4"
-				aria-hidden="true"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M21 10H11a5 5 0 000 10h4m6-10l-4-4m4 4l-4 4"
-				/>
-			</svg>
-		</button>
-		<button
-			type="button"
 			aria-label="Reset view"
 			data-toolbar-action="fit"
 			tabindex={toolbarTabIndex('fit')}
@@ -305,6 +281,30 @@
 		class="toolbar-secondary"
 	>
 		<div class="toolbar-group">
+			<button
+				type="button"
+				aria-label="Redo"
+				data-toolbar-action="redo"
+				tabindex={toolbarTabIndex('redo')}
+				disabled={!canRedo}
+				onclick={onRedo}
+				class="arcade-btn-ghost toolbar-button"
+				title="Redo"
+			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2.4"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M21 10H11a5 5 0 000 10h4m6-10l-4-4m4 4l-4 4"
+					/>
+				</svg>
+			</button>
 			<button
 				type="button"
 				aria-label="Zoom out"
@@ -673,7 +673,7 @@
 			order: 3;
 		}
 
-		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='redo'] {
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='redo'] {
 			order: 4;
 		}
 
@@ -717,6 +717,22 @@
 			border-radius: 1rem;
 			background: rgba(21, 13, 51, 0.97);
 			box-shadow: 0 12px 32px rgb(0 0 0 / 40%);
+		}
+
+		.puzzle-toolbar > .toolbar-secondary[data-open='false'] {
+			display: contents;
+			position: static;
+			width: auto;
+			padding: 0;
+			border: 0;
+			background: transparent;
+			box-shadow: none;
+		}
+
+		.puzzle-toolbar
+			> .toolbar-secondary[data-open='false']
+			.toolbar-button:not([data-toolbar-action='redo']) {
+			display: none;
 		}
 
 		.puzzle-toolbar > .toolbar-secondary[data-open='true'] {
