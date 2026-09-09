@@ -46,6 +46,21 @@ describe('ArcadeShell', () => {
 		await expect.element(page.getByTestId('shell-child')).toBeVisible();
 	});
 
+	it('fills the desktop content area beside the fixed sidebar', async () => {
+		await page.viewport(1440, 900);
+		render(ArcadeShell, authenticatedProps);
+
+		const sidebar = await page.getByTestId('arcade-sidebar').element();
+		const content = document.querySelector<HTMLElement>('.arcade-content');
+		expect(content).not.toBeNull();
+		const sidebarRect = sidebar.getBoundingClientRect();
+		const contentRect = content!.getBoundingClientRect();
+
+		expect(sidebarRect.width).toBe(232);
+		expect(contentRect.left).toBe(232);
+		expect(contentRect.right).toBe(window.innerWidth);
+	});
+
 	it('preserves a single main landmark when route content provides one', async () => {
 		await page.viewport(1440, 900);
 		render(ArcadeShell, {
