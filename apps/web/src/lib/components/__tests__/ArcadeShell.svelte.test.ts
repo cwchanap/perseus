@@ -125,7 +125,11 @@ describe('ArcadeShell', () => {
 		try {
 			await page.viewport(390, 844);
 			render(ArcadeShell, authenticatedProps);
-			await expect.element(page.getByTestId('arcade-mobile-nav')).toBeVisible();
+			await expect.element(page.getByTestId('arcade-mobile-nav')).toBeInTheDocument();
+			await page.getByTestId('arcade-mobile-menu-toggle').click();
+			await expect
+				.element(page.getByTestId('arcade-mobile-nav').getByRole('link', { name: 'Ranks' }))
+				.toHaveAttribute('href', '/leaderboard');
 			await expect.element(page.getByTestId('arcade-sidebar')).not.toBeVisible();
 		} finally {
 			await page.viewport(originalWidth, originalHeight);

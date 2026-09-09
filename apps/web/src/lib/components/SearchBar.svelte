@@ -7,9 +7,9 @@
 	let { value, onInput }: Props = $props();
 </script>
 
-<div class="relative w-full">
-	<div class="pointer-events-none absolute inset-y-0 left-4 flex items-center" aria-hidden="true">
-		<svg class="h-4 w-4 text-(--text-2)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+<div class="search-control">
+	<div class="search-icon" aria-hidden="true">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
 			<path
 				stroke-linecap="round"
 				stroke-linejoin="round"
@@ -25,11 +25,85 @@
 		placeholder="SEARCH MISSIONS..."
 		aria-label="Search puzzles"
 		data-testid="search-input"
-		class="w-full rounded-[20px] border border-(--border-bright) bg-[rgba(28,20,64,0.85)] py-2.5 pr-4 pl-11
-		text-[0.78rem] font-(--font-body) font-semibold tracking-[0.05em] text-(--text-1)
-		transition-[border-color,box-shadow] duration-150
-		placeholder:text-(--text-2) placeholder:opacity-80
-		focus:border-(--accent) focus:[box-shadow:0_0_15px_var(--accent-glow)]
-		focus:outline-none"
+		class="search-input"
 	/>
 </div>
+
+<style>
+	.search-control {
+		position: relative;
+		width: 100%;
+	}
+
+	.search-icon {
+		pointer-events: none;
+		position: absolute;
+		inset: 0 auto 0 1rem;
+		display: flex;
+		width: 1.2rem;
+		align-items: center;
+		color: var(--text-2);
+	}
+
+	.search-icon svg {
+		width: 1.2rem;
+		height: 1.2rem;
+		stroke-width: 2.2;
+	}
+
+	.search-input {
+		width: 100%;
+		height: 2.75rem;
+		box-sizing: border-box;
+		border: 1px solid var(--border-bright);
+		border-radius: 1.25rem;
+		background: rgba(28, 20, 64, 0.85);
+		padding: 0.625rem 1rem 0.625rem 3rem;
+		color: var(--text-1);
+		font-family: var(--font-body);
+		font-size: 0.95rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		outline: none;
+		transition:
+			border-color 0.15s ease,
+			box-shadow 0.15s ease;
+	}
+
+	.search-input::placeholder {
+		color: var(--text-1);
+		opacity: 0.8;
+	}
+
+	.search-input:focus {
+		border-color: var(--accent);
+		box-shadow: 0 0 15px var(--accent-glow);
+	}
+
+	@media (min-width: 64.01rem) and (max-width: 75rem) {
+		.search-input {
+			width: 2.625rem;
+			height: 2.625rem;
+			padding: 0;
+			border-radius: 0.875rem;
+			color: transparent;
+			font-size: 0;
+		}
+
+		.search-input::placeholder {
+			color: transparent;
+		}
+
+		.search-icon {
+			inset: 0;
+			width: 100%;
+			justify-content: center;
+		}
+	}
+
+	@media (max-width: 39.999rem) {
+		.search-input {
+			height: 2.625rem;
+		}
+	}
+</style>

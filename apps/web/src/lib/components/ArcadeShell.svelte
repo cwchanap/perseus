@@ -85,6 +85,16 @@
 	function isActive(path: string): boolean {
 		return currentPath === path;
 	}
+
+	function openGallerySearch(): void {
+		const disclosure = document.querySelector<HTMLDetailsElement>(
+			'[data-testid="gallery-search-disclosure"]'
+		);
+		if (!disclosure) return;
+
+		disclosure.open = true;
+		requestAnimationFrame(() => document.getElementById('search-input')?.focus());
+	}
 </script>
 
 <div
@@ -163,6 +173,20 @@
 						<span aria-hidden="true">★</span>
 						<span data-testid="arcade-compact-score">{score ?? '—'}</span>
 					</div>
+					{#if currentPath === '/'}
+						<button
+							type="button"
+							class="compact-search"
+							aria-label="Search puzzles"
+							data-testid="arcade-compact-search"
+							onclick={openGallerySearch}
+						>
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+								<path stroke-linecap="round" stroke-width="2.2" d="M21 21l-5.6-5.6" />
+								<circle cx="10" cy="10" r="6.4" stroke-width="2.2" />
+							</svg>
+						</button>
+					{/if}
 					<span class="compact-profile-name">{playerDisplayName || 'Player'}</span>
 					<a
 						href={resolve('/profile')}
@@ -171,27 +195,45 @@
 					>
 						{initials}
 					</a>
-					<button type="button" class="compact-logout" onclick={onLogout}>SIGN OUT</button>
 				{:else if authStatus === 'anonymous'}
 					<a href={resolve('/login')} class="compact-sign-in">SIGN IN</a>
 				{/if}
-			</header>
 
-			<nav class="compact-nav" data-testid="arcade-mobile-nav" aria-label="Player navigation">
-				{#each navItems as item (item.path)}
-					<a
-						href={resolve(item.href)}
-						class={isActive(item.path) ? 'compact-nav-link nav-link-active' : 'compact-nav-link'}
-						aria-current={isActive(item.path) ? 'page' : undefined}
-						data-testid={item.testId}
+				<details class="compact-menu">
+					<summary
+						class="compact-menu-toggle"
+						aria-label="Open arcade menu"
+						data-testid="arcade-mobile-menu-toggle"
 					>
-						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-							><path d={item.icon} /></svg
-						>
-						<span>{item.label}</span>
-					</a>
-				{/each}
-			</nav>
+						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+							<path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z" />
+						</svg>
+						<span class="sr-only">Open arcade menu</span>
+					</summary>
+					<div class="compact-menu-panel">
+						<nav class="compact-nav" data-testid="arcade-mobile-nav" aria-label="Player navigation">
+							{#each navItems as item (item.path)}
+								<a
+									href={resolve(item.href)}
+									class={isActive(item.path)
+										? 'compact-nav-link nav-link-active'
+										: 'compact-nav-link'}
+									aria-current={isActive(item.path) ? 'page' : undefined}
+									data-testid={item.testId}
+								>
+									<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+										><path d={item.icon} /></svg
+									>
+									<span>{item.label}</span>
+								</a>
+							{/each}
+						</nav>
+						{#if authStatus === 'authenticated'}
+							<button type="button" class="compact-menu-logout" onclick={onLogout}>SIGN OUT</button>
+						{/if}
+					</div>
+				</details>
+			</header>
 		{/if}
 
 		<div class="arcade-page">
@@ -230,24 +272,78 @@
 		align-items: center;
 		gap: 10px;
 		padding: 18px 18px 12px;
+		box-sizing: border-box;
+		min-height: 66px;
+		position: relative;
+		z-index: 2;
+	}
+
+	.compact-menu {
+		position: relative;
+		flex: 0 0 auto;
+	}
+
+	.compact-menu-toggle {
+		display: flex;
+		width: 38px;
+		height: 38px;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		border: 1px solid var(--border-bright);
+		border-radius: 13px;
+		background: var(--bg-2);
+		color: var(--text-1);
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.compact-menu-toggle::-webkit-details-marker {
+		display: none;
+	}
+
+	.compact-menu-toggle svg {
+		width: 18px;
+		height: 18px;
+	}
+
+	.compact-menu-toggle:hover,
+	.compact-menu[open] .compact-menu-toggle,
+	.compact-menu-toggle:focus-visible {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.compact-menu-panel {
+		position: absolute;
+		top: calc(100% + 8px);
+		right: 0;
+		z-index: 10;
+		display: flex;
+		min-width: 180px;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px;
+		border: 1px solid var(--border-bright);
+		border-radius: 14px;
+		background: var(--bg-2);
+		box-shadow: 0 16px 30px rgba(0, 0, 0, 0.5);
 	}
 
 	.compact-nav {
 		display: flex;
-		gap: 8px;
-		overflow-x: auto;
-		padding: 0 18px 16px;
-		-webkit-overflow-scrolling: touch;
+		flex-direction: column;
+		gap: 2px;
+		margin: 0;
+		padding: 0;
 	}
 
 	.compact-nav-link {
-		display: inline-flex;
-		flex: 0 0 auto;
+		display: flex;
 		align-items: center;
-		gap: 7px;
-		border: 1px solid var(--border);
-		border-radius: 18px;
-		padding: 9px 14px;
+		gap: 10px;
+		border-radius: 11px;
+		padding: 10px 11px;
 		color: var(--text-1);
 		font-size: 0.85rem;
 		font-weight: 600;
@@ -255,15 +351,59 @@
 	}
 
 	.compact-nav-link svg {
-		width: 16px;
-		height: 16px;
+		width: 17px;
+		height: 17px;
 	}
 
 	.compact-nav-link:hover,
 	.compact-nav-link.nav-link-active {
-		border-color: var(--accent);
 		background: var(--accent);
 		color: #03202a;
+	}
+
+	.compact-menu-logout {
+		margin-top: 4px;
+		border: 0;
+		border-top: 1px solid var(--border);
+		background: transparent;
+		padding: 11px;
+		color: var(--text-1);
+		font-family: var(--font-display);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.compact-menu-logout:hover,
+	.compact-menu-logout:focus-visible {
+		color: var(--accent);
+	}
+
+	.compact-search {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 38px;
+		height: 38px;
+		flex: 0 0 auto;
+		border: 1px solid var(--border-bright);
+		border-radius: 13px;
+		background: var(--bg-2);
+		color: var(--text-0);
+		cursor: pointer;
+	}
+
+	.compact-search:hover,
+	.compact-search:focus-visible {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.compact-search svg {
+		width: 18px;
+		height: 18px;
 	}
 
 	.brand {
@@ -322,8 +462,7 @@
 
 	.compact-sign-in,
 	.sign-in-link,
-	.logout-button,
-	.compact-logout {
+	.logout-button {
 		color: var(--text-1);
 		font-family: var(--font-display);
 		font-size: 0.7rem;
@@ -334,8 +473,7 @@
 
 	.compact-sign-in:hover,
 	.sign-in-link:hover,
-	.logout-button:hover,
-	.compact-logout:hover {
+	.logout-button:hover {
 		color: var(--accent);
 	}
 
@@ -347,14 +485,6 @@
 		font-weight: 600;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.compact-logout {
-		padding: 0;
-		border: 0;
-		background: transparent;
-		cursor: pointer;
-		font-size: 0.58rem;
 	}
 
 	.profile-avatar {
@@ -384,6 +514,36 @@
 		min-width: 0;
 	}
 
+	@media (max-width: 1439px) {
+		.compact-header {
+			min-height: 80px;
+			padding: 22px 28px 18px;
+		}
+
+		.compact-header .brand-mark {
+			width: 40px;
+			height: 40px;
+			border-radius: 13px;
+		}
+
+		.compact-header .brand-mark svg {
+			width: 22px;
+			height: 22px;
+		}
+
+		.compact-header .brand-name,
+		.compact-header .compact-profile-name,
+		.arcade-page {
+			position: relative;
+			z-index: 1;
+		}
+
+		.compact-header .brand-name,
+		.compact-header .compact-profile-name {
+			display: none;
+		}
+	}
+
 	@media (min-width: 1440px) {
 		.arcade-shell {
 			display: flex;
@@ -403,7 +563,7 @@
 		}
 
 		.compact-header,
-		.compact-nav {
+		.compact-menu {
 			display: none;
 		}
 
@@ -479,15 +639,36 @@
 
 	@media (max-width: 640px) {
 		.compact-header {
-			padding-top: 20px;
+			min-height: 66px;
+			padding: 18px 18px 12px;
 		}
 
-		.brand-name {
-			font-size: 0.9rem;
+		.compact-header .brand-mark {
+			width: 34px;
+			height: 34px;
+			border-radius: 11px;
 		}
 
-		.compact-nav {
-			padding-bottom: 12px;
+		.compact-header .brand-mark svg {
+			width: 19px;
+			height: 19px;
+		}
+
+		.compact-score {
+			gap: 5px;
+			padding: 6px 9px;
+			font-size: 0.72rem;
+		}
+
+		.compact-header .compact-search {
+			width: 38px;
+			height: 38px;
+		}
+
+		.compact-menu-toggle {
+			width: 34px;
+			height: 34px;
+			border-radius: 11px;
 		}
 	}
 </style>

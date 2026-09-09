@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fetchPuzzles, fetchPuzzle, ApiError } from '$lib/services/api';
+	import { fetchPuzzles, fetchPuzzle, getFamilyThumbnailUrl, ApiError } from '$lib/services/api';
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import ProgressRing from '$lib/components/ProgressRing.svelte';
@@ -55,6 +55,22 @@
 	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
+	let resumeImageError = $state(false);
+	const resumeImageUrl = $derived.by(() => {
+		if (!latestProgress) return null;
+		if (latestProgress.source === 'local') {
+			return (
+				quickPuzzles.find((puzzle) => puzzle.id === latestProgress?.puzzleId)?.imageDataUrl ?? null
+			);
+		}
+
+		const family = families.find((candidate) =>
+			[candidate.variants.easy, candidate.variants.normal, candidate.variants.hard].some(
+				(variant) => variant.id === latestProgress?.puzzleId
+			)
+		);
+		return family ? getFamilyThumbnailUrl(family.id) : null;
+	});
 
 	onMount(() => {
 		quickPuzzles = listQuick();
@@ -267,64 +283,57 @@
 	aria-hidden={discardTarget !== null || savedProgressOpen}
 	class="min-h-screen bg-transparent"
 >
-	<div class="mx-auto max-w-[80rem] px-[18px] pt-6 pb-16 sm:px-6 sm:pt-8 md:px-8">
-		<header class="mb-6 border-b border-(--border) pb-5">
-			<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-				<div class="shrink-0">
-					<div
-						class="mb-1 text-[0.6rem] font-(--font-mono) tracking-[0.2em] text-(--accent) opacity-60"
-					>
-						// PERSEUS SYSTEM v1.0
-					</div>
-					<h1
-						class="text-[clamp(1.6rem,4vw,2.4rem)] leading-none font-(--font-display) font-black
-						tracking-[0.06em] text-(--text-0) uppercase"
-					>
-						PUZZLE
-						<span
-							class="ml-[0.3em] text-(--accent)
-							[text-shadow:0_0_20px_var(--accent),0_0_50px_var(--accent-glow-strong)]"
+	<div class="gallery-layout">
+		<div class="gallery-topbar">
+			<h1 class="sr-only">Puzzle Arcade</h1>
+			{#if initialLoadComplete}
+				<div class="gallery-search-container">
+					<details class="gallery-search-disclosure" data-testid="gallery-search-disclosure">
+						<summary
+							class="gallery-search-toggle"
+							aria-label="Open puzzle search"
+							data-testid="gallery-search-toggle"
 						>
-							ARCADE
-						</span>
-					</h1>
-				</div>
-
-				{#if initialLoadComplete}
-					<div
-						class="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-end"
-					>
-						<div class="min-w-0 sm:w-full sm:max-w-[26rem]">
-							<SearchBar value={searchQuery} onInput={(v) => (searchQuery = v)} />
-						</div>
-						<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+								<path stroke-linecap="round" stroke-width="2.2" d="M21 21l-5.6-5.6" />
+								<circle cx="10" cy="10" r="6.4" stroke-width="2.2" />
+							</svg>
+						</summary>
+					</details>
+					<div class="gallery-search">
+						<SearchBar value={searchQuery} onInput={(v) => (searchQuery = v)} />
 					</div>
-				{/if}
-			</div>
+				</div>
+				<div class="gallery-categories">
+					<CategoryFilter
+						selected={selectedCategory}
+						onSelect={handleCategorySelect}
+						total={total > 0 ? total : undefined}
+					/>
+				</div>
+			{/if}
+		</div>
 
-			<div class="mt-4 flex items-center justify-between gap-3">
-				<span class="text-[0.65rem] font-(--font-mono) tracking-[0.2em] text-(--text-2) uppercase">
-					SELECT YOUR MISSION
-				</span>
-				{#if total > 0}
-					<span
-						class="text-[0.65rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
-						data-testid="availability-badge"
-					>
-						{total} AVAILABLE
-					</span>
-				{/if}
-			</div>
-		</header>
+		{#if total > 0}
+			<span class="sr-only" data-testid="availability-badge">{total} AVAILABLE</span>
+		{/if}
 
 		{#if latestProgress || savedProgressCandidateIds.length > 0}
 			<section
 				data-testid="continue-on-device"
 				aria-labelledby="continue-on-device-title"
-				class="mb-6 flex flex-wrap items-center gap-4 overflow-hidden rounded-[22px] border border-(--accent)
-				bg-(--bg-1) px-4 py-4 [box-shadow:0_12px_30px_rgba(0,0,0,0.5),0_0_0_1px_var(--accent-dim)]
-				sm:px-5"
+				class="continue-panel"
 			>
+				{#if resumeImageUrl && !resumeImageError}
+					<img
+						class="continue-art"
+						src={resumeImageUrl}
+						alt=""
+						aria-hidden="true"
+						onerror={() => (resumeImageError = true)}
+					/>
+				{/if}
+				<div class="continue-art-overlay" aria-hidden="true"></div>
 				{#if latestProgress}
 					<div class="continue-progress-ring">
 						<ProgressRing
@@ -334,28 +343,22 @@
 							label={`${latestProgress.name} progress`}
 						/>
 					</div>
-					<div class="min-w-[10rem] flex-1">
-						<h2
-							id="continue-on-device-title"
-							class="text-[0.62rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
-						>
-							CONTINUE ON THIS DEVICE
-						</h2>
-						<p class="mt-1 truncate text-[1rem] font-(--font-display) font-black text-(--text-0)">
+					<div class="continue-details">
+						<h2 id="continue-on-device-title" class="continue-kicker">CONTINUE ON THIS DEVICE</h2>
+						<p class="continue-title">
 							{latestProgress.name}
 						</p>
-						<span
-							class="mt-1 block text-[0.68rem] font-(--font-mono) tracking-[0.1em] text-(--text-1)"
-						>
+						<span class="continue-stats">
 							{latestProgress.placedCount}/{latestProgress.pieceCount} PLACED
 						</span>
 					</div>
 					<a
 						href={resolve(`/puzzle/${latestProgress.puzzleId}`)}
-						class="arcade-btn shrink-0 px-5 py-3 xl:min-h-[70px] xl:px-[34px] xl:text-[1.05rem]"
+						class="continue-action arcade-btn"
+						aria-label="CONTINUE"
 					>
 						<svg
-							class="h-5 w-5 xl:h-7 xl:w-7"
+							class="continue-action-icon"
 							viewBox="0 0 24 24"
 							fill="currentColor"
 							aria-hidden="true"
@@ -364,39 +367,36 @@
 								d="M8 5.2v13.6c0 .9 1 1.5 1.8 1l10.4-6.8c.7-.5.7-1.5 0-2L9.8 4.2C9 3.7 8 4.3 8 5.2z"
 							/>
 						</svg>
-						<span>CONTINUE</span>
+						<span class="continue-action-label">RESUME</span>
 					</a>
-					<button
-						type="button"
-						aria-label="Discard saved progress"
-						class="shrink-0 border border-(--border-bright) px-4 py-3 text-[0.6rem]
-						font-(--font-display) font-bold tracking-[0.15em] text-(--text-1) uppercase transition-colors
-						hover:border-(--accent) hover:text-(--accent)"
-						onclick={() => (discardTarget = latestProgress)}
-					>
-						DISCARD
-					</button>
+					<details class="continue-secondary">
+						<summary aria-label="Saved progress actions" data-testid="continue-secondary-toggle">
+							•••
+						</summary>
+						<div class="continue-secondary-menu">
+							<button
+								type="button"
+								aria-label="Discard saved progress"
+								onclick={() => (discardTarget = latestProgress)}
+							>
+								DISCARD
+							</button>
+							{#if savedProgressCandidateIds.length > 0}
+								<button type="button" onclick={openSavedProgress}>VIEW SAVED PROGRESS</button>
+							{/if}
+						</div>
+					</details>
 				{:else}
-					<div class="min-w-40 flex-1">
-						<h2
-							id="continue-on-device-title"
-							class="text-[0.62rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
-						>
-							CONTINUE ON THIS DEVICE
-						</h2>
-						<p
-							class="mt-1 truncate text-[0.95rem] font-(--font-display) font-black text-(--text-0)"
-						>
-							SAVED PROGRESS AVAILABLE
-						</p>
+					<div class="continue-details">
+						<h2 id="continue-on-device-title" class="continue-kicker">CONTINUE ON THIS DEVICE</h2>
+						<p class="continue-title">SAVED PROGRESS AVAILABLE</p>
 					</div>
 				{/if}
 				{#if savedProgressCandidateIds.length > 0}
 					<button
 						type="button"
-						aria-label="View saved progress"
-						class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-						tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
+						class="continue-more-action"
+						class:continue-more-action-compact-hidden={latestProgress}
 						onclick={openSavedProgress}
 					>
 						VIEW SAVED PROGRESS
@@ -536,8 +536,7 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 			</div>
 		{:else}
 			<div
-				class="puzzle-grid grid grid-cols-1 gap-4 motion-safe:animate-[slide-up_0.4s_ease-out]
-				motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 md:gap-5"
+				class="puzzle-grid motion-safe:animate-[slide-up_0.4s_ease-out] motion-reduce:animate-none"
 				data-testid="puzzle-grid"
 			>
 				{#each families as family (family.id)}
@@ -599,42 +598,507 @@ hover:bg-[rgba(255,0,102,0.08)]"
 {/if}
 
 <style>
+	.gallery-layout {
+		box-sizing: border-box;
+		display: grid;
+		width: 100%;
+		max-width: 80rem;
+		margin: 0 auto;
+		padding: 1.625rem 2rem 4rem;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas:
+			'search categories'
+			'resume resume'
+			'cards cards';
+	}
+
+	.gallery-topbar {
+		display: contents;
+	}
+
+	.gallery-search-container {
+		position: relative;
+		width: min(100%, 26rem);
+		grid-area: search;
+	}
+
+	.gallery-search-disclosure {
+		display: block;
+	}
+
+	.gallery-search-toggle {
+		display: none;
+	}
+
+	.gallery-search {
+		width: 100%;
+	}
+
+	.gallery-categories {
+		grid-area: categories;
+		justify-self: end;
+	}
+
+	.continue-panel {
+		position: relative;
+		isolation: isolate;
+		display: flex;
+		min-width: 0;
+		min-height: 6.75rem;
+		box-sizing: border-box;
+		grid-area: resume;
+		align-items: center;
+		gap: 1.375rem;
+		margin-top: 1.125rem;
+		margin-bottom: 1.25rem;
+		overflow: hidden;
+		padding: 1.375rem 1.625rem;
+		border: 1px solid var(--accent);
+		border-radius: 1.5rem;
+		background:
+			linear-gradient(
+				100deg,
+				rgba(10, 6, 32, 0.95),
+				rgba(10, 6, 32, 0.68) 44%,
+				rgba(10, 6, 32, 0.08)
+			),
+			repeating-linear-gradient(
+				115deg,
+				#2b3f52 0 26px,
+				#35586d 26px 52px,
+				#4a6b73 52px 78px,
+				#7a6a58 78px 104px
+			);
+		box-shadow:
+			0 14px 34px rgba(0, 0, 0, 0.5),
+			0 0 0 1px var(--accent-dim);
+	}
+
+	.continue-art,
+	.continue-art-overlay {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.continue-art {
+		z-index: 0;
+	}
+
+	.continue-art-overlay {
+		z-index: 0;
+		background: linear-gradient(
+			100deg,
+			rgba(10, 6, 32, 0.95),
+			rgba(10, 6, 32, 0.68) 44%,
+			rgba(10, 6, 32, 0.08)
+		);
+	}
+
+	.continue-progress-ring,
+	.continue-details,
+	.continue-action,
+	.continue-secondary,
+	.continue-more-action {
+		position: relative;
+		z-index: 1;
+	}
+
+	.continue-details {
+		min-width: 0;
+		flex: 1;
+	}
+
+	.continue-kicker {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	.continue-title {
+		margin: 0;
+		overflow: hidden;
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		font-weight: 900;
+		letter-spacing: 0.03em;
+		text-overflow: ellipsis;
+		text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+		white-space: nowrap;
+	}
+
+	.continue-stats {
+		display: block;
+		margin-top: 0.5rem;
+		color: var(--text-1);
+		font-family: var(--font-display);
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+	}
+
+	.continue-action {
+		width: auto;
+		height: 4.375rem;
+		flex: none;
+		padding: 0 2.125rem;
+		border-radius: 1.5rem;
+	}
+
+	.continue-action-icon {
+		width: 1.75rem;
+		height: 1.75rem;
+	}
+
+	.continue-action-label {
+		display: inline;
+	}
+
+	.continue-secondary {
+		position: relative;
+		flex: none;
+		width: 2.25rem;
+	}
+
+	.continue-secondary summary {
+		display: flex;
+		width: 2.25rem;
+		height: 2.25rem;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		border: 1px solid var(--border-bright);
+		border-radius: 0.75rem;
+		color: var(--text-1);
+		font-family: var(--font-display);
+		font-size: 0.8rem;
+		font-weight: 900;
+		letter-spacing: 0.08em;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.continue-secondary summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.continue-secondary summary:hover,
+	.continue-secondary[open] summary {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.continue-secondary-menu {
+		position: absolute;
+		top: calc(100% + 0.5rem);
+		right: 0;
+		z-index: 4;
+		display: flex;
+		min-width: 10rem;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 0.5rem;
+		border: 1px solid var(--border-bright);
+		border-radius: 0.75rem;
+		background: var(--bg-2);
+		box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+	}
+
+	.continue-secondary-menu button,
+	.continue-more-action {
+		border: 1px solid transparent;
+		background: transparent;
+		padding: 0.45rem 0.55rem;
+		color: var(--text-1);
+		font-family: var(--font-display);
+		font-size: 0.58rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.continue-secondary-menu button:hover,
+	.continue-more-action:hover {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.continue-more-action {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
 	.continue-progress-ring {
 		display: flex;
-		width: 58px;
-		height: 58px;
+		width: 4.625rem;
+		height: 4.625rem;
 		flex: none;
 		align-items: center;
 		justify-content: center;
 	}
 
-	@media (min-width: 80rem) {
-		.continue-progress-ring {
-			width: 74px;
-			height: 74px;
-		}
+	.puzzle-grid {
+		display: grid;
+		grid-area: cards;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		align-items: start;
+		gap: 1.125rem;
+	}
 
+	@media (min-width: 90rem) {
 		.continue-progress-ring :global(.progress-ring) {
 			transform: scale(1.276);
 		}
 	}
 
-	.puzzle-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		gap: 1rem;
-	}
+	@media (min-width: 64.01rem) and (max-width: 75rem) {
+		.gallery-layout {
+			max-width: none;
+			margin-top: -5rem;
+			padding: 0 1.75rem 2.5rem;
+			grid-template-areas:
+				'categories search'
+				'resume resume'
+				'cards cards';
+		}
 
-	@media (min-width: 40rem) {
-		.puzzle-grid {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
+		.gallery-search-container,
+		.gallery-categories {
+			display: flex;
+			height: 5rem;
+			align-items: flex-start;
+			padding-top: 1.375rem;
+			box-sizing: border-box;
+		}
+
+		.gallery-categories {
+			justify-self: start;
+			margin-left: 3.75rem;
+		}
+
+		.gallery-search-container {
+			position: relative;
+			justify-self: end;
+			width: 2.625rem;
+		}
+
+		.gallery-search-toggle {
+			display: flex;
+			width: 2.625rem;
+			height: 2.625rem;
+			align-items: center;
+			justify-content: center;
+			box-sizing: border-box;
+			border: 1px solid var(--border-bright);
+			border-radius: 0.875rem;
+			background: var(--bg-2);
+			color: var(--text-1);
+			list-style: none;
+			cursor: pointer;
+		}
+
+		.gallery-search-toggle::-webkit-details-marker {
+			display: none;
+		}
+
+		.gallery-search-toggle svg {
+			width: 1.1rem;
+			height: 1.1rem;
+		}
+
+		.gallery-search-toggle:hover,
+		.gallery-search-disclosure[open] .gallery-search-toggle,
+		.gallery-search-toggle:focus-visible {
+			border-color: var(--accent);
+			color: var(--accent);
+		}
+
+		.gallery-search-container .gallery-search {
+			position: absolute;
+			top: calc(100% + 0.5rem);
+			right: 0;
+			z-index: 5;
+			display: none;
+			width: min(26rem, calc(100vw - 3.5rem));
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search {
+			display: block;
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search :global(.search-input) {
+			width: 100%;
+			padding: 0.625rem 1rem 0.625rem 3rem;
+			color: var(--text-1);
+			font-size: 0.95rem;
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search :global(.search-icon) {
+			inset: 0 auto 0 1rem;
+			width: 1.2rem;
+			justify-content: flex-start;
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search :global(.search-input)::placeholder {
+			color: var(--text-1);
+		}
+
+		.continue-more-action-compact-hidden {
+			display: none;
+		}
+
+		.continue-panel {
+			min-height: 6.375rem;
+			gap: 1.125rem;
+			margin-top: 0;
+			margin-bottom: 1.125rem;
+			padding: 1.125rem 1.25rem;
+		}
+
+		.continue-progress-ring {
+			width: 3.875rem;
+			height: 3.875rem;
+		}
+
+		.continue-title {
+			font-size: 1.2rem;
+		}
+
+		.continue-stats {
+			margin-top: 0.35rem;
+			font-size: 0.875rem;
+		}
+
+		.continue-action {
+			width: 4rem;
+			height: 4rem;
+			padding: 0;
+			border-radius: 1.375rem;
+		}
+
+		.continue-action-label {
+			display: none;
 		}
 	}
 
-	@media (min-width: 48rem) {
+	@media (max-width: 39.999rem) {
+		.gallery-layout {
+			display: flex;
+			max-width: none;
+			flex-direction: column;
+			padding: 0 1.125rem 2.5rem;
+		}
+
+		.gallery-search-container {
+			position: relative;
+			width: 100%;
+			height: 0;
+			grid-area: search;
+		}
+
+		.gallery-search-toggle {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0 0 0 0);
+			clip-path: inset(50%);
+			white-space: nowrap;
+			border: 0;
+		}
+
+		.gallery-search-container .gallery-search {
+			display: none;
+			width: 100%;
+		}
+
+		.gallery-search-container:has(.gallery-search-disclosure[open]) {
+			height: 2.625rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search {
+			display: block;
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search :global(.search-input) {
+			width: 100%;
+			color: var(--text-1);
+			font-size: 0.95rem;
+		}
+
+		.gallery-search-disclosure[open] + .gallery-search :global(.search-input)::placeholder {
+			color: var(--text-1);
+		}
+
+		.continue-more-action-compact-hidden {
+			display: none;
+		}
+
+		.gallery-categories {
+			order: 2;
+			margin-bottom: 1rem;
+		}
+
+		.continue-panel {
+			order: 1;
+			min-height: 5.625rem;
+			gap: 0.875rem;
+			margin-top: 0;
+			margin-bottom: 1rem;
+			padding: 1rem;
+			border-radius: 1.375rem;
+		}
+
+		.continue-progress-ring {
+			width: 3.625rem;
+			height: 3.625rem;
+		}
+
+		.continue-title {
+			font-size: 1rem;
+		}
+
+		.continue-stats {
+			margin-top: 0.3rem;
+			font-size: 0.8rem;
+		}
+
+		.continue-action {
+			width: 3.75rem;
+			height: 3.75rem;
+			padding: 0;
+			border-radius: 1.375rem;
+		}
+
+		.continue-action-label {
+			display: none;
+		}
+
+		.continue-secondary {
+			width: 2rem;
+		}
+
+		.continue-secondary summary {
+			width: 2rem;
+			height: 2rem;
+		}
+
 		.puzzle-grid {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
-			gap: 1.25rem;
+			order: 3;
+			grid-template-columns: minmax(0, 1fr);
+			gap: 1rem;
 		}
 	}
 </style>
