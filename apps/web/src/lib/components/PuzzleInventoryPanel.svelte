@@ -857,19 +857,30 @@
 	}
 
 	@media (min-width: 1024px) and (max-width: 1279px) {
+		.panel-header {
+			grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) auto;
+		}
+
 		.inventory-tools {
-			gap: 0.25rem;
+			gap: 0.125rem;
+			justify-content: flex-start;
 		}
 
 		.inventory-tools .panel-action {
-			width: 2rem;
-			min-width: 2rem;
+			width: 1.625rem;
+			min-width: 1.625rem;
 			padding: 0;
 		}
 
 		.inventory-tools .panel-action svg {
-			width: 0.85rem;
-			height: 0.85rem;
+			width: 0.7rem;
+			height: 0.7rem;
+		}
+
+		.panel-actions .drawer-toggle {
+			width: 1.75rem;
+			min-width: 1.75rem;
+			padding: 0;
 		}
 	}
 </style>
