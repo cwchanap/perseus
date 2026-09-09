@@ -1344,16 +1344,29 @@
 							</div>
 
 							<div class="gameplay-hud" data-testid="gameplay-hud">
-								{#if showTimedPresentation}
-									<!-- GameTimer renders its own data-testid="game-timer" so the
-								     existing timer contract remains unchanged. -->
-									<GameTimer {timerState} {bestTime} />
-								{:else if showRelaxedPresentation}
-									<div data-testid="relaxed-mode-indicator">RELAXED</div>
-								{/if}
-								<div class="hud-pieces">
-									<span class="stat-label">LEFT</span>
-									<span class="stat-value">{currentPuzzle.pieceCount - placedPieces.length}</span>
+								<div class="phone-status-capsule" data-testid="phone-status-capsule">
+									{#if showTimedPresentation}
+										<!-- GameTimer renders its own data-testid="game-timer" so the
+									     existing timer contract remains unchanged. -->
+										<GameTimer {timerState} {bestTime} />
+									{:else if showRelaxedPresentation}
+										<div data-testid="relaxed-mode-indicator">RELAXED</div>
+									{/if}
+									<div
+										class="hud-pieces"
+										aria-label={`${currentPuzzle.pieceCount - placedPieces.length} pieces left`}
+									>
+										<svg
+											class="hud-pieces-icon"
+											viewBox="0 0 24 24"
+											fill="currentColor"
+											aria-hidden="true"
+										>
+											<path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />
+										</svg>
+										<span class="stat-label">LEFT</span>
+										<span class="stat-value">{currentPuzzle.pieceCount - placedPieces.length}</span>
+									</div>
 								</div>
 								<ProgressRing
 									percent={progressPct}
@@ -1859,7 +1872,7 @@
 		position: relative;
 		display: flex;
 		width: 100%;
-		max-width: min(96rem, calc(100vw - 2rem));
+		max-width: none;
 		min-height: 0;
 		margin: 0 auto;
 		flex: 1;
@@ -1952,6 +1965,14 @@
 		background: #0a0620;
 	}
 
+	.phone-status-capsule {
+		display: contents;
+	}
+
+	.hud-pieces-icon {
+		display: none;
+	}
+
 	@media (max-width: 1023px) {
 		.puzzle-main {
 			padding: 0;
@@ -2038,6 +2059,103 @@
 			width: 2.75rem;
 			height: 2.75rem;
 		}
+
+		.gameplay-hud {
+			width: calc(100% - 3.5rem);
+			margin-left: 3.5rem;
+		}
+
+		.phone-status-capsule {
+			display: flex;
+			min-width: 0;
+			flex: 1;
+			align-items: center;
+			gap: 0.5rem;
+			box-sizing: border-box;
+			padding: 0.4375rem 0.75rem;
+			border: 1px solid #38246f;
+			border-radius: 1.125rem;
+			background: rgba(28, 20, 64, 0.9);
+			backdrop-filter: blur(10px);
+		}
+
+		.phone-status-capsule :global(.timer-hud) {
+			display: contents;
+		}
+
+		.phone-status-capsule :global(.timer-block),
+		.phone-status-capsule :global(.best-block) {
+			min-height: 0;
+			padding: 0;
+			border: 0;
+			border-radius: 0;
+			background: transparent;
+			box-shadow: none;
+		}
+
+		.phone-status-capsule :global(.timer-block) {
+			gap: 0.5rem;
+			flex-shrink: 0;
+		}
+
+		.phone-status-capsule :global(.timer-icon) {
+			width: 1rem;
+			height: 1rem;
+		}
+
+		.phone-status-capsule :global(.timer-value) {
+			font-size: 1.0625rem;
+		}
+
+		.phone-status-capsule :global(.best-block) {
+			gap: 0.35rem;
+			margin-left: 0.35rem;
+		}
+
+		.phone-status-capsule .hud-pieces {
+			min-height: 0;
+			margin-left: auto;
+			gap: 0.45rem;
+			padding: 0;
+			border: 0;
+			border-radius: 0;
+			background: transparent;
+			box-shadow: none;
+		}
+
+		.phone-status-capsule .hud-pieces-icon {
+			display: block;
+			width: 1rem;
+			height: 1rem;
+			color: var(--hot);
+		}
+
+		.phone-status-capsule .stat-label {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+			border: 0;
+		}
+
+		.phone-status-capsule .stat-value {
+			font-size: 0.95rem;
+			color: var(--text-0);
+		}
+	}
+
+	@media (min-width: 1024px) {
+		.puzzle-main {
+			padding: 0;
+		}
+
+		.game-workspace {
+			margin: 0;
+		}
 	}
 
 	/* Keep the rail, board stage, and tray as the only desktop grid tracks. The
@@ -2057,6 +2175,7 @@
 			grid-row: 1;
 			padding: 4.25rem 0.25rem 0.5rem;
 			overflow: visible;
+			align-items: center;
 		}
 
 		:global(.game-layout > .puzzle-toolbar:has(.toolbar-secondary[data-open='true'])) {
@@ -2073,6 +2192,8 @@
 			min-height: 0;
 			flex-direction: column;
 			gap: 2.25rem;
+			padding-top: 1.25rem;
+			box-sizing: border-box;
 		}
 
 		.board-stage > :global(.board-panel) {

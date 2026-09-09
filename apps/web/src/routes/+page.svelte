@@ -1051,7 +1051,7 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		.continue-panel {
 			order: 1;
 			min-height: 5.625rem;
-			gap: 0.875rem;
+			gap: 0.5rem;
 			margin-top: 0;
 			margin-bottom: 1rem;
 			padding: 1rem;
