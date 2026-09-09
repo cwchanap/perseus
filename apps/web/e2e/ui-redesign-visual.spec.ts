@@ -317,10 +317,13 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 					const rect = element.getBoundingClientRect();
 					return {
 						label: element.getAttribute('aria-label') ?? element.className,
+						interactive: !element.matches('.inv-count'),
 						left: rect.left,
 						right: rect.right,
 						top: rect.top,
-						bottom: rect.bottom
+						bottom: rect.bottom,
+						width: rect.width,
+						height: rect.height
 					};
 				}),
 			header: bounds('.board-stage > .hud-header'),
@@ -371,6 +374,10 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 	for (const control of geometry.trayControls) {
 		expect(control.left).toBeGreaterThanOrEqual(geometry.tray.left);
 		expect(control.right).toBeLessThanOrEqual(geometry.tray.right + 1);
+		if (geometry.viewport.width <= 1279 && control.interactive) {
+			expect(control.width, `${control.label} width`).toBeGreaterThanOrEqual(44);
+			expect(control.height, `${control.label} height`).toBeGreaterThanOrEqual(44);
+		}
 	}
 	for (let index = 0; index < geometry.trayControls.length; index += 1) {
 		const control = geometry.trayControls[index]!;
@@ -544,6 +551,23 @@ test.describe('landscape tablet @visual', () => {
 		expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth);
 		expect(geometry.top).toBeGreaterThanOrEqual(0);
 		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
+	});
+
+	test('tablet inventory filter disclosure keyboard @visual', async ({ page }) => {
+		await prepareVisualGameplay(page);
+		const filterDisclosure = page.getByTestId('inventory-filter-disclosure');
+		const filterToggle = page.getByTestId('inventory-filter-toggle');
+		const cornerFilter = page.getByRole('button', { name: 'Corner pieces' });
+		await filterToggle.focus();
+		await expect(filterToggle).toBeFocused();
+		await page.keyboard.press('Enter');
+		await expect(filterDisclosure).toHaveAttribute('open', '');
+		await expect(cornerFilter).toBeVisible();
+		await cornerFilter.focus();
+		await expect(cornerFilter).toBeFocused();
+		await filterToggle.focus();
+		await page.keyboard.press('Enter');
+		await expect(filterDisclosure).not.toHaveAttribute('open');
 	});
 
 	test('2e gameplay @visual', async ({ page }) => {
