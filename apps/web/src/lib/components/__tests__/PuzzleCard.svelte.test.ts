@@ -53,12 +53,10 @@ describe('PuzzleCard', () => {
 		render(PuzzleCard, { family: mockFamily, progressByVariantId: progress });
 
 		await expect.element(page.getByText('CONTINUE 7/16')).toBeVisible();
-	});
-
-	it('exposes the mastery stars as a named image', async () => {
-		render(PuzzleCard, { family: mockFamily });
-
-		await expect.element(page.getByRole('img', { name: 'Mastery 0 of 3' })).toBeVisible();
+		await expect.element(page.getByTestId('card-progress')).toHaveTextContent('7/16');
+		const progressBadge = await page.getByTestId('card-progress').element();
+		expect(progressBadge.getAttribute('aria-label')).toBeNull();
+		expect(page.getByTestId('card-mastery').query()).toBeNull();
 	});
 
 	it('should render thumbnail image with correct alt text', async () => {
