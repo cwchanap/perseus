@@ -319,7 +319,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	if [[ "$RESUME" == "true" ]]; then
 		echo ""
 		echo "=== Resume: detect partial-adoption state ==="
-		RESUME_JSON=$("${PULUMI_CMD[@]}" stack export "${STACK_FLAGS[@]}")
+		RESUME_JSON=$("${PULUMI_CMD[@]}" stack export ${STACK_FLAGS[@]+"${STACK_FLAGS[@]}"})
 		RESUME_WORKER_URN=$(extract_urn 'workflows-worker' "$RESUME_JSON")
 		RESUME_WORKER_NAME=""
 		if [[ -n "$RESUME_WORKER_URN" ]]; then
@@ -374,7 +374,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		echo ""
 		echo "=== Resume: pulumi preview --diff ==="
 		echo "  Read-only. Shows remaining import + create steps."
-		if ! "${PULUMI_CMD[@]}" preview "${STACK_FLAGS[@]}" --diff; then
+		if ! "${PULUMI_CMD[@]}" preview ${STACK_FLAGS[@]+"${STACK_FLAGS[@]}"} --diff; then
 			echo "" >&2
 			echo "ERROR: pulumi preview failed during resume." >&2
 			echo "       State was NOT modified by preview. Do NOT restore the" >&2
@@ -417,7 +417,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	# Step 1: Discover URNs
 	echo ""
 	echo "=== Step 1: Discover stale URNs ==="
-	STACK_JSON=$("${PULUMI_CMD[@]}" stack export "${STACK_FLAGS[@]}")
+	STACK_JSON=$("${PULUMI_CMD[@]}" stack export ${STACK_FLAGS[@]+"${STACK_FLAGS[@]}"})
 	resolve_urns "$STACK_JSON"
 	build_deletion_order
 
