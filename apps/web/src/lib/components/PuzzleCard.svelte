@@ -153,6 +153,14 @@
 		color: #03202a;
 	}
 
+	.card-difficulty-picker
+		:global(
+			[data-testid='difficulty-action'].difficulty-action-active [data-testid='difficulty-gems']
+		) {
+		color: #03202a;
+		--gem-foreground: #03202a;
+	}
+
 	.card-difficulty-picker :global([data-testid='difficulty-action']:hover) {
 		border-color: var(--accent);
 		background: var(--bg-3);
@@ -163,6 +171,7 @@
 		font-family: var(--font-display);
 		font-size: 1.2rem;
 		font-weight: 900;
+		text-transform: uppercase;
 	}
 
 	.card-difficulty-picker :global([data-testid='difficulty-gems']) {

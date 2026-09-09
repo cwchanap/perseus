@@ -222,6 +222,52 @@ test.describe('phone @visual', () => {
 		});
 	});
 
+	test('saved progress disclosure menu @visual', async ({ page }) => {
+		await prepareVisualGallery(page);
+		const activeEasyGems = page.locator(
+			'[data-testid="difficulty-action"][data-difficulty="easy"].difficulty-action-active [data-testid="difficulty-gems"]'
+		);
+		const activeGemColors = await activeEasyGems.evaluate((element) => ({
+			root: getComputedStyle(element).color,
+			gem: getComputedStyle(element.querySelector('svg')!).color,
+			count: getComputedStyle(element.lastElementChild!).color
+		}));
+		expect(activeGemColors).toEqual({
+			root: 'rgb(3, 32, 42)',
+			gem: 'rgb(3, 32, 42)',
+			count: 'rgb(3, 32, 42)'
+		});
+		const toggle = page.getByTestId('continue-secondary-toggle');
+		const menu = page.locator('.continue-secondary-menu');
+		await toggle.focus();
+		await expect(toggle).toBeFocused();
+		await page.keyboard.press('Enter');
+		await expect(menu).toBeVisible();
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('button', { name: 'Discard saved progress' })).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('button', { name: 'View saved progress' })).toBeFocused();
+		const geometry = await menu.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			return {
+				left: rect.left,
+				right: rect.right,
+				top: rect.top,
+				bottom: rect.bottom,
+				viewportWidth: window.innerWidth,
+				viewportHeight: window.innerHeight
+			};
+		});
+		expect(geometry.left).toBeGreaterThanOrEqual(0);
+		expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth);
+		expect(geometry.top).toBeGreaterThanOrEqual(0);
+		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
+		await page.screenshot({
+			path: '/Users/chanwaichan/workspace/perseus/.worktrees/galaxy-arcade-ui-redesign/.superpowers/sdd/2026-09-07-galaxy-arcade-ui-redesign/gallery-menu-phone-open.png',
+			fullPage: false
+		});
+	});
+
 	test('2b gameplay @visual', async ({ gameplayPage, page }) => {
 		await gameplayPage.gotoFixture({
 			fixtureId: 'e2e-portrait-12',
@@ -298,6 +344,39 @@ test.describe('landscape tablet @visual', () => {
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-tablet-gallery.png', {
 			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('saved progress disclosure menu @visual', async ({ page }) => {
+		await prepareVisualGallery(page);
+		const toggle = page.getByTestId('continue-secondary-toggle');
+		const menu = page.locator('.continue-secondary-menu');
+		await toggle.focus();
+		await expect(toggle).toBeFocused();
+		await page.keyboard.press('Enter');
+		await expect(menu).toBeVisible();
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('button', { name: 'Discard saved progress' })).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('button', { name: 'View saved progress' })).toBeFocused();
+		const geometry = await menu.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			return {
+				left: rect.left,
+				right: rect.right,
+				top: rect.top,
+				bottom: rect.bottom,
+				viewportWidth: window.innerWidth,
+				viewportHeight: window.innerHeight
+			};
+		});
+		expect(geometry.left).toBeGreaterThanOrEqual(0);
+		expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth);
+		expect(geometry.top).toBeGreaterThanOrEqual(0);
+		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
+		await page.screenshot({
+			path: '/Users/chanwaichan/workspace/perseus/.worktrees/galaxy-arcade-ui-redesign/.superpowers/sdd/2026-09-07-galaxy-arcade-ui-redesign/gallery-menu-tablet-open.png',
+			fullPage: false
 		});
 	});
 
