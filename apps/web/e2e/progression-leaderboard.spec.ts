@@ -154,12 +154,20 @@ test.describe('Progression and leaderboards @smoke', () => {
 		await page.keyboard.press('Escape');
 		await expect(gameplayPage.celebrationModal()).toBeHidden();
 
-		await page.getByTestId('open-family-leaderboard').click();
+		if ((page.viewportSize()?.width ?? 0) < 1024) {
+			await page.getByRole('button', { name: 'More puzzle actions' }).click();
+			await page.getByTestId('open-family-leaderboard-secondary').click();
+		} else {
+			await page.getByTestId('open-family-leaderboard').click();
+		}
 		await expect(page.getByTestId('family-leaderboard-modal')).toBeVisible();
 		await expect(page.getByTestId('leaderboard-entries')).toContainText('Rival Player');
 		await expect(page.getByTestId('leaderboard-me')).toContainText('#5');
 
 		await page.goto('/leaderboard');
+		if ((page.viewportSize()?.width ?? 0) < 1024) {
+			await page.getByTestId('arcade-mobile-menu-toggle').click();
+		}
 		await expect(
 			page.locator('nav:visible').getByRole('link', { name: 'Ranks', exact: true })
 		).toBeVisible();

@@ -41,12 +41,64 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	const peekReference = page.getByRole('button', { name: 'Hold to peek reference' });
 
 	if (project === 'chromium-desktop') {
-		await expect(more).toBeHidden();
-		await expect(zoomIn).toBeVisible();
-		await expect(pause).toBeVisible();
-		await expect(setup).toBeVisible();
-		await expect(toggleReference).toBeVisible();
-		await expect(peekReference).toBeVisible();
+		for (const [index, viewport] of [
+			{ width: 1080, height: 810 },
+			{ width: 1440, height: 900 }
+		].entries()) {
+			await page.setViewportSize(viewport);
+
+			await expect(more).toBeVisible();
+			await expect(zoomIn).toBeHidden();
+			await expect(setup).toBeHidden();
+			await expect(peekReference).toBeHidden();
+			await expect(pause).toBeVisible();
+			await expect(toggleReference).toBeVisible();
+			if (index === 0) {
+				await more.click();
+				await expect(more).toHaveAttribute('aria-expanded', 'true');
+				await expect(zoomIn).toBeVisible();
+				await expect(setup).toBeVisible();
+				await expect(peekReference).toBeVisible();
+				await more.click();
+				await expect(more).toHaveAttribute('aria-expanded', 'false');
+			}
+
+			// Redo is a direct rail action when enabled. Its closed secondary
+			// wrapper must not stretch it to the flyout width.
+			await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
+			await page.getByRole('button', { name: 'Undo' }).click();
+			const undoBox = await page.getByRole('button', { name: 'Undo' }).boundingBox();
+			const redoBox = await page.getByRole('button', { name: 'Redo' }).boundingBox();
+			expect(undoBox).not.toBeNull();
+			expect(redoBox).not.toBeNull();
+			expect(redoBox!.width).toBeCloseTo(undoBox!.width, 1);
+			expect(redoBox!.height).toBeCloseTo(undoBox!.height, 1);
+
+			await more.click();
+			await expect(more).toHaveAttribute('aria-expanded', 'true');
+			await expect(zoomIn).toBeVisible();
+			await expect(peekReference).toBeVisible();
+
+			const secondary = page.getByTestId('puzzle-toolbar-secondary');
+			const secondaryBox = await secondary.boundingBox();
+			expect(secondaryBox).not.toBeNull();
+			expect(secondaryBox!.x).toBeGreaterThanOrEqual(0);
+			expect(secondaryBox!.x + secondaryBox!.width).toBeLessThanOrEqual(viewport.width);
+			const zoomBox = await zoomIn.boundingBox();
+			expect(zoomBox).not.toBeNull();
+			const zoomHit = await page.evaluate(
+				({ x, y }) => {
+					const hit = document.elementFromPoint(x, y);
+					return hit?.closest('[aria-label="Zoom in"]') !== null;
+				},
+				{ x: zoomBox!.x + zoomBox!.width / 2, y: zoomBox!.y + zoomBox!.height / 2 }
+			);
+			expect(zoomHit).toBe(true);
+			await zoomIn.click();
+
+			await more.click();
+			await expect(more).toHaveAttribute('aria-expanded', 'false');
+		}
 		return;
 	}
 

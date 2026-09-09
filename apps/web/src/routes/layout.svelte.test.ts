@@ -114,6 +114,7 @@ describe('Root Layout', () => {
 	it('renders anonymous player navigation and refreshes auth on mount', async () => {
 		render(RootLayout, { children: makeChildren() });
 
+		await page.getByTestId('arcade-mobile-menu-toggle').click();
 		await expect.element(page.getByTestId('arcade-mobile-nav')).toBeVisible();
 		await expect.element(page.getByTestId('quick-puzzle-link')).toBeVisible();
 		await expect.element(page.getByRole('link', { name: /SIGN IN/i })).toBeVisible();
@@ -131,6 +132,7 @@ describe('Root Layout', () => {
 
 		render(RootLayout, { children: makeChildren() });
 
+		await page.getByTestId('arcade-mobile-menu-toggle').click();
 		await expect.element(page.getByTestId('arcade-mobile-nav')).toBeVisible();
 		await expect.element(page.getByRole('link', { name: /SIGN IN/i })).not.toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: /SIGN OUT/i })).not.toBeInTheDocument();
@@ -151,7 +153,10 @@ describe('Root Layout', () => {
 
 		render(RootLayout, { children: makeChildren() });
 
-		await expect.element(page.getByText('Player One')).toBeVisible();
+		await expect
+			.element(page.getByTestId('arcade-mobile-header').getByLabelText('Profile for Player One'))
+			.toBeVisible();
+		await page.getByTestId('arcade-mobile-menu-toggle').click();
 		await page.getByRole('button', { name: /SIGN OUT/i }).click();
 		expect(playerAuth.logout).toHaveBeenCalledOnce();
 	});
@@ -175,6 +180,7 @@ describe('Root Layout', () => {
 		try {
 			render(RootLayout, { children: makeChildren() });
 
+			await page.getByTestId('arcade-mobile-menu-toggle').click();
 			await page.getByRole('button', { name: /SIGN OUT/i }).click();
 
 			expect(playerAuth.logout).toHaveBeenCalledOnce();
@@ -245,6 +251,7 @@ describe('Root Layout', () => {
 		try {
 			render(RootLayout, { children: makeChildren() });
 			await expect.element(page.getByTestId('arcade-shell')).toBeVisible();
+			await page.getByTestId('arcade-mobile-menu-toggle').click();
 			await expect.element(page.getByTestId('leaderboard-link')).toBeVisible();
 			await vi.waitFor(() => {
 				expect(consoleError).toHaveBeenCalledWith(
