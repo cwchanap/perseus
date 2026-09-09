@@ -262,10 +262,6 @@ test.describe('phone @visual', () => {
 		expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth);
 		expect(geometry.top).toBeGreaterThanOrEqual(0);
 		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
-		await page.screenshot({
-			path: '/Users/chanwaichan/workspace/perseus/.worktrees/galaxy-arcade-ui-redesign/.superpowers/sdd/2026-09-07-galaxy-arcade-ui-redesign/gallery-menu-phone-open.png',
-			fullPage: false
-		});
 	});
 
 	test('2b gameplay @visual', async ({ gameplayPage, page }) => {
@@ -374,10 +370,6 @@ test.describe('landscape tablet @visual', () => {
 		expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth);
 		expect(geometry.top).toBeGreaterThanOrEqual(0);
 		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
-		await page.screenshot({
-			path: '/Users/chanwaichan/workspace/perseus/.worktrees/galaxy-arcade-ui-redesign/.superpowers/sdd/2026-09-07-galaxy-arcade-ui-redesign/gallery-menu-tablet-open.png',
-			fullPage: false
-		});
 	});
 
 	test('2e gameplay @visual', async ({ gameplayPage, page }) => {
