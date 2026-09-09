@@ -163,7 +163,7 @@ describe('PuzzleInventoryPanel', () => {
 			rejectedPieceId: 1
 		});
 
-		await expect.element(page.getByText('1 LEFT')).toBeVisible();
+		await expect.element(page.getByLabelText('1 pieces left')).toBeVisible();
 		expect(document.querySelector('[data-testid="piece-slot-0"]')).toBeNull();
 		const slot = document.querySelector('[data-testid="piece-slot-1"]');
 		expect(slot).not.toBeNull();
@@ -380,7 +380,7 @@ describe('PuzzleInventoryPanel', () => {
 			activeFilter: 'corners'
 		});
 
-		await expect.element(page.getByText('8 LEFT')).toBeVisible();
+		await expect.element(page.getByLabelText('8 pieces left')).toBeVisible();
 		expect(page.getByTestId('piece-slot-0').query()).toBeNull();
 		await expect.element(page.getByTestId('piece-slot-2')).toBeVisible();
 		await expect.element(page.getByTestId('piece-slot-6')).toBeVisible();
@@ -432,9 +432,9 @@ describe('PuzzleInventoryPanel', () => {
 		expect(page.getByText('ALL PIECES PLACED').query()).toBeNull();
 	});
 
-	it('keeps the tools inside the collapsible drawer body on one non-wrapping row', async () => {
+	it('keeps the tools in the header on one non-wrapping row', async () => {
 		render(PuzzleInventoryPanel, baseProps());
-		const tools = document.querySelector<HTMLElement>('#puzzle-inventory-body .inventory-tools');
+		const tools = document.querySelector<HTMLElement>('.panel-header .inventory-tools');
 		expect(tools).not.toBeNull();
 		const style = getComputedStyle(tools!);
 		expect(style.flexWrap).toBe('nowrap');

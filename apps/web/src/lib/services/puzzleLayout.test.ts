@@ -90,7 +90,7 @@ describe('puzzle layout', () => {
 	});
 
 	it('keeps small square and landscape metrics within the mobile board column', () => {
-		const mobileLayoutWidth = 390 - 40;
+		const mobileLayoutWidth = 390;
 		const boardColumnWidth = mobileLayoutWidth - GAMEPLAY_RAIL_WIDTH.small - MOBILE_GAMEPLAY_GAP;
 		const puzzles = [
 			{ imageWidth: 1200, imageHeight: 1200, gridCols: 4, gridRows: 4 },

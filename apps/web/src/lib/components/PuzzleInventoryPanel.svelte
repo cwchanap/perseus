@@ -215,9 +215,121 @@
 	style={`--mobile-sheet-height: ${sheetHeight}px`}
 >
 	<div class="panel-header">
+		<span class="sheet-handle" aria-hidden="true"></span>
 		<div class="panel-heading">
 			<span class="panel-tag">INVENTORY</span>
-			<span class="inv-count">{puzzle.pieceCount - placedPieces.length} LEFT</span>
+			<span
+				class="inv-count"
+				role="status"
+				aria-label={`${puzzle.pieceCount - placedPieces.length} pieces left`}
+			>
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<circle cx="7" cy="7" r="2.2" /><circle cx="17" cy="7" r="2.2" /><circle
+						cx="7"
+						cy="17"
+						r="2.2"
+					/><circle cx="17" cy="17" r="2.2" />
+				</svg>
+				<span aria-hidden="true">{puzzle.pieceCount - placedPieces.length}</span>
+			</span>
+		</div>
+
+		<div class="inventory-tools" data-testid="inventory-tools">
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="All pieces"
+				aria-pressed={activeFilter === 'all'}
+				onclick={() => onFilterChange('all')}
+			>
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<circle cx="7" cy="7" r="2.2" /><circle cx="17" cy="7" r="2.2" /><circle
+						cx="7"
+						cy="17"
+						r="2.2"
+					/><circle cx="17" cy="17" r="2.2" />
+				</svg>
+				<span class="panel-action-label">ALL</span>
+			</button>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Corner pieces"
+				aria-pressed={activeFilter === 'corners'}
+				onclick={() => onFilterChange('corners')}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<path stroke-linecap="round" stroke-linejoin="round" d="M5 19V5h14M5 19h14" />
+				</svg>
+				<span class="panel-action-label">CORNERS</span>
+			</button>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Edge pieces"
+				aria-pressed={activeFilter === 'edges'}
+				onclick={() => onFilterChange('edges')}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<path stroke-linecap="round" d="M5 19h14M5 5v14" />
+				</svg>
+				<span class="panel-action-label">EDGES</span>
+			</button>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Center pieces"
+				aria-pressed={activeFilter === 'center'}
+				onclick={() => onFilterChange('center')}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<rect x="6" y="6" width="12" height="12" rx="1.5" /><path
+						stroke-linecap="round"
+						d="M12 9v6m-3-3h6"
+					/>
+				</svg>
+				<span class="panel-action-label">CENTER</span>
+			</button>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Shuffle pieces"
+				disabled={unplacedPieces.length <= 1}
+				onclick={onShuffle}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M4 7h2c3 0 4 2 6 5s3 5 6 5h2m-3-3l3 3-3 3M4 17h2c1.5 0 2.5-.6 3.4-1.8M15 8c1-1 1.8-1 3-1h2m-3-3l3 3-3 3"
+					/>
+				</svg>
+				<span class="panel-action-label">SHUFFLE</span>
+			</button>
 		</div>
 
 		<div class="panel-actions">
@@ -229,7 +341,20 @@
 					disabled={selectedPieceId === null}
 					onclick={rotateSelectedPiece}
 				>
-					ROTATE
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						aria-hidden="true"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M20 11a8 8 0 00-14.6-4.4L4 8m0 0V4m0 4h4M4 13a8 8 0 0014.6 4.4L20 16m0 0v4m0-4h-4"
+						/>
+					</svg>
+					<span class="panel-action-label">ROTATE</span>
 				</button>
 			{/if}
 			{#if selectedPieceId !== null}
@@ -239,7 +364,16 @@
 					aria-label="Cancel selected piece"
 					onclick={onCancelSelection}
 				>
-					CANCEL
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.2"
+						aria-hidden="true"
+					>
+						<path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+					</svg>
+					<span class="panel-action-label">CANCEL</span>
 				</button>
 			{/if}
 			<button
@@ -250,49 +384,25 @@
 				aria-controls="puzzle-inventory-body"
 				onclick={cycleSheet}
 			>
-				TRAY
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M4 7h16M6 7l1 12h10l1-12M9 7V4h6v3"
+					/>
+				</svg>
+				<span class="panel-action-label">TRAY</span>
 			</button>
 		</div>
 	</div>
 
 	<div class="inventory-body" id="puzzle-inventory-body">
-		<div class="inventory-tools" data-testid="inventory-tools">
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="All pieces"
-				aria-pressed={activeFilter === 'all'}
-				onclick={() => onFilterChange('all')}>ALL</button
-			>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Corner pieces"
-				aria-pressed={activeFilter === 'corners'}
-				onclick={() => onFilterChange('corners')}>CORNERS</button
-			>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Edge pieces"
-				aria-pressed={activeFilter === 'edges'}
-				onclick={() => onFilterChange('edges')}>EDGES</button
-			>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Center pieces"
-				aria-pressed={activeFilter === 'center'}
-				onclick={() => onFilterChange('center')}>CENTER</button
-			>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Shuffle pieces"
-				disabled={unplacedPieces.length <= 1}
-				onclick={onShuffle}>SHUFFLE</button
-			>
-		</div>
 		<div
 			bind:this={piecesGridElement}
 			use:piecesGridKeyboardAction
@@ -339,6 +449,7 @@
 
 <style>
 	.inventory-panel {
+		position: relative;
 		box-sizing: border-box;
 		max-height: none;
 		padding-bottom: env(safe-area-inset-bottom);
@@ -350,10 +461,10 @@
 	}
 
 	.panel-header {
-		display: flex;
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr) auto;
 		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
+		column-gap: 0.5rem;
 		padding: 0.625rem 1rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--bg-2);
@@ -364,7 +475,7 @@
 		display: flex;
 		align-items: baseline;
 		gap: 0.5rem;
-		min-width: 0;
+		min-width: max-content;
 	}
 
 	.panel-actions {
@@ -432,13 +543,21 @@
 	}
 
 	.inventory-tools {
+		position: static;
+		grid-column: 2;
+		width: 100%;
+		min-width: 0;
+		z-index: 2;
 		display: flex;
 		flex-wrap: nowrap;
 		flex-shrink: 0;
 		gap: 0.5rem;
+		justify-content: flex-end;
 		overflow-x: auto;
-		padding: 0.5rem 0.875rem;
-		border-bottom: 1px solid var(--border);
+		overflow-y: hidden;
+		padding: 0;
+		border-bottom: 0;
+		background: transparent;
 	}
 
 	.inventory-tools .panel-action {
@@ -575,6 +694,182 @@
 		.piece-slot.rejected {
 			animation: none;
 			box-shadow: none;
+		}
+	}
+
+	/* Arcade parity: the tray reads as a dark glass deck with an explicit
+	   mobile sheet handle and icon-led controls. */
+	.inventory-panel {
+		background: rgba(21, 13, 51, 0.92);
+		border: 1px solid var(--border-bright);
+		border-radius: 1.25rem 1.25rem 0 0;
+		box-shadow: 0 -12px 36px rgb(0 0 0 / 28%);
+	}
+
+	.panel-header {
+		position: relative;
+		min-height: 3.5rem;
+		padding: 0.75rem 1rem;
+		background: rgba(28, 20, 64, 0.78);
+		border-bottom-color: var(--border-bright);
+	}
+
+	.sheet-handle {
+		display: none;
+		position: absolute;
+		top: 0.45rem;
+		left: 50%;
+		width: 2.875rem;
+		height: 0.3rem;
+		transform: translateX(-50%);
+		border-radius: 999px;
+		background: var(--text-2);
+		opacity: 0.8;
+	}
+
+	.panel-tag {
+		display: none;
+		font-family: var(--font-display), Orbitron, monospace;
+		color: var(--text-1);
+	}
+
+	.panel-action-label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	.inv-count {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		white-space: nowrap;
+		padding: 0.2rem 0.45rem;
+		border: 1px solid rgb(58 255 255 / 42%);
+		border-radius: 999px;
+		background: var(--accent);
+		font-family: var(--font-display), Orbitron, monospace;
+		font-size: 0.75rem;
+		letter-spacing: 0.08em;
+		font-weight: 700;
+		color: #03202a;
+	}
+
+	.inv-count svg {
+		width: 0.8rem;
+		height: 0.8rem;
+		flex: 0 0 auto;
+	}
+
+	.panel-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
+		min-height: 2.25rem;
+		border-color: var(--border-bright);
+		border-radius: 0.75rem;
+		background: rgba(28, 20, 64, 0.75);
+		font-family: var(--font-display), Orbitron, monospace;
+	}
+
+	.panel-action svg {
+		width: 1rem;
+		height: 1rem;
+		flex: 0 0 auto;
+		pointer-events: none;
+	}
+
+	.panel-action:hover:not(:disabled) {
+		background: rgb(58 255 255 / 8%);
+	}
+
+	.inventory-tools {
+		gap: 0.5rem;
+		background: transparent;
+	}
+
+	.inventory-tools .panel-action[aria-pressed='true'] {
+		color: var(--accent);
+		background: rgb(58 255 255 / 10%);
+		border-color: var(--accent);
+		box-shadow: 0 0 12px rgb(58 255 255 / 14%);
+	}
+
+	.piece-slot {
+		padding: 0.25rem;
+		border-color: var(--border-bright);
+		border-radius: 0.875rem;
+		background: rgba(10, 6, 32, 0.72);
+		box-shadow: inset 0 0 14px rgb(58 255 255 / 4%);
+	}
+
+	.piece-slot:hover,
+	.piece-slot:focus-within {
+		border-color: var(--accent);
+		box-shadow: 0 0 14px rgb(58 255 255 / 16%);
+	}
+
+	@media (max-width: 1023px) {
+		.inventory-panel {
+			border-radius: 1.25rem 1.25rem 0 0;
+		}
+
+		.sheet-handle {
+			display: block;
+		}
+
+		.panel-header {
+			padding-top: 1.1rem;
+		}
+
+		.inventory-tools {
+			gap: 0.25rem;
+			overflow-x: auto;
+			overflow-y: hidden;
+		}
+
+		.panel-heading {
+			padding-left: 0.25rem;
+		}
+
+		.panel-actions .panel-action,
+		.inventory-tools .panel-action {
+			width: 2.5rem;
+			min-width: 2.5rem;
+			padding: 0;
+		}
+
+		.inventory-tools {
+			justify-content: flex-start;
+		}
+
+		.inventory-tools .panel-action svg {
+			width: 1.15rem;
+			height: 1.15rem;
+		}
+	}
+
+	@media (min-width: 1024px) and (max-width: 1279px) {
+		.inventory-tools {
+			gap: 0.25rem;
+		}
+
+		.inventory-tools .panel-action {
+			width: 2rem;
+			min-width: 2rem;
+			padding: 0;
+		}
+
+		.inventory-tools .panel-action svg {
+			width: 0.85rem;
+			height: 0.85rem;
 		}
 	}
 </style>

@@ -54,6 +54,14 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
+		min-height: 2.25rem;
+		padding: 0.35rem 0.7rem;
+		border: 1px solid rgb(58 255 255 / 55%);
+		border-radius: 0.75rem;
+		background: rgb(8 30 57 / 85%);
+		box-shadow:
+			inset 0 0 14px rgb(58 255 255 / 8%),
+			0 0 16px rgb(58 255 255 / 12%);
 	}
 
 	.timer-icon {
@@ -63,7 +71,7 @@
 	}
 
 	.timer-value {
-		font-family: var(--font-mono);
+		font-family: var(--font-mono), 'Share Tech Mono', monospace;
 		font-size: 1rem;
 		letter-spacing: 0.08em;
 		font-variant-numeric: tabular-nums;
@@ -88,6 +96,14 @@
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
+		min-height: 2.25rem;
+		padding: 0.35rem 0.65rem;
+		border: 1px solid rgb(255 204 0 / 55%);
+		border-radius: 0.75rem;
+		background: rgb(75 52 7 / 60%);
+		box-shadow:
+			inset 0 0 14px rgb(255 204 0 / 8%),
+			0 0 16px rgb(255 204 0 / 10%);
 	}
 
 	.best-icon {
@@ -97,7 +113,7 @@
 	}
 
 	.best-value {
-		font-family: var(--font-mono);
+		font-family: var(--font-mono), 'Share Tech Mono', monospace;
 		font-size: 0.8rem;
 		color: var(--gold);
 		text-shadow: 0 0 10px var(--gold-glow);
