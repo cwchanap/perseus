@@ -1,13 +1,25 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
+import {
+	loadPersistedSession,
+	validationContextFrom,
+	type PersistedPuzzleSessionV1
+} from '@perseus/game-core';
 import type { PuzzleFamilySummary } from '@perseus/types';
 import { test, expect } from './support/test';
-import { seedApiVariantProgress } from './gameplay-fixtures/persisted-state';
+import { getFixture } from './gameplay-fixtures/catalog';
+import {
+	buildMinimalSeed,
+	progressKey,
+	seedApiVariantProgress
+} from './gameplay-fixtures/persisted-state';
+import type { StoredQuickPuzzle } from '../src/lib/services/quickPuzzle/types';
+import { QUICK_PUZZLE_KEY_PREFIX } from '../src/lib/services/quickPuzzle/types';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VISUAL_ART = path.join(__dirname, 'fixtures', 'test-image.jpg');
+const VISUAL_ART = path.join(__dirname, 'fixtures', 'galaxy-reference-art.png');
 const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 const VISUAL_PLAYER = {
 	id: '00000000-0000-4000-8000-00000000a001',
@@ -147,7 +159,7 @@ async function installVisualAuth(page: Page, authenticated = false): Promise<voi
 
 async function installVisualThumbnail(page: Page): Promise<void> {
 	await page.route(/\/api\/puzzle-families\/[^/]+\/thumbnail$/, (route) =>
-		route.fulfill({ path: VISUAL_ART, contentType: 'image/jpeg' })
+		route.fulfill({ path: VISUAL_ART, contentType: 'image/png' })
 	);
 }
 
@@ -204,6 +216,137 @@ async function waitForVisualReady(page: Page): Promise<void> {
 			})
 		);
 	});
+}
+
+async function prepareVisualGameplay(page: Page): Promise<void> {
+	await installVisualAuth(page);
+	await page.clock.install({ time: new Date('2026-09-09T12:00:00Z') });
+	await page.goto('/quick');
+	await page.getByTestId('quick-uploader-file').setInputFiles(VISUAL_ART);
+	await page.getByTestId('quick-uploader-name').fill('Sunset Ridge');
+	await page.getByTestId('quick-uploader-aspect').selectOption('3:4');
+	await page.getByTestId('quick-uploader-pieces').selectOption('48');
+	await Promise.all([
+		page.waitForURL(/\/puzzle\/q-[^/]+$/),
+		page.getByTestId('quick-uploader-submit').click()
+	]);
+
+	const quickId = new URL(page.url()).pathname.split('/').pop();
+	if (!quickId?.startsWith('q-')) throw new Error(`Expected quick puzzle id, got ${quickId}`);
+	const quickJson = await page.evaluate(
+		(key) => localStorage.getItem(key),
+		`${QUICK_PUZZLE_KEY_PREFIX}${quickId}`
+	);
+	if (!quickJson) throw new Error(`Missing quick puzzle metadata for ${quickId}`);
+	const stored = JSON.parse(quickJson) as StoredQuickPuzzle;
+	const fixture = getFixture('e2e-portrait-12');
+	const placedPieces = stored.pieces.slice(0, 18).map(({ id, correctX, correctY }) => ({
+		pieceId: id,
+		x: correctX,
+		y: correctY
+	}));
+	const snapshot: PersistedPuzzleSessionV1 = {
+		...buildMinimalSeed('e2e-portrait-12'),
+		puzzleId: quickId,
+		source: 'local',
+		elapsedActiveSeconds: 215,
+		timerStarted: true,
+		placedPieces,
+		trayOrder: stored.pieces.map(({ id }) => id),
+		hasUserActivity: true,
+		lastUpdated: 1_757_400_000_000
+	};
+	const context = validationContextFrom({
+		puzzleId: quickId,
+		source: 'local',
+		pieceCount: stored.pieceCount,
+		gridCols: stored.gridCols,
+		gridRows: stored.gridRows,
+		pieces: stored.pieces.map(({ id, correctX, correctY }) => ({ id, correctX, correctY }))
+	});
+	const snapshotJson = JSON.stringify(snapshot);
+	const validation = loadPersistedSession(snapshotJson, context);
+	if (validation.status !== 'loaded') {
+		throw new Error(`Visual gameplay seed rejected: ${validation.status}`);
+	}
+
+	await page.clock.pauseAt(new Date('2026-09-09T12:30:00Z'));
+	await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
+		key: progressKey(quickId),
+		value: snapshotJson
+	});
+	await page.reload();
+	const resumeDialog = page.getByRole('dialog', { name: 'Resume Mission' });
+	await expect(resumeDialog).toBeVisible();
+	await resumeDialog.getByRole('button', { name: 'Resume', exact: true }).click();
+	await expect(page.getByTestId('puzzle-board')).toBeVisible();
+	await waitForVisualReady(page);
+}
+
+async function expectGameplayGeometry(page: Page): Promise<void> {
+	const geometry = await page.evaluate(() => {
+		const bounds = (selector: string) => {
+			const element = document.querySelector<HTMLElement>(selector);
+			if (!element) return null;
+			const rect = element.getBoundingClientRect();
+			return {
+				left: rect.left,
+				right: rect.right,
+				top: rect.top,
+				bottom: rect.bottom,
+				width: rect.width
+			};
+		};
+		return {
+			viewport: { width: window.innerWidth, height: window.innerHeight },
+			rail: bounds('[data-testid="puzzle-toolbar"]'),
+			stage: bounds('.board-stage'),
+			board: bounds('.board-stage .board-panel'),
+			tray: bounds('[data-testid="puzzle-inventory-panel"]'),
+			header: bounds('.board-stage > .hud-header'),
+			hud: bounds('[data-testid="gameplay-hud"]'),
+			actions: ['hint', 'reference', 'undo', 'fit', 'pause'].map((action) =>
+				bounds(`[data-testid="puzzle-toolbar"] [data-toolbar-action="${action}"]`)
+			)
+		};
+	});
+
+	expect(geometry.rail).not.toBeNull();
+	expect(geometry.stage).not.toBeNull();
+	expect(geometry.board).not.toBeNull();
+	expect(geometry.tray).not.toBeNull();
+	expect(geometry.header).not.toBeNull();
+	expect(geometry.hud).not.toBeNull();
+	if (
+		!geometry.rail ||
+		!geometry.stage ||
+		!geometry.board ||
+		!geometry.tray ||
+		!geometry.header ||
+		!geometry.hud
+	) {
+		throw new Error('Gameplay geometry did not mount all expected surfaces');
+	}
+
+	if (geometry.viewport.width < 1024) {
+		expect(geometry.rail.left).toBeGreaterThanOrEqual(geometry.board.right - 1);
+	} else {
+		expect(geometry.rail.right).toBeLessThanOrEqual(geometry.board.left + 1);
+		expect(Math.round(geometry.tray.width)).toBe(geometry.viewport.width >= 1440 ? 352 : 300);
+	}
+	expect(geometry.header.left).toBeGreaterThanOrEqual(geometry.stage.left);
+	expect(geometry.header.right).toBeLessThanOrEqual(geometry.stage.right + 1);
+	expect(geometry.hud.left).toBeGreaterThanOrEqual(geometry.stage.left);
+	expect(geometry.hud.right).toBeLessThanOrEqual(geometry.stage.right + 1);
+
+	for (const action of geometry.actions) {
+		expect(action).not.toBeNull();
+		if (!action) continue;
+		expect(action.left).toBeGreaterThanOrEqual(geometry.rail.left);
+		expect(action.right).toBeLessThanOrEqual(geometry.rail.right + 1);
+		expect(action.top).toBeGreaterThanOrEqual(0);
+		expect(action.bottom).toBeLessThanOrEqual(geometry.viewport.height + 1);
+	}
 }
 
 test.describe('phone @visual', () => {
@@ -264,12 +407,9 @@ test.describe('phone @visual', () => {
 		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
 	});
 
-	test('2b gameplay @visual', async ({ gameplayPage, page }) => {
-		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-portrait-12',
-			seedPreferences: IMMEDIATE_START
-		});
-		await waitForVisualReady(page);
+	test('2b gameplay @visual', async ({ page }) => {
+		await prepareVisualGameplay(page);
+		await expectGameplayGeometry(page);
 		await expect(page).toHaveScreenshot('galaxy-phone-gameplay.png', {
 			maxDiffPixelRatio: 0.005
 		});
@@ -372,12 +512,9 @@ test.describe('landscape tablet @visual', () => {
 		expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
 	});
 
-	test('2e gameplay @visual', async ({ gameplayPage, page }) => {
-		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-portrait-12',
-			seedPreferences: IMMEDIATE_START
-		});
-		await waitForVisualReady(page);
+	test('2e gameplay @visual', async ({ page }) => {
+		await prepareVisualGameplay(page);
+		await expectGameplayGeometry(page);
 		await expect(page).toHaveScreenshot('galaxy-tablet-gameplay.png', {
 			maxDiffPixelRatio: 0.005
 		});
@@ -414,12 +551,9 @@ test.describe('desktop @visual', () => {
 		});
 	});
 
-	test('3b gameplay @visual', async ({ gameplayPage, page }) => {
-		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-portrait-12',
-			seedPreferences: IMMEDIATE_START
-		});
-		await waitForVisualReady(page);
+	test('3b gameplay @visual', async ({ page }) => {
+		await prepareVisualGameplay(page);
+		await expectGameplayGeometry(page);
 		await expect(page).toHaveScreenshot('galaxy-desktop-gameplay.png', {
 			maxDiffPixelRatio: 0.005
 		});

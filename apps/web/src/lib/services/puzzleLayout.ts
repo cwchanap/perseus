@@ -21,7 +21,7 @@ export interface ResponsivePuzzleBoardMetrics {
 }
 
 const TIER_LONG_EDGE: Record<PuzzleBoardViewportTier, number> = {
-	small: 320,
+	small: 384,
 	medium: 520,
 	large: 720,
 	'extra-large': 880
@@ -65,7 +65,7 @@ export function getGameplayRailWidth(viewportWidth: number): number {
 
 function getWidthReserve(tier: PuzzleBoardViewportTier): number {
 	if (tier === 'small' || tier === 'medium') {
-		return GAMEPLAY_RAIL_WIDTH[tier] + MOBILE_GAMEPLAY_GAP + (tier === 'small' ? 40 : 64);
+		return GAMEPLAY_RAIL_WIDTH[tier] + MOBILE_GAMEPLAY_GAP + (tier === 'small' ? 24 : 64);
 	}
 	return 64;
 }
