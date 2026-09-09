@@ -347,9 +347,24 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			echo "  Resume will import the live 'workflows' Worker + 'perseus' Workflow"
 			echo "  and create WorkerVersion/Deployment."
 		else
-			echo "  WARNING: workflows-worker physical name is '$RESUME_WORKER_NAME'" >&2
-			echo "           (expected 'perseus-workflows' or 'workflows')." >&2
-			echo "  Proceeding with guarded resume — inspect state before continuing." >&2
+			# Fail closed. --resume has only two known-safe partial states:
+			# the logical Worker is absent (import pending), or it exists with
+			# physical name 'workflows' (already adopted). Any other physical
+			# name means the production stack is in a state this migration did
+			# not create or model. Continuing would run a preview and then
+			# unattended `pulumi up -y`, so a surprising checkpoint could be
+			# mutated rather than quarantined. Abort before preview/up in all
+			# modes (dry-run included) — the diagnostic below is still printed.
+			echo "" >&2
+			echo "ERROR: workflows-worker physical name is '$RESUME_WORKER_NAME'." >&2
+			echo "       Expected 'perseus-workflows' (stale, pre-Step-2), 'workflows'" >&2
+			echo "       (already adopted), or absent (import pending). Any other name" >&2
+			echo "       means the production stack is in a state this migration did not" >&2
+			echo "       create or model. Aborting to avoid mutating an unexpected" >&2
+			echo "       checkpoint via unattended preview/up." >&2
+			echo "       Inspect with: pulumi stack --show-urns${STACK_FLAG_DISPLAY:+ $STACK_FLAG_DISPLAY}" >&2
+			echo "       If this is a known-safe state, resolve it manually before resuming." >&2
+			exit 1
 		fi
 
 		# Guarded preview (read-only). Shows what remains to converge. Does

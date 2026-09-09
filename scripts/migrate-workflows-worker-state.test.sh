@@ -947,6 +947,110 @@ rm -rf "$STUB_DIR18" "$ARGV_LOG18" "$STATE18"
 cleanup_new_backups "$REPO_ROOT18" "$before18"
 
 # ---------------------------------------------------------------------------
+# Test 19: --resume fails closed on an unknown physical Worker name. --resume
+# has only two known-safe partial states: the logical Worker is absent (import
+# pending) or it exists with physical name 'workflows' (already adopted). Any
+# other physical name means the production stack is in a state this migration
+# did not create or model — continuing would run a preview and then unattended
+# `pulumi up -y`, mutating a surprising checkpoint. Must abort before
+# preview/up in BOTH execute and dry-run modes (a dry-run may still print the
+# diagnostic, but must not reach preview/up).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 19: --resume fails closed on unknown physical Worker name"
+
+# Mock state where workflows-worker has an unexpected physical name.
+UNEXPECTED_NAME_JSON=$(cat <<ENDJSON
+{
+  "version": 3,
+  "deployment": {
+    "resources": [
+      {"urn": "${WORKER_URN_MOCK}", "type": "cloudflare:index/worker:Worker", "inputs": {"name": "perseus-workflows-v2"}},
+      {"urn": "${VERSION_URN_MOCK}", "type": "cloudflare:index/workerversion:WorkerVersion"},
+      {"urn": "${WORKFLOW_URN_MOCK}", "type": "cloudflare:index/workflow:Workflow"}
+    ]
+  }
+}
+ENDJSON
+)
+
+# --- Execute mode: must abort before preview/up/state-delete. ---
+STUB_DIR19=$(mktemp -d)
+ARGV_LOG19=$(mktemp)
+STATE19=$(mktemp)
+printf '%s' "$UNEXPECTED_NAME_JSON" > "$STATE19"
+make_resume_stub "$STUB_DIR19" "$ARGV_LOG19" "$STATE19" 0
+
+REPO_ROOT19="$(cd "$SCRIPT_DIR/.." && pwd)"
+before19=$(snapshot_backups "$REPO_ROOT19")
+
+exit_code=0
+out19=$(PATH="$STUB_DIR19:$PATH" bash "$SCRIPT" --resume --stack "cwchanap/perseus-infrastructure/production" 2>&1) || exit_code=$?
+
+if [[ "$exit_code" -ne 0 ]]; then
+	ok "resume aborted on unknown name (exit $exit_code)"
+else
+	fail "resume exited 0 despite unknown physical Worker name"
+fi
+if echo "$out19" | grep -q "ERROR: workflows-worker physical name is 'perseus-workflows-v2'"; then
+	ok "abort diagnostic names the unexpected physical name"
+else
+	fail "abort diagnostic missing or did not name the unexpected physical name"
+fi
+if [[ $(grep -c '^preview' "$ARGV_LOG19" || true) -eq 0 ]]; then
+	ok "no preview after unknown-name abort (execute)"
+else
+	fail "preview ran after unknown-name abort (execute)"
+fi
+if [[ $(grep -c '^up' "$ARGV_LOG19" || true) -eq 0 ]]; then
+	ok "no up after unknown-name abort (execute)"
+else
+	fail "up ran after unknown-name abort (execute)"
+fi
+if [[ $(grep -c '^state delete' "$ARGV_LOG19" || true) -eq 0 ]]; then
+	ok "no state delete after unknown-name abort (execute)"
+else
+	fail "state delete ran after unknown-name abort (execute)"
+fi
+
+rm -rf "$STUB_DIR19" "$ARGV_LOG19" "$STATE19"
+cleanup_new_backups "$REPO_ROOT19" "$before19"
+
+# --- Dry-run mode: must also abort before preview/up. The diagnostic may
+# still print, but an unexpected inputs.name must never reach preview/up. ---
+STUB_DIR19D=$(mktemp -d)
+ARGV_LOG19D=$(mktemp)
+STATE19D=$(mktemp)
+printf '%s' "$UNEXPECTED_NAME_JSON" > "$STATE19D"
+make_resume_stub "$STUB_DIR19D" "$ARGV_LOG19D" "$STATE19D" 0
+
+exit_code=0
+out19d=$(PATH="$STUB_DIR19D:$PATH" bash "$SCRIPT" --resume --dry-run --stack "cwchanap/perseus-infrastructure/production" 2>&1) || exit_code=$?
+
+if [[ "$exit_code" -ne 0 ]]; then
+	ok "resume dry-run aborted on unknown name (exit $exit_code)"
+else
+	fail "resume dry-run exited 0 despite unknown physical Worker name"
+fi
+if echo "$out19d" | grep -q "ERROR: workflows-worker physical name is 'perseus-workflows-v2'"; then
+	ok "dry-run still printed the diagnostic"
+else
+	fail "dry-run did not print the diagnostic"
+fi
+if [[ $(grep -c '^preview' "$ARGV_LOG19D" || true) -eq 0 ]]; then
+	ok "no preview after unknown-name abort (dry-run)"
+else
+	fail "preview ran after unknown-name abort (dry-run)"
+fi
+if [[ $(grep -c '^up' "$ARGV_LOG19D" || true) -eq 0 ]]; then
+	ok "no up after unknown-name abort (dry-run)"
+else
+	fail "up ran after unknown-name abort (dry-run)"
+fi
+
+rm -rf "$STUB_DIR19D" "$ARGV_LOG19D" "$STATE19D"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
