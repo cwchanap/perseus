@@ -652,10 +652,13 @@
 			const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 
 			puzzle = loadedPuzzle;
-			requestedTrayWidth = getDefaultPuzzleTrayWidth(loadedPuzzle, {
-				width: viewportWidth,
-				height: viewportHeight
-			});
+			requestedTrayWidth = Math.min(
+				getDefaultPuzzleTrayWidth(loadedPuzzle, {
+					width: viewportWidth,
+					height: viewportHeight
+				}),
+				viewportWidth >= 1440 ? DESKTOP_TRAY_BASE_WIDTH : DESKTOP_TRAY_MIN_WIDTH
+			);
 			// Restore the celebration modal for a previously completed session
 			// so the user retains access to Play Again and retry controls.
 			// Fresh sessions start without the modal. (The
@@ -1212,65 +1215,6 @@
 </svelte:head>
 
 <div class="puzzle-page" inert={hasSessionModal} aria-hidden={hasSessionModal}>
-	<!-- HUD Header -->
-	<header class="hud-header">
-		<div class="hud-left">
-			<a
-				href={resolve('/')}
-				class="back-btn"
-				aria-label="Return to arcade"
-				data-testid="back-to-arcade-link"
-				onclick={(e) => {
-					e.preventDefault();
-					exitToArcade();
-				}}
-			>
-				<svg
-					class="back-icon"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke="currentColor"
-					aria-hidden="true"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M10 19l-7-7m0 0l7-7m-7 7h18"
-					/>
-				</svg>
-				<span>ARCADE</span>
-			</a>
-		</div>
-
-		{#if puzzle}
-			<div class="hud-center">
-				<div class="mission-tag">// MISSION</div>
-				<div class="mission-name">{puzzle.name.toUpperCase()}</div>
-			</div>
-
-			<div class="hud-right">
-				{#if puzzle.familyId && puzzleSource?.source === 'api'}
-					<button
-						type="button"
-						class="leaderboard-btn"
-						data-testid="open-family-leaderboard"
-						onclick={() => (showFamilyLeaderboard = true)}
-					>
-						LEADERBOARD
-					</button>
-				{/if}
-			</div>
-		{/if}
-	</header>
-
-	<!-- Progress bar -->
-	{#if puzzle}
-		<div class="progress-bar-wrap">
-			<div class="progress-bar-fill" style="width: {progressPct}%"></div>
-		</div>
-	{/if}
-
 	<!-- Content -->
 	<main class="puzzle-main">
 		{#if loading}
@@ -1308,113 +1252,173 @@
 			{@const currentPuzzle = puzzle}
 			{@const currentBoardMetrics = boardMetrics}
 			{@const source = puzzleSource!}
-			<div
-				bind:this={gameLayoutElement}
-				class="game-layout"
-				data-board-tier={currentBoardMetrics?.tier}
-				data-reference-toggled={referenceToggled ? 'true' : 'false'}
-				style={`--gameplay-rail-width: ${gameplayRailWidth}px; --gameplay-gap: ${MOBILE_GAMEPLAY_GAP}px; --tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
-					currentBoardMetrics
-						? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
-						: ''
-				}`}
-			>
-				<div class="gameplay-hud" data-testid="gameplay-hud">
-					{#if showTimedPresentation}
-						<!-- GameTimer renders its own data-testid="game-timer" so the
-						     existing timer contract remains unchanged. -->
-						<GameTimer {timerState} {bestTime} />
-					{:else if showRelaxedPresentation}
-						<div data-testid="relaxed-mode-indicator">RELAXED</div>
-					{/if}
-					<div class="hud-pieces">
-						<span class="stat-label">PIECES</span>
-						<span class="stat-value"
-							>{placedPieces.length}<span class="stat-total">/{currentPuzzle.pieceCount}</span
-							></span
-						>
-					</div>
-					<ProgressRing percent={progressPct} size={48} label="Puzzle progress" />
-				</div>
-
-				<PuzzleToolbar
-					{canUndo}
-					{canRedo}
-					{canPause}
-					{canOpenSetup}
-					{rotationEnabled}
-					rotationToggleDisabled={isRotationToggleLocked()}
-					{referenceToggled}
-					referenceAvailable={currentPuzzle.hasReference === true &&
-						source.resolveReferenceImage() !== null}
-					hasReference={currentPuzzle.hasReference === true}
-					onUndo={handleUndo}
-					onRedo={handleRedo}
-					onHint={handleHint}
-					onReferenceDown={handleReferenceDown}
-					onReferenceUp={handleReferenceUp}
-					onReferenceToggle={handleReferenceToggle}
-					onZoomIn={() => boardPanel?.zoomIn()}
-					onZoomOut={() => boardPanel?.zoomOut()}
-					onResetView={requestBoardViewReset}
-					onRotationToggle={handleRotationToggle}
-					onPause={handleToolbarPause}
-					onOpenSetup={() => showMissionSetup(false)}
-				/>
-
-				<!-- Board panel -->
-				<PuzzleBoardPanel
-					bind:this={boardPanel}
-					puzzle={currentPuzzle}
-					boardMetrics={currentBoardMetrics}
-					{placedPieces}
-					selectedPieceId={currentSelectedPieceId}
-					{activeHintTarget}
-					resolveImage={source.resolvePieceImage}
-					referenceImageUrl={source.resolveReferenceImage() ?? null}
-					{referenceActive}
-					{referenceToggled}
-					interactionBlocked={hasSessionModal}
-					viewResetVersion={boardViewResetVersion}
-					onPiecePlaced={handlePiecePlaced}
-					onReferenceToggle={handleReferenceToggle}
-				/>
-
-				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+			<div class="game-workspace">
 				<div
-					class="tray-resizer"
-					data-testid="tray-resizer"
-					role="separator"
-					aria-label="Resize puzzle tray"
-					aria-orientation="vertical"
-					aria-valuemin={DESKTOP_TRAY_MIN_WIDTH}
-					aria-valuemax={Math.round(currentMaxTrayWidth())}
-					aria-valuenow={Math.round(appliedTrayWidth)}
-					tabindex="0"
-					onpointerdown={handleTrayResizePointerDown}
-					onkeydown={handleTrayResizeKeyDown}
-				></div>
+					bind:this={gameLayoutElement}
+					class="game-layout"
+					data-board-tier={currentBoardMetrics?.tier}
+					data-reference-toggled={referenceToggled ? 'true' : 'false'}
+					style={`--gameplay-rail-width: ${gameplayRailWidth}px; --gameplay-gap: ${MOBILE_GAMEPLAY_GAP}px; --tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
+						currentBoardMetrics
+							? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
+							: ''
+					}`}
+				>
+					<PuzzleToolbar
+						{canUndo}
+						{canRedo}
+						{canPause}
+						{canOpenSetup}
+						{rotationEnabled}
+						rotationToggleDisabled={isRotationToggleLocked()}
+						{referenceToggled}
+						referenceAvailable={currentPuzzle.hasReference === true &&
+							source.resolveReferenceImage() !== null}
+						hasReference={currentPuzzle.hasReference === true}
+						onUndo={handleUndo}
+						onRedo={handleRedo}
+						onHint={handleHint}
+						onReferenceDown={handleReferenceDown}
+						onReferenceUp={handleReferenceUp}
+						onReferenceToggle={handleReferenceToggle}
+						onZoomIn={() => boardPanel?.zoomIn()}
+						onZoomOut={() => boardPanel?.zoomOut()}
+						onResetView={requestBoardViewReset}
+						onRotationToggle={handleRotationToggle}
+						onPause={handleToolbarPause}
+						onOpenSetup={() => showMissionSetup(false)}
+					/>
 
-				<!-- Inventory panel -->
-				<PuzzleInventoryPanel
-					puzzle={currentPuzzle}
-					trayOrder={sessionState?.trayOrder ?? []}
-					{placedPieces}
-					{rotationEnabled}
-					{pieceRotations}
-					selectedPieceId={currentSelectedPieceId}
-					{activeHintPieceId}
-					rejectedPieceId={rejectedPiece}
-					resolveImage={source.resolvePieceImage}
-					onRotate={handlePieceRotate}
-					onSelect={handleSelectPiece}
-					onCancelSelection={handleCancelSelection}
-					activeFilter={activeInventoryFilter}
-					onFilterChange={handleInventoryFilterChange}
-					onShuffle={handleInventoryShuffle}
-					onAnnouncement={announceGameplay}
-				/>
+					<div class="board-stage">
+						<!-- HUD stays with the board so phone presentation can float it over
+					     the playfield while larger layouts keep it above the board. -->
+						<header class="hud-header">
+							<div class="hud-left">
+								<a
+									href={resolve('/')}
+									class="back-btn"
+									aria-label="Return to arcade"
+									data-testid="back-to-arcade-link"
+									onclick={(e) => {
+										e.preventDefault();
+										exitToArcade();
+									}}
+								>
+									<svg
+										class="back-icon"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+										aria-hidden="true"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M10 19l-7-7m0 0l7-7m-7 7h18"
+										/>
+									</svg>
+									<span>ARCADE</span>
+								</a>
+							</div>
+
+							<div class="hud-center">
+								<div class="mission-name">{currentPuzzle.name.toUpperCase()}</div>
+								<div class="mission-gems" aria-label="Mission rating: two gems">
+									<span aria-hidden="true">◆</span>
+									<span aria-hidden="true">◆</span>
+								</div>
+							</div>
+
+							<div class="gameplay-hud" data-testid="gameplay-hud">
+								{#if showTimedPresentation}
+									<!-- GameTimer renders its own data-testid="game-timer" so the
+								     existing timer contract remains unchanged. -->
+									<GameTimer {timerState} {bestTime} />
+								{:else if showRelaxedPresentation}
+									<div data-testid="relaxed-mode-indicator">RELAXED</div>
+								{/if}
+								<div class="hud-pieces">
+									<span class="stat-label">LEFT</span>
+									<span class="stat-value">{currentPuzzle.pieceCount - placedPieces.length}</span>
+								</div>
+								<ProgressRing
+									percent={progressPct}
+									size={48}
+									accent="magenta"
+									label="Puzzle progress"
+								/>
+							</div>
+
+							<div class="hud-right">
+								{#if currentPuzzle.familyId && puzzleSource?.source === 'api'}
+									<button
+										type="button"
+										class="leaderboard-btn"
+										data-testid="open-family-leaderboard"
+										onclick={() => (showFamilyLeaderboard = true)}
+									>
+										LEADERBOARD
+									</button>
+								{/if}
+							</div>
+						</header>
+
+						<!-- Board panel -->
+						<PuzzleBoardPanel
+							bind:this={boardPanel}
+							puzzle={currentPuzzle}
+							boardMetrics={currentBoardMetrics}
+							{placedPieces}
+							selectedPieceId={currentSelectedPieceId}
+							{activeHintTarget}
+							resolveImage={source.resolvePieceImage}
+							referenceImageUrl={source.resolveReferenceImage() ?? null}
+							{referenceActive}
+							{referenceToggled}
+							interactionBlocked={hasSessionModal}
+							viewResetVersion={boardViewResetVersion}
+							onPiecePlaced={handlePiecePlaced}
+							onReferenceToggle={handleReferenceToggle}
+						/>
+					</div>
+
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+					<div
+						class="tray-resizer"
+						data-testid="tray-resizer"
+						role="separator"
+						aria-label="Resize puzzle tray"
+						aria-orientation="vertical"
+						aria-valuemin={DESKTOP_TRAY_MIN_WIDTH}
+						aria-valuemax={Math.round(currentMaxTrayWidth())}
+						aria-valuenow={Math.round(appliedTrayWidth)}
+						tabindex="0"
+						onpointerdown={handleTrayResizePointerDown}
+						onkeydown={handleTrayResizeKeyDown}
+					></div>
+
+					<!-- Inventory panel -->
+					<PuzzleInventoryPanel
+						puzzle={currentPuzzle}
+						trayOrder={sessionState?.trayOrder ?? []}
+						{placedPieces}
+						{rotationEnabled}
+						{pieceRotations}
+						selectedPieceId={currentSelectedPieceId}
+						{activeHintPieceId}
+						rejectedPieceId={rejectedPiece}
+						resolveImage={source.resolvePieceImage}
+						onRotate={handlePieceRotate}
+						onSelect={handleSelectPiece}
+						onCancelSelection={handleCancelSelection}
+						activeFilter={activeInventoryFilter}
+						onFilterChange={handleInventoryFilterChange}
+						onShuffle={handleInventoryShuffle}
+						onAnnouncement={announceGameplay}
+					/>
+				</div>
 			</div>
 		{/if}
 	</main>
@@ -1514,12 +1518,12 @@
 <style>
 	/* ===== PAGE STRUCTURE ===== */
 	.puzzle-page {
+		height: 100vh;
 		min-height: 100vh;
 		background-color: var(--bg-0);
 		background-image:
-			linear-gradient(rgba(0, 240, 255, 0.02) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px);
-		background-size: 40px 40px;
+			radial-gradient(circle at 48% 34%, rgb(0 190 255 / 8%), transparent 38%),
+			radial-gradient(circle at 82% 70%, rgb(255 40 180 / 7%), transparent 42%);
 		display: flex;
 		flex-direction: column;
 	}
@@ -1582,23 +1586,25 @@
 		min-width: 0;
 	}
 
-	.mission-tag {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
-		color: var(--accent);
-		letter-spacing: 0.2em;
-		opacity: 0.6;
-	}
-
 	.mission-name {
 		font-family: var(--font-display);
-		font-size: 0.8rem;
+		font-size: 1rem;
 		font-weight: 700;
 		letter-spacing: 0.1em;
 		color: var(--text-0);
 		text-overflow: ellipsis;
 		overflow: hidden;
 		white-space: nowrap;
+	}
+
+	.mission-gems {
+		display: flex;
+		gap: 0.35rem;
+		margin-top: 0.25rem;
+		font-size: 0.6rem;
+		line-height: 1;
+		color: var(--hot);
+		text-shadow: 0 0 10px var(--hot-glow);
 	}
 
 	.hud-right {
@@ -1632,29 +1638,12 @@
 		letter-spacing: 0.05em;
 	}
 
-	.stat-total {
-		color: var(--text-2);
-		font-size: 0.75rem;
-	}
-
-	/* Progress bar */
-	.progress-bar-wrap {
-		height: 2px;
-		background: var(--bg-3);
-		flex-shrink: 0;
-	}
-
-	.progress-bar-fill {
-		height: 100%;
-		background: var(--accent);
-		box-shadow: 0 0 8px var(--accent);
-		transition: width 0.3s ease;
-	}
-
 	/* ===== MAIN CONTENT ===== */
 	.puzzle-main {
 		min-height: 0;
 		flex: 1;
+		display: flex;
+		flex-direction: column;
 		padding: 1.25rem;
 		overflow: auto;
 	}
@@ -1767,15 +1756,14 @@
 	}
 
 	.gameplay-hud {
-		position: absolute;
-		top: 0.75rem;
-		left: 1rem;
-		right: calc(var(--gameplay-rail-width) + 1rem);
+		position: static;
 		z-index: 3;
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
 		gap: 0.75rem;
+		margin-left: auto;
+		flex-shrink: 0;
 		pointer-events: none;
 	}
 
@@ -1810,7 +1798,7 @@
 		}
 
 		:global(.game-layout > .puzzle-toolbar:has(.toolbar-secondary[data-open='true'])) {
-			z-index: 5;
+			z-index: 10;
 		}
 
 		:global(.game-layout > .puzzle-toolbar .toolbar-secondary) {
@@ -1852,8 +1840,7 @@
 		}
 
 		:global(.game-layout > .puzzle-toolbar .toolbar-secondary .toolbar-group) {
-			display: flex;
-			flex-direction: column;
+			display: contents;
 		}
 
 		.game-layout > :global(.board-panel) {
@@ -1871,11 +1858,6 @@
 			grid-row: 1;
 		}
 
-		.gameplay-hud {
-			left: calc(var(--gameplay-rail-width) + 1.25rem);
-			right: calc(var(--tray-width) + var(--tray-resizer-width) + 1.25rem);
-		}
-
 		.tray-resizer {
 			display: block;
 			cursor: col-resize;
@@ -1889,12 +1871,399 @@
 		}
 	}
 
-	/* ===== REDUCED MOTION ACCESSIBILITY ===== */
-	@media (prefers-reduced-motion: reduce) {
-		.progress-bar-fill {
-			transition: none;
+	/* ===== ARCADE GAMEPLAY COMPOSITION ===== */
+	.game-workspace {
+		position: relative;
+		display: flex;
+		width: 100%;
+		max-width: min(96rem, calc(100vw - 2rem));
+		min-height: 0;
+		margin: 0 auto;
+		flex: 1;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.board-stage > .hud-header {
+		position: relative;
+		z-index: 4;
+		padding: 0.75rem 1rem;
+		background: transparent;
+		border: 0;
+		border-radius: 0;
+		box-shadow: none;
+	}
+
+	.board-stage > .hud-header .hud-left {
+		position: absolute;
+		top: 0.5rem;
+		left: calc(var(--gameplay-rail-width) * -1);
+		z-index: 7;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: var(--gameplay-rail-width);
+		height: 3.25rem;
+	}
+
+	.board-stage > .hud-header .back-btn {
+		justify-content: center;
+		width: 3.25rem;
+		height: 3.25rem;
+		padding: 0;
+		border: 1px solid var(--border-bright);
+		border-radius: 1.125rem;
+		background: rgba(28, 20, 64, 0.92);
+		color: var(--text-1);
+	}
+
+	.board-stage > .hud-header .back-btn span {
+		display: none;
+	}
+
+	.board-stage > .hud-header .back-icon {
+		width: 1.2rem;
+		height: 1.2rem;
+	}
+
+	.game-workspace .game-layout {
+		width: 100%;
+		max-width: none;
+		margin: 0;
+		flex: 1;
+	}
+
+	.gameplay-hud {
+		gap: 0.6rem;
+	}
+
+	.hud-pieces {
+		flex-direction: row;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.4rem 0.65rem;
+		border: 1px solid rgb(58 255 255 / 44%);
+		border-radius: 0.75rem;
+		background: rgb(8 30 57 / 80%);
+		box-shadow: 0 0 14px rgb(58 255 255 / 10%);
+	}
+
+	.hud-pieces .stat-label {
+		font-family: var(--font-display), Orbitron, monospace;
+		color: var(--text-2);
+	}
+
+	.hud-pieces .stat-value {
+		font-family: var(--font-mono), 'Share Tech Mono', monospace;
+		color: var(--accent);
+	}
+
+	.gameplay-hud :global(.progress-ring) {
+		width: 3rem;
+		height: 3rem;
+		background-color: rgb(10 6 32 / 86%);
+		box-shadow: 0 0 18px rgb(255 92 192 / 24%);
+	}
+
+	.gameplay-hud :global(.progress-ring-inner) {
+		background: #0a0620;
+	}
+
+	@media (max-width: 1023px) {
+		.puzzle-main {
+			padding: 0;
+			overflow: hidden;
 		}
 
+		.game-workspace {
+			width: 100%;
+			max-width: none;
+			height: 100%;
+			gap: 0;
+		}
+
+		.board-stage > .hud-header {
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: var(--gameplay-rail-width);
+			padding: 0.7rem 0.75rem;
+			background: transparent;
+			border: 0;
+			border-radius: 0;
+			box-shadow: none;
+		}
+
+		.game-workspace .hud-center {
+			text-align: left;
+		}
+
+		.game-workspace .mission-name {
+			max-width: min(46vw, 12rem);
+			font-size: 0.8rem;
+			letter-spacing: 0.08em;
+		}
+
+		.game-workspace .back-btn {
+			width: 2.75rem;
+			height: 2.75rem;
+			justify-content: center;
+			border: 1px solid var(--border-bright);
+			border-radius: 0.875rem;
+			background: rgb(28 20 64 / 82%);
+			color: var(--text-0);
+		}
+
+		.game-workspace .back-btn span,
+		.game-workspace .hud-right {
+			display: none;
+		}
+
+		.game-workspace .back-icon {
+			width: 1.1rem;
+			height: 1.1rem;
+		}
+
+		.game-workspace .game-layout {
+			width: 100%;
+			height: 100%;
+			flex: 1;
+		}
+
+		.gameplay-hud {
+			gap: 0.4rem;
+		}
+
+		.hud-pieces {
+			padding: 0.3rem 0.5rem;
+		}
+
+		.gameplay-hud :global(.timer-hud) {
+			gap: 0.35rem;
+		}
+
+		.gameplay-hud :global(.timer-block),
+		.gameplay-hud :global(.best-block) {
+			min-height: 2rem;
+			padding: 0.25rem 0.5rem;
+		}
+
+		.gameplay-hud :global(.best-value) {
+			font-size: 0.7rem;
+		}
+
+		.gameplay-hud :global(.progress-ring) {
+			width: 2.75rem;
+			height: 2.75rem;
+		}
+	}
+
+	/* Keep the rail, board stage, and tray as the only desktop grid tracks. The
+	   resizer overlays the tray edge so its pointer and keyboard contract stays
+	   intact without consuming a fourth visual track. */
+	@media (min-width: 1024px) {
+		.game-layout {
+			grid-template-columns: var(--gameplay-rail-width) minmax(0, 1fr) var(--tray-width);
+			grid-template-rows: minmax(0, 1fr);
+			height: 100%;
+			min-height: 0;
+			column-gap: 0;
+		}
+
+		.game-layout > :global(.puzzle-toolbar) {
+			grid-column: 1;
+			grid-row: 1;
+			padding: 4.25rem 0.25rem 0.5rem;
+		}
+
+		.game-layout > .board-stage {
+			position: relative;
+			grid-column: 2;
+			grid-row: 1;
+			display: flex;
+			height: 100%;
+			min-width: 0;
+			min-height: 0;
+			flex-direction: column;
+			gap: 2.25rem;
+		}
+
+		.board-stage > :global(.board-panel) {
+			display: flex;
+			flex-direction: column;
+			min-width: 0;
+			min-height: 0;
+			flex: 1;
+		}
+
+		.board-stage > :global(.board-panel) :global(.board-wrap) {
+			flex: 1;
+			min-height: 0;
+		}
+
+		.game-layout > :global(.inventory-panel) {
+			grid-column: 3;
+			grid-row: 1;
+			min-width: 0;
+		}
+
+		.game-layout > .tray-resizer {
+			position: absolute;
+			top: 0;
+			right: var(--tray-width);
+			bottom: 0;
+			z-index: 4;
+			width: var(--tray-resizer-width);
+			grid-column: auto;
+			grid-row: auto;
+		}
+
+		.gameplay-hud {
+			gap: 0.75rem;
+		}
+
+		.gameplay-hud .stat-label {
+			font-size: 0.55rem;
+		}
+
+		.gameplay-hud .stat-value {
+			font-family: var(--font-display), Orbitron, monospace;
+			font-size: 1.15rem;
+			font-weight: 700;
+			letter-spacing: 0.06em;
+		}
+
+		.gameplay-hud :global(.timer-value) {
+			font-family: var(--font-display), Orbitron, monospace;
+			font-size: 1.25rem;
+			font-weight: 700;
+		}
+
+		.gameplay-hud :global(.timer-block) {
+			min-height: 2.75rem;
+			padding: 0.4rem 0.8rem;
+		}
+
+		.board-stage > .hud-header {
+			padding-left: 1.25rem;
+		}
+
+		.mission-name {
+			font-size: 1.1rem;
+		}
+
+		.game-workspace .hud-center {
+			flex: 0 1 auto;
+			text-align: left;
+		}
+
+		.game-workspace .hud-right {
+			margin-left: auto;
+		}
+	}
+
+	@media (min-width: 1280px) {
+		.mission-name {
+			font-size: 1.25rem;
+		}
+	}
+
+	@media (max-width: 1023px) {
+		.game-layout {
+			grid-template-columns: minmax(0, 1fr) var(--gameplay-rail-width);
+			grid-template-rows: minmax(0, 1fr) auto;
+			height: 100%;
+			min-height: 0;
+			column-gap: 0;
+		}
+
+		.game-layout > :global(.puzzle-toolbar) {
+			grid-column: 2;
+			grid-row: 1;
+			padding: 4.25rem 0.25rem 0.875rem;
+		}
+
+		.game-layout > .board-stage {
+			position: relative;
+			grid-column: 1;
+			grid-row: 1;
+			display: flex;
+			height: 100%;
+			min-width: 0;
+			min-height: 0;
+			flex-direction: column;
+		}
+
+		.board-stage > .hud-header {
+			position: relative;
+			top: 0;
+			left: 0;
+			right: auto;
+			z-index: 6;
+			padding: 0.2rem 0.75rem;
+		}
+
+		.board-stage > :global(.board-panel) {
+			display: flex;
+			flex-direction: column;
+			min-width: 0;
+			min-height: 0;
+			flex: 1;
+		}
+
+		.board-stage > :global(.board-panel) :global(.board-wrap) {
+			flex: 1;
+			min-height: 0;
+			padding-top: 0.25rem;
+		}
+
+		.game-layout > :global(.inventory-panel) {
+			grid-column: 1 / -1;
+			grid-row: 2;
+		}
+
+		.board-stage > .hud-header .hud-left {
+			left: 0;
+			width: 3.25rem;
+		}
+
+		.board-stage > .hud-header .hud-center {
+			display: none;
+		}
+
+		:global(.game-layout > .puzzle-toolbar .toolbar-button[data-toolbar-action='redo']:disabled) {
+			display: none;
+		}
+
+		.game-workspace .hud-center {
+			text-align: center;
+		}
+
+		.gameplay-hud :global(.timer-block) {
+			min-width: 6.75rem;
+			justify-content: center;
+		}
+
+		.gameplay-hud :global(.timer-value) {
+			font-family: var(--font-display), Orbitron, monospace;
+			font-size: 1.1rem;
+			font-weight: 700;
+		}
+
+		.gameplay-hud .stat-label {
+			font-family: var(--font-display), Orbitron, monospace;
+			font-size: 0.45rem;
+		}
+
+		.gameplay-hud .stat-value {
+			font-family: var(--font-display), Orbitron, monospace;
+			font-size: 1rem;
+			font-weight: 700;
+		}
+	}
+
+	/* ===== REDUCED MOTION ACCESSIBILITY ===== */
+	@media (prefers-reduced-motion: reduce) {
 		.loading-ring {
 			animation: none;
 			box-shadow: none;

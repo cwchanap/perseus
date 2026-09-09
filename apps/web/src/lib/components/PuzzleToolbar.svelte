@@ -168,27 +168,18 @@
 	<div class="toolbar-group">
 		<button
 			type="button"
-			aria-label="Undo"
-			data-toolbar-action="undo"
-			tabindex={toolbarTabIndex('undo')}
-			disabled={!canUndo}
-			onclick={onUndo}
-			class="arcade-btn-ghost toolbar-button"
-		>
-			UNDO
-		</button>
-		<button
-			type="button"
 			aria-label="Hint"
 			aria-describedby="assistance-scoring-help"
 			data-toolbar-action="hint"
 			tabindex={toolbarTabIndex('hint')}
 			onclick={onHint}
 			class="arcade-btn-ghost toolbar-button"
+			title="Hint"
 		>
-			HINT
+			<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+				<path d="M11 21h2l.5-2h-3zM12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z" />
+			</svg>
 		</button>
-
 		{#if hasReference}
 			<button
 				type="button"
@@ -200,10 +191,63 @@
 				disabled={!referenceAvailable}
 				onclick={onReferenceToggle}
 				class="arcade-btn-ghost toolbar-button"
+				title="Toggle reference"
 			>
-				REF
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path
+						d="M12 5C7 5 3.2 8.4 2 12c1.2 3.6 5 7 10 7s8.8-3.4 10-7c-1.2-3.6-5-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"
+					/>
+				</svg>
 			</button>
 		{/if}
+		<button
+			type="button"
+			aria-label="Undo"
+			data-toolbar-action="undo"
+			tabindex={toolbarTabIndex('undo')}
+			disabled={!canUndo}
+			onclick={onUndo}
+			class="arcade-btn-ghost toolbar-button"
+			title="Undo"
+		>
+			<svg
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2.4"
+				aria-hidden="true"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M3 10h10a5 5 0 010 10H9m-6-10l4-4m-4 4l4 4"
+				/>
+			</svg>
+		</button>
+		<button
+			type="button"
+			aria-label="Redo"
+			data-toolbar-action="redo"
+			tabindex={toolbarTabIndex('redo')}
+			disabled={!canRedo}
+			onclick={onRedo}
+			class="arcade-btn-ghost toolbar-button"
+			title="Redo"
+		>
+			<svg
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2.4"
+				aria-hidden="true"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M21 10H11a5 5 0 000 10h4m6-10l-4-4m4 4l-4 4"
+				/>
+			</svg>
+		</button>
 		<button
 			type="button"
 			aria-label="Reset view"
@@ -211,8 +255,13 @@
 			tabindex={toolbarTabIndex('fit')}
 			onclick={onResetView}
 			class="arcade-btn-ghost toolbar-button"
+			title="Reset view"
 		>
-			FIT
+			<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+				<path
+					d="M4 4h6v2.4H6.4V10H4zM14 4h6v6h-2.4V6.4H14zM4 14h2.4v3.6H10V20H4zM17.6 14H20v6h-6v-2.4h3.6z"
+				/>
+			</svg>
 		</button>
 		{#if canPause}
 			<button
@@ -222,8 +271,11 @@
 				tabindex={toolbarTabIndex('pause')}
 				onclick={onPause}
 				class="arcade-btn-ghost toolbar-button"
+				title="Pause mission"
 			>
-				PAUSE
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M7 4h3v16H7zM14 4h3v16h-3z" />
+				</svg>
 			</button>
 		{/if}
 	</div>
@@ -237,8 +289,13 @@
 		data-toolbar-action="more"
 		tabindex={toolbarTabIndex('more')}
 		onclick={() => (moreOpen = !moreOpen)}
+		title="More puzzle actions"
 	>
-		MORE
+		<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<circle cx="5" cy="12" r="1.8" />
+			<circle cx="12" cy="12" r="1.8" />
+			<circle cx="19" cy="12" r="1.8" />
+		</svg>
 	</button>
 
 	<div
@@ -250,31 +307,42 @@
 		<div class="toolbar-group">
 			<button
 				type="button"
-				aria-label="Redo"
-				data-toolbar-action="redo"
-				tabindex={toolbarTabIndex('redo')}
-				disabled={!canRedo}
-				onclick={onRedo}
-				class="arcade-btn-ghost toolbar-button"
-			>
-				REDO
-			</button>
-			<button
-				type="button"
 				aria-label="Zoom out"
 				data-toolbar-action="zoom-out"
 				tabindex={toolbarTabIndex('zoom-out')}
 				onclick={onZoomOut}
-				class="arcade-btn-ghost toolbar-button">−</button
+				class="arcade-btn-ghost toolbar-button"
+				title="Zoom out"
 			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2.4"
+					aria-hidden="true"
+				>
+					<path stroke-linecap="round" d="M5 12h14" />
+				</svg>
+			</button>
 			<button
 				type="button"
 				aria-label="Zoom in"
 				data-toolbar-action="zoom-in"
 				tabindex={toolbarTabIndex('zoom-in')}
 				onclick={onZoomIn}
-				class="arcade-btn-ghost toolbar-button">+</button
+				class="arcade-btn-ghost toolbar-button"
+				title="Zoom in"
 			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2.4"
+					aria-hidden="true"
+				>
+					<path stroke-linecap="round" d="M5 12h14M12 5v14" />
+				</svg>
+			</button>
 			<button
 				type="button"
 				aria-label="Rotation mode"
@@ -285,8 +353,21 @@
 				disabled={rotationToggleDisabled}
 				onclick={onRotationToggle}
 				class="arcade-btn-ghost toolbar-button"
+				title="Rotation mode"
 			>
-				ROTATE
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M20 11a8 8 0 00-14.6-4.4L4 8m0 0V4m0 4h4M4 13a8 8 0 0014.6 4.4L20 16m0 0v4m0-4h-4"
+					/>
+				</svg>
 			</button>
 		</div>
 
@@ -316,8 +397,13 @@
 					}}
 					onblur={() => onReferenceUp()}
 					class="arcade-btn-ghost toolbar-button"
+					title="Hold to peek reference"
 				>
-					PEEK
+					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+						<path
+							d="M12 5C7 5 3.2 8.4 2 12c1.2 3.6 5 7 10 7s8.8-3.4 10-7c-1.2-3.6-5-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"
+						/>
+					</svg>
 				</button>
 			</div>
 		{/if}
@@ -331,8 +417,22 @@
 					tabindex={toolbarTabIndex('setup')}
 					onclick={onOpenSetup}
 					class="arcade-btn-ghost toolbar-button"
+					title="Open mission setup"
 				>
-					SETUP
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						aria-hidden="true"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M12 3v3m0 12v3M3 12h3m12 0h3m-3.6-6.4l-2.1 2.1m-8.6 8.6l-2.1 2.1m0-12.8l2.1 2.1m8.6 8.6l2.1 2.1"
+						/>
+						<circle cx="12" cy="12" r="3.5" />
+					</svg>
 				</button>
 			</div>
 		{/if}
@@ -471,6 +571,195 @@
 		.toolbar-button {
 			min-width: 44px;
 			min-height: 44px;
+		}
+	}
+
+	/* Arcade parity: controls read as luminous icon hardware while the
+	   existing toolbar DOM continues to own focus order and actions. */
+	.puzzle-toolbar {
+		gap: 0.75rem;
+		padding: 0.75rem 0.5rem;
+		background: rgba(21, 13, 51, 0.7);
+		border: 0;
+		border-right: 1px solid var(--border);
+	}
+
+	.toolbar-group,
+	.toolbar-secondary {
+		gap: 0.75rem;
+	}
+
+	.toolbar-button {
+		width: 3.25rem;
+		height: 3.25rem;
+		padding: 0;
+		border-radius: 1.125rem;
+		background: rgba(28, 20, 64, 0.92);
+		border-color: var(--border-bright);
+		color: var(--text-1);
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 4%),
+			0 8px 18px rgb(0 0 0 / 18%);
+	}
+
+	.toolbar-button svg {
+		width: 1.45rem;
+		height: 1.45rem;
+		flex: 0 0 auto;
+		pointer-events: none;
+	}
+
+	.toolbar-button:hover:not(:disabled) {
+		color: var(--accent);
+		border-color: var(--accent);
+		box-shadow: 0 0 16px rgb(58 255 255 / 18%);
+	}
+
+	.toolbar-button[data-toolbar-action='hint'] {
+		color: #241300;
+		background: linear-gradient(160deg, #ffe06b, #ffbb00);
+		border-color: #ffdf55;
+		box-shadow:
+			0 4px 0 #a37500,
+			0 8px 20px rgb(255 204 0 / 40%);
+	}
+
+	.toolbar-button[data-toolbar-action='hint']:hover:not(:disabled) {
+		color: #241300;
+		border-color: #fff0a8;
+		box-shadow:
+			0 4px 0 #a37500,
+			0 0 22px rgb(255 204 0 / 60%);
+	}
+
+	.toolbar-button[aria-pressed='true'] {
+		color: var(--accent);
+		border-color: var(--accent);
+		background: rgb(58 255 255 / 10%);
+		box-shadow: 0 0 16px rgb(58 255 255 / 20%);
+	}
+
+	.more-toggle {
+		color: var(--accent);
+	}
+
+	@media (min-width: 1024px) {
+		.puzzle-toolbar {
+			display: flex;
+			width: 100%;
+			height: 100%;
+			box-sizing: border-box;
+			flex-direction: column;
+			flex-wrap: nowrap;
+			align-items: stretch;
+			overflow: hidden;
+		}
+
+		.puzzle-toolbar > .toolbar-group,
+		.puzzle-toolbar > .toolbar-secondary,
+		.puzzle-toolbar > .toolbar-secondary .toolbar-group {
+			display: contents;
+		}
+
+		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='hint'] {
+			order: 1;
+		}
+
+		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='reference'] {
+			order: 2;
+		}
+
+		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='undo'] {
+			order: 3;
+		}
+
+		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='redo'] {
+			order: 4;
+		}
+
+		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='fit'] {
+			order: 5;
+		}
+
+		.puzzle-toolbar > .toolbar-group .toolbar-button[data-toolbar-action='pause'] {
+			order: 99;
+			margin-top: auto;
+		}
+
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='rotation'] {
+			order: 6;
+		}
+
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='peek'],
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='setup'],
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='zoom-out'],
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='zoom-in'],
+		.puzzle-toolbar > .more-toggle {
+			order: 98;
+		}
+
+		.puzzle-toolbar > .more-toggle {
+			display: inline-flex;
+		}
+
+		.puzzle-toolbar > .toolbar-secondary {
+			position: absolute;
+			top: 0.5rem;
+			left: calc(100% + 0.5rem);
+			z-index: 30;
+			display: none;
+			width: 11rem;
+			box-sizing: border-box;
+			flex-direction: column;
+			align-items: stretch;
+			padding: 0.5rem;
+			border: 1px solid var(--border-bright);
+			border-radius: 1rem;
+			background: rgba(21, 13, 51, 0.97);
+			box-shadow: 0 12px 32px rgb(0 0 0 / 40%);
+		}
+
+		.puzzle-toolbar > .toolbar-secondary[data-open='true'] {
+			display: flex;
+		}
+
+		.puzzle-toolbar > .toolbar-secondary .toolbar-group {
+			display: flex;
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button {
+			width: 100%;
+		}
+	}
+
+	@media (max-width: 1023px) {
+		.puzzle-toolbar {
+			gap: 0.625rem;
+			padding: 0.875rem 0.25rem;
+			background: transparent;
+			border: 0;
+		}
+
+		.puzzle-toolbar > .toolbar-group {
+			gap: 0.625rem;
+		}
+
+		.toolbar-button {
+			width: 3.25rem;
+			height: 3.25rem;
+		}
+
+		.more-toggle {
+			width: 3.25rem;
+			height: 3.25rem;
+		}
+
+		.toolbar-secondary {
+			border-radius: 1.125rem;
+			background: rgba(21, 13, 51, 0.96);
+			border-color: var(--border-bright);
 		}
 	}
 </style>

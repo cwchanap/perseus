@@ -273,8 +273,11 @@
 
 <style>
 	.board-panel {
-		background: var(--bg-1);
-		border: 1px solid var(--border);
+		background: transparent;
+		border: 0;
+		border-radius: 0;
+		box-shadow: none;
+		overflow: visible;
 	}
 
 	.panel-header {
@@ -297,6 +300,7 @@
 	.board-wrap {
 		padding: clamp(0.75rem, 2vw, 1.25rem);
 		overflow: auto;
+		background: transparent;
 	}
 
 	.board-canvas {
@@ -311,6 +315,9 @@
 	   content-sized (no definite row height), so this stays inert there. */
 	@media (max-width: 1023px) {
 		.board-panel {
+			border: 0;
+			border-radius: 0;
+			box-shadow: none;
 			display: flex;
 			flex-direction: column;
 			min-height: 0;
@@ -324,5 +331,11 @@
 			flex: 1 1 0;
 			min-height: 0;
 		}
+	}
+
+	/* The board is the playfield itself; the old dashboard heading consumed
+	   space and obscured the cell grid in the arcade composition. */
+	.panel-header {
+		display: none;
 	}
 </style>

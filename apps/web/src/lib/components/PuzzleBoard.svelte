@@ -169,9 +169,9 @@
 		const isOver = dragOverCell?.x === x && dragOverCell?.y === y;
 		const hasPlaced = isPiecePlaced(x, y);
 
-		if (hasPlaced) return 'bg-transparent';
-		if (isOver) return 'bg-blue-100 border-blue-400';
-		return 'bg-gray-100 border-gray-300';
+		if (hasPlaced) return 'cell-occupied';
+		if (isOver) return 'cell-drop-over';
+		return 'cell-empty';
 	}
 
 	function isHintTarget(x: number, y: number): boolean {
@@ -255,5 +255,39 @@
 	/* Subtle shadow for placed pieces */
 	.placed-piece-shadow {
 		filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 0.15));
+	}
+
+	.puzzle-board {
+		box-sizing: border-box;
+		padding: 0;
+		border: 1px solid rgb(58 255 255 / 34%);
+		border-radius: 1rem;
+		background: #0a0620;
+		box-shadow:
+			inset 0 0 28px rgb(58 255 255 / 5%),
+			0 0 24px rgb(0 0 0 / 35%);
+		overflow: hidden;
+	}
+
+	.drop-zone {
+		border-style: solid;
+		border-color: rgb(58 255 255 / 14%);
+		background: #111035;
+		box-shadow: inset 0 0 16px rgb(58 255 255 / 3%);
+	}
+
+	.cell-empty {
+		background: #111035;
+	}
+
+	.cell-occupied {
+		background: #0a0620;
+		border-color: rgb(58 255 255 / 9%);
+	}
+
+	.cell-drop-over {
+		background: rgb(58 255 255 / 14%);
+		border-color: var(--accent);
+		box-shadow: inset 0 0 18px rgb(58 255 255 / 16%);
 	}
 </style>
