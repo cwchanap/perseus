@@ -85,15 +85,13 @@
 	}
 </script>
 
-<div
-	data-active={active}
-	class="overflow-hidden rounded-[20px] border border-(--border) bg-[rgba(21,13,51,0.62)]"
->
-	<div
-		class="flex flex-wrap items-end justify-between gap-4 border-b border-(--border) bg-[rgba(28,20,64,0.7)] px-5 py-5 sm:px-6"
-	>
+<div data-active={active} class="flex min-h-full min-w-0 flex-col">
+	<div class="flex flex-wrap items-end justify-between gap-4 pb-2">
 		<div>
-			<h2 class="text-xl font-(--font-display) font-black tracking-[0.08em] text-(--text-0)">
+			<h2
+				class="text-[clamp(1.25rem,3vw,1.7rem)] font-(--font-display) font-black tracking-[0.08em] text-(--text-0)"
+				style="font-family: var(--font-display)"
+			>
 				PLAYER ACCESS
 			</h2>
 			<p
@@ -104,14 +102,20 @@
 		</div>
 		<span
 			data-testid="player-count"
-			class="rounded-xl border border-(--border-bright) bg-(--bg-3) px-3 py-2 text-xs font-(--font-mono) tracking-[0.1em] text-(--green)"
+			class="rounded-full border border-(--green-dim) bg-[rgba(0,255,136,0.08)] px-3 py-1.5 text-[0.62rem]
+			font-(--font-display) font-bold tracking-[0.1em] text-(--green)"
 		>
+			<span class="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-(--green)" aria-hidden="true"
+			></span>
 			{allowlist.length} ALLOWED
 		</span>
 	</div>
 
-	<div class="flex flex-col gap-4 p-5 sm:p-6">
-		<form onsubmit={handleAllowlistSubmit} class="flex flex-col gap-3 sm:flex-row">
+	<div class="flex min-h-0 flex-1 flex-col gap-4 pt-1">
+		<form
+			onsubmit={handleAllowlistSubmit}
+			class="flex w-full max-w-[714px] flex-col gap-3 sm:flex-row"
+		>
 			<label class="sr-only" for="player-email">Player email</label>
 			<input
 				id="player-email"
@@ -168,9 +172,9 @@
 		{:else}
 			<div
 				data-testid="player-access-table"
-				class="overflow-x-auto rounded-xl border border-(--border) bg-(--bg-0)"
+				class="flex min-h-0 min-h-[340px] flex-1 overflow-x-auto rounded-2xl border border-(--border) bg-[rgba(10,7,28,0.46)]"
 			>
-				<div class="min-w-[560px]">
+				<div class="min-h-full min-w-[560px] flex-1">
 					<div
 						class="grid grid-cols-[44px_minmax(160px,1fr)_220px_56px] items-center gap-4 border-b border-(--border)
 						bg-(--bg-2) px-4 py-3 text-xs font-(--font-body) font-bold tracking-[0.1em] text-(--text-2) uppercase"

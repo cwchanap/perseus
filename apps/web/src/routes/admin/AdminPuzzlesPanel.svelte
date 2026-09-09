@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onDestroy, onMount } from 'svelte';
 	import DifficultyGems from '$lib/components/DifficultyGems.svelte';
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
@@ -56,6 +57,11 @@
 	);
 	const pageResult = $derived(pageSlice(filteredPuzzles, pageIndex, PAGE_SIZE));
 	const visiblePuzzles = $derived(pageResult.page);
+	const readyCount = $derived(puzzles.filter((puzzle) => puzzle.status === 'ready').length);
+	const processingCount = $derived(
+		puzzles.filter((puzzle) => puzzle.status === 'processing').length
+	);
+	const failedCount = $derived(puzzles.filter((puzzle) => puzzle.status === 'failed').length);
 
 	onMount(async () => {
 		mounted = true;
@@ -209,12 +215,13 @@
 	</div>
 {/if}
 
-<div class="overflow-hidden rounded-[20px] border border-(--border) bg-[rgba(21,13,51,0.62)]">
-	<div
-		class="flex flex-wrap items-end justify-between gap-4 border-b border-(--border) bg-[rgba(28,20,64,0.7)] px-5 py-5 sm:px-6"
-	>
+<div class="flex min-h-full min-w-0 flex-col">
+	<div class="flex flex-wrap items-end justify-between gap-4 pb-2">
 		<div>
-			<h2 class="text-xl font-(--font-display) font-black tracking-[0.08em] text-(--text-0)">
+			<h2
+				class="text-[clamp(1.25rem,3vw,1.7rem)] font-(--font-display) font-black tracking-[0.08em] text-(--text-0)"
+				style="font-family: var(--font-display)"
+			>
 				MISSION DATABASE
 			</h2>
 			<p
@@ -223,25 +230,69 @@
 				{puzzles.length} puzzle families · 3 difficulty variants each
 			</p>
 		</div>
-		<span
-			class="rounded-xl border border-(--border-bright) bg-(--bg-3) px-3 py-2 text-xs font-(--font-mono) tracking-[0.1em] text-(--accent)"
-		>
-			{#if hasActiveCriteria}
-				{filteredPuzzles.length} OF {puzzles.length}
-			{:else}
-				{puzzles.length} TOTAL
-			{/if}
-		</span>
+		<div class="flex flex-wrap items-center justify-end gap-2">
+			<span
+				aria-label={`${readyCount} ready`}
+				class="rounded-full border border-(--green-dim) bg-[rgba(0,255,136,0.08)] px-3 py-1.5 text-[0.62rem]
+				font-(--font-display) font-bold tracking-[0.1em] text-(--green)"
+			>
+				<span class="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-(--green)" aria-hidden="true"
+				></span>
+				{readyCount} <span class="status-summary-label status-ready" aria-hidden="true"></span>
+			</span>
+			<span
+				aria-label={`${processingCount} processing`}
+				class="rounded-full border border-(--accent-dim) bg-(--accent-glow) px-3 py-1.5 text-[0.62rem]
+				font-(--font-display) font-bold tracking-[0.1em] text-(--accent)"
+			>
+				<span class="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-(--accent)" aria-hidden="true"
+				></span>
+				{processingCount}
+				<span class="status-summary-label status-processing" aria-hidden="true"></span>
+			</span>
+			<span
+				aria-label={`${failedCount} failed`}
+				class="rounded-full border border-(--hot-dim) bg-(--hot-glow) px-3 py-1.5 text-[0.62rem]
+				font-(--font-display) font-bold tracking-[0.1em] text-(--hot)"
+			>
+				<span class="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-(--hot)" aria-hidden="true"
+				></span>
+				{failedCount} <span class="status-summary-label status-failed" aria-hidden="true"></span>
+			</span>
+			<span
+				class="rounded-full border border-(--border-bright) bg-(--bg-3) px-3 py-1.5 text-[0.62rem]
+				font-(--font-mono) tracking-[0.1em] text-(--text-1)"
+			>
+				{#if hasActiveCriteria}
+					{filteredPuzzles.length} OF {puzzles.length}
+				{:else}
+					{puzzles.length} TOTAL
+				{/if}
+			</span>
+			<a
+				href={resolve('/upload')}
+				class="inline-flex items-center gap-1.5 rounded-full border border-(--accent) bg-[linear-gradient(160deg,#5affff,#00c2dc)]
+				px-3 py-1.5 text-[0.62rem] font-(--font-display) font-black tracking-[0.1em] text-[#03202a]
+				shadow-[0_3px_0_#00707f] transition-[filter] hover:brightness-105"
+			>
+				<svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+					<path d="M12 3l4 4h-3v6h-2V7H8zM5 15h14v5H5z" />
+				</svg>
+				UPLOAD MISSION
+			</a>
+		</div>
 	</div>
 
-	<div class="flex flex-col gap-2 border-b border-(--border) p-4 sm:flex-row">
-		<SearchBar
-			value={searchQuery}
-			onInput={(value) => {
-				searchQuery = value;
-				pageIndex = 0;
-			}}
-		/>
+	<div class="flex flex-col gap-2 py-2 sm:flex-row sm:items-center">
+		<div class="w-full max-w-[380px]">
+			<SearchBar
+				value={searchQuery}
+				onInput={(value) => {
+					searchQuery = value;
+					pageIndex = 0;
+				}}
+			/>
+		</div>
 		<div class="flex flex-wrap gap-2">
 			<select
 				aria-label="Filter by category"
@@ -313,158 +364,185 @@
 			<p>No missions match the current search and filters.</p>
 		</div>
 	{:else}
-		<div class="overflow-x-auto">
-			<div class="min-w-[760px]">
-				<div
-					class="grid grid-cols-[76px_minmax(180px,1fr)_140px_270px_112px] items-center gap-4 border-b border-(--border)
-					bg-[rgba(28,20,64,0.7)] px-5 py-3 text-xs font-(--font-body) font-bold tracking-[0.1em] text-(--text-2) uppercase"
-				>
-					<span></span>
-					<span>Mission</span>
-					<span>Status</span>
-					<span>Pieces</span>
-					<span class="text-right">Actions</span>
-				</div>
-				{#each visiblePuzzles as puzzle (puzzle.id)}
+		<div
+			class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-(--border) bg-[rgba(10,7,28,0.46)]"
+		>
+			<div class="min-h-0 flex-1 overflow-x-auto">
+				<div class="min-h-full min-w-[760px]">
 					<div
-						data-testid="admin-puzzle-row"
-						class="grid grid-cols-[76px_minmax(180px,1fr)_140px_270px_112px] items-center gap-4 border-b border-[rgba(44,28,96,0.7)]
-						px-5 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-(--bg-2)"
+						class="grid grid-cols-[76px_minmax(180px,1fr)_140px_270px_112px] items-center gap-4 border-b border-(--border)
+					bg-[rgba(28,20,64,0.7)] px-5 py-3 text-xs font-(--font-body) font-bold tracking-[0.1em] text-(--text-2) uppercase"
 					>
+						<span></span>
+						<span>Mission</span>
+						<span>Status</span>
+						<span>Pieces</span>
+						<span class="text-right">Actions</span>
+					</div>
+					{#each visiblePuzzles as puzzle (puzzle.id)}
 						<div
-							data-admin-thumbnail="60"
-							class="flex h-[60px] w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-(--border-bright) bg-(--bg-2)"
+							data-testid="admin-puzzle-row"
+							class="grid grid-cols-[76px_minmax(180px,1fr)_140px_270px_112px] items-center gap-4 border-b border-[rgba(44,28,96,0.7)]
+						px-5 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-(--bg-2)"
 						>
-							{#if puzzle.status === 'processing'}
-								<div
-									class="h-5 w-5 rounded-full border-2 border-(--border) border-t-(--accent)
+							<div
+								data-admin-thumbnail="60"
+								class="flex h-[60px] w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-(--border-bright) bg-(--bg-2)"
+							>
+								{#if puzzle.status === 'processing'}
+									<div
+										class="h-5 w-5 rounded-full border-2 border-(--border) border-t-(--accent)
 									motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
-									role="status"
-									aria-label="Processing puzzle"
-								></div>
-							{:else if puzzle.status === 'failed'}
-								<span
-									class="text-2xl font-(--font-display) text-(--hot)"
-									role="img"
-									aria-label="Puzzle failed">×</span
+										role="status"
+										aria-label="Processing puzzle"
+									></div>
+								{:else if puzzle.status === 'failed'}
+									<span
+										class="text-2xl font-(--font-display) text-(--hot)"
+										role="img"
+										aria-label="Puzzle failed">×</span
+									>
+								{:else}
+									<img
+										src={getFamilyThumbnailUrl(puzzle.id)}
+										alt={puzzle.name}
+										class="h-full w-full object-cover"
+									/>
+								{/if}
+							</div>
+
+							<div class="min-w-0">
+								<div
+									class="truncate text-[1.05rem] font-(--font-body) font-bold tracking-[0.02em] text-(--text-0)"
 								>
-							{:else}
-								<img
-									src={getFamilyThumbnailUrl(puzzle.id)}
-									alt={puzzle.name}
-									class="h-full w-full object-cover"
-								/>
-							{/if}
-						</div>
-
-						<div class="min-w-0">
-							<div
-								class="truncate text-[1.05rem] font-(--font-body) font-bold tracking-[0.02em] text-(--text-0)"
-							>
-								{puzzle.name}
+									{puzzle.name}
+								</div>
+								<div
+									class="mt-1 text-sm font-(--font-body) font-semibold tracking-[0.04em] text-(--text-2)"
+								>
+									{puzzle.category ?? 'Uncategorized'}
+								</div>
 							</div>
-							<div
-								class="mt-1 text-sm font-(--font-body) font-semibold tracking-[0.04em] text-(--text-2)"
-							>
-								{puzzle.category ?? 'Uncategorized'}
-							</div>
-						</div>
 
-						<div
-							data-testid="admin-status"
-							class="inline-flex items-center gap-2 text-sm font-(--font-body) font-bold tracking-[0.05em]
-							{puzzle.status === 'ready'
-								? 'text-(--green)'
-								: puzzle.status === 'processing'
-									? 'text-(--accent)'
-									: 'text-(--hot)'}"
-						>
-							<span
-								class="h-2.5 w-2.5 rounded-full
-								{puzzle.status === 'ready'
-									? 'bg-(--green) shadow-[0_0_10px_var(--green-glow)]'
+							<div
+								data-testid="admin-status"
+								class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[0.7rem]
+						font-(--font-body) font-bold tracking-[0.05em]
+						{puzzle.status === 'ready'
+									? 'border-(--green-dim) bg-[rgba(0,255,136,0.08)] text-(--green)'
 									: puzzle.status === 'processing'
-										? 'bg-(--accent) shadow-[0_0_10px_var(--accent-glow-strong)]'
-										: 'bg-(--hot) shadow-[0_0_10px_var(--hot-glow)]'}"
-								aria-hidden="true"
-							></span>
-							{puzzle.status.toUpperCase()}
-						</div>
+										? 'border-(--accent-dim) bg-(--accent-glow) text-(--accent)'
+										: 'border-(--hot-dim) bg-(--hot-glow) text-(--hot)'}"
+							>
+								<span
+									class="h-2.5 w-2.5 rounded-full
+								{puzzle.status === 'ready'
+										? 'bg-(--green) shadow-[0_0_10px_var(--green-glow)]'
+										: puzzle.status === 'processing'
+											? 'bg-(--accent) shadow-[0_0_10px_var(--accent-glow-strong)]'
+											: 'bg-(--hot) shadow-[0_0_10px_var(--hot-glow)]'}"
+									aria-hidden="true"
+								></span>
+								{puzzle.status.toUpperCase()}
+							</div>
 
-						<div class="flex items-center gap-2">
-							<DifficultyGems difficulty="easy" pieceCount={puzzle.variants.easy.pieceCount} />
-							<DifficultyGems difficulty="normal" pieceCount={puzzle.variants.normal.pieceCount} />
-							<DifficultyGems difficulty="hard" pieceCount={puzzle.variants.hard.pieceCount} />
-						</div>
+							<div class="flex items-center gap-2">
+								<DifficultyGems difficulty="easy" pieceCount={puzzle.variants.easy.pieceCount} />
+								<DifficultyGems
+									difficulty="normal"
+									pieceCount={puzzle.variants.normal.pieceCount}
+								/>
+								<DifficultyGems difficulty="hard" pieceCount={puzzle.variants.hard.pieceCount} />
+							</div>
 
-						<div class="flex items-center justify-end gap-2">
-							{#if puzzle.status === 'ready'}
+							<div class="flex items-center justify-end gap-2">
+								{#if puzzle.status === 'ready'}
+									<button
+										type="button"
+										aria-label={`View full image for ${puzzle.name}`}
+										title={`Preview ${puzzle.name}`}
+										onclick={() => (previewFamily = puzzle)}
+										class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--border-bright) bg-(--bg-3) text-(--text-1)
+									transition-colors hover:border-(--accent) hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-(--accent)"
+									>
+										<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+											<path
+												d="M12 5C7 5 3.2 8.4 2 12c1.2 3.6 5 7 10 7s8.8-3.4 10-7c-1.2-3.6-5-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"
+											/>
+										</svg>
+									</button>
+								{/if}
 								<button
 									type="button"
-									aria-label={`View full image for ${puzzle.name}`}
-									title={`Preview ${puzzle.name}`}
-									onclick={() => (previewFamily = puzzle)}
-									class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--border-bright) bg-(--bg-3) text-(--text-1)
-									transition-colors hover:border-(--accent) hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-(--accent)"
-								>
-									<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
-										<path
-											d="M12 5C7 5 3.2 8.4 2 12c1.2 3.6 5 7 10 7s8.8-3.4 10-7c-1.2-3.6-5-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"
-										/>
-									</svg>
-								</button>
-							{/if}
-							<button
-								type="button"
-								aria-label={`${puzzle.status === 'processing' ? 'Force delete' : 'Delete'} ${puzzle.name}`}
-								title={puzzle.status === 'processing'
-									? 'Force delete stuck family'
-									: 'Delete family'}
-								onclick={() => handleDelete(puzzle.id, puzzle.status === 'processing')}
-								disabled={deletingId === puzzle.id}
-								class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim) bg-[rgba(255,0,102,0.1)]
+									aria-label={`${puzzle.status === 'processing' ? 'Force delete' : 'Delete'} ${puzzle.name}`}
+									title={puzzle.status === 'processing'
+										? 'Force delete stuck family'
+										: 'Delete family'}
+									onclick={() => handleDelete(puzzle.id, puzzle.status === 'processing')}
+									disabled={deletingId === puzzle.id}
+									class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim) bg-[rgba(255,0,102,0.1)]
 								text-(--hot) transition-colors hover:border-(--hot) hover:bg-(--hot-glow)
 								focus-visible:outline-2 focus-visible:outline-(--hot) disabled:cursor-not-allowed disabled:opacity-40"
-							>
-								<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
-									<path d="M9 3h6l1 2h4v2H4V5h4zM6 8h12l-1 13H7z" />
-								</svg>
-							</button>
+								>
+									<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+										<path d="M9 3h6l1 2h4v2H4V5h4zM6 8h12l-1 13H7z" />
+									</svg>
+								</button>
+							</div>
 						</div>
-					</div>
-				{/each}
+					{/each}
+				</div>
 			</div>
+			{#if pageResult.totalPages > 1}
+				<div
+					class="flex items-center justify-between border-t border-(--border) bg-[rgba(28,20,64,0.7)] px-5 py-3"
+				>
+					<button
+						type="button"
+						aria-label="Previous page"
+						disabled={pageResult.clampedIndex === 0}
+						onclick={() => (pageIndex = pageResult.clampedIndex - 1)}
+						class="rounded-xl border border-(--border-bright) px-3 py-2 text-[0.6rem] font-(--font-display)
+					font-semibold tracking-[0.12em] text-(--text-1) transition-colors hover:border-(--accent)
+					hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-35"
+					>
+						PREVIOUS
+					</button>
+					<span class="text-sm font-(--font-body) font-semibold tracking-[0.08em] text-(--text-2)">
+						PAGE {pageResult.clampedIndex + 1} OF {pageResult.totalPages}
+					</span>
+					<button
+						type="button"
+						aria-label="Next page"
+						disabled={pageResult.clampedIndex === pageResult.totalPages - 1}
+						onclick={() => (pageIndex = pageResult.clampedIndex + 1)}
+						class="rounded-xl border border-(--border-bright) px-3 py-2 text-[0.6rem] font-(--font-display)
+					font-semibold tracking-[0.12em] text-(--text-1) transition-colors hover:border-(--accent)
+					hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-35"
+					>
+						NEXT
+					</button>
+				</div>
+			{/if}
 		</div>
-		{#if pageResult.totalPages > 1}
-			<div
-				class="flex items-center justify-between border-t border-(--border) bg-[rgba(28,20,64,0.7)] px-5 py-3"
-			>
-				<button
-					type="button"
-					aria-label="Previous page"
-					disabled={pageResult.clampedIndex === 0}
-					onclick={() => (pageIndex = pageResult.clampedIndex - 1)}
-					class="rounded-xl border border-(--border-bright) px-3 py-2 text-[0.6rem] font-(--font-display)
-					font-semibold tracking-[0.12em] text-(--text-1) transition-colors hover:border-(--accent)
-					hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-35"
-				>
-					PREVIOUS
-				</button>
-				<span class="text-sm font-(--font-body) font-semibold tracking-[0.08em] text-(--text-2)">
-					PAGE {pageResult.clampedIndex + 1} OF {pageResult.totalPages}
-				</span>
-				<button
-					type="button"
-					aria-label="Next page"
-					disabled={pageResult.clampedIndex === pageResult.totalPages - 1}
-					onclick={() => (pageIndex = pageResult.clampedIndex + 1)}
-					class="rounded-xl border border-(--border-bright) px-3 py-2 text-[0.6rem] font-(--font-display)
-					font-semibold tracking-[0.12em] text-(--text-1) transition-colors hover:border-(--accent)
-					hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-35"
-				>
-					NEXT
-				</button>
-			</div>
-		{/if}
 	{/if}
 </div>
+
+<style>
+	.status-summary-label::after {
+		font-family: var(--font-display);
+		content: '';
+	}
+
+	.status-ready::after {
+		content: 'READY';
+	}
+
+	.status-processing::after {
+		content: 'PROCESSING';
+	}
+
+	.status-failed::after {
+		content: 'FAILED';
+	}
+</style>

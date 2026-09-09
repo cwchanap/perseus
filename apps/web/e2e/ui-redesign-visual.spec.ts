@@ -8,7 +8,6 @@ import {
 } from '@perseus/game-core';
 import type { PuzzleFamilySummary } from '@perseus/types';
 import { test, expect } from './support/test';
-import { getFixture } from './gameplay-fixtures/catalog';
 import {
 	buildMinimalSeed,
 	progressKey,
@@ -163,6 +162,16 @@ async function installVisualThumbnail(page: Page): Promise<void> {
 	);
 }
 
+async function installVisualFixtureReference(page: Page): Promise<void> {
+	await page.route(/\/api\/puzzles\/e2e-square-4\/reference$/, (route) =>
+		route.fulfill({
+			path: VISUAL_ART,
+			contentType: 'image/png',
+			headers: { 'x-perseus-e2e-source': 'fixture-router' }
+		})
+	);
+}
+
 async function installVisualGallery(page: Page, families: PuzzleFamilySummary[]): Promise<void> {
 	await installVisualAuth(page, true);
 	await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
@@ -239,7 +248,6 @@ async function prepareVisualGameplay(page: Page): Promise<void> {
 	);
 	if (!quickJson) throw new Error(`Missing quick puzzle metadata for ${quickId}`);
 	const stored = JSON.parse(quickJson) as StoredQuickPuzzle;
-	const fixture = getFixture('e2e-portrait-12');
 	const placedPieces = stored.pieces.slice(0, 18).map(({ id, correctX, correctY }) => ({
 		pieceId: id,
 		x: correctX,
@@ -462,45 +470,65 @@ test.describe('phone @visual', () => {
 			completion: { kind: 'success' },
 			seedPreferences: IMMEDIATE_START
 		});
+		await installVisualFixtureReference(page);
 		await gameplayPage.solveFixture();
 		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
 		const playAgain = page.getByRole('button', { name: 'PLAY AGAIN' });
 		await expect(playAgain).toBeFocused();
-		await page.getByTestId('celebration-modal').evaluate((modal) => {
-			const box = modal.querySelector<HTMLElement>('.modal-box');
-			const actions = box?.querySelector<HTMLElement>('.modal-actions');
-			actions?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-		});
-		const phoneCompletionScroll = await page.getByTestId('celebration-modal').evaluate((modal) => {
-			const box = modal.querySelector<HTMLElement>('.modal-box');
-			const actions = box?.querySelector<HTMLElement>('.modal-actions');
-			const boxRect = box?.getBoundingClientRect();
-			const actionsRect = actions?.getBoundingClientRect();
-			return {
-				scrollTop: box?.scrollTop ?? 0,
-				scrollHeight: box?.scrollHeight ?? 0,
-				clientHeight: box?.clientHeight ?? 0,
-				actionsReachableByScroll:
-					boxRect !== undefined &&
-					actionsRect !== undefined &&
-					actionsRect.top >= boxRect.top &&
-					actionsRect.bottom <= boxRect.bottom,
-				actionCount: actions?.querySelectorAll('button').length ?? 0
-			};
-		});
-		expect(phoneCompletionScroll.scrollHeight).toBeGreaterThan(phoneCompletionScroll.clientHeight);
-		expect(phoneCompletionScroll.actionsReachableByScroll).toBe(true);
-		expect(phoneCompletionScroll.actionCount).toBe(2);
+		const phoneCompletionGeometry = await page
+			.getByTestId('celebration-modal')
+			.evaluate((modal) => {
+				const box = modal.querySelector<HTMLElement>('.modal-box');
+				const stars = box?.querySelector<HTMLElement>('.completion-stars');
+				const artwork = box?.querySelector<HTMLElement>('[data-testid="completion-reference-art"]');
+				const finalTime = box?.querySelector<HTMLElement>('[data-testid="completion-final-time"]');
+				const summary = box?.querySelector<HTMLElement>('[data-testid="completion-run-summary"]');
+				const actions = box?.querySelector<HTMLElement>('.modal-actions');
+				const boxRect = box?.getBoundingClientRect();
+				const viewport = { width: window.innerWidth, height: window.innerHeight };
+				const rectInside = (element: HTMLElement | null | undefined) => {
+					if (!element || !boxRect) return false;
+					const rect = element.getBoundingClientRect();
+					return (
+						rect.left >= boxRect.left - 1 &&
+						rect.right <= boxRect.right + 1 &&
+						rect.top >= boxRect.top - 1 &&
+						rect.bottom <= boxRect.bottom + 1
+					);
+				};
+				return {
+					scrollTop: box?.scrollTop ?? 0,
+					scrollHeight: box?.scrollHeight ?? 0,
+					clientHeight: box?.clientHeight ?? 0,
+					viewport,
+					boxFitsViewport:
+						boxRect !== undefined &&
+						boxRect.left >= 0 &&
+						boxRect.right <= viewport.width &&
+						boxRect.top >= 0 &&
+						boxRect.bottom <= viewport.height,
+					starsBeforeArtwork:
+						stars !== null &&
+						artwork !== null &&
+						stars !== undefined &&
+						artwork !== undefined &&
+						stars.getBoundingClientRect().bottom <= artwork.getBoundingClientRect().top,
+					naturalContentVisible: [stars, artwork, finalTime, summary, actions].every(rectInside),
+					actionsVisible: actions !== null && actions !== undefined && rectInside(actions),
+					actionCount: actions?.querySelectorAll('button').length ?? 0
+				};
+			});
+		expect(phoneCompletionGeometry.scrollTop).toBe(0);
+		expect(phoneCompletionGeometry.scrollHeight).toBeLessThanOrEqual(
+			phoneCompletionGeometry.clientHeight + 2
+		);
+		expect(phoneCompletionGeometry.boxFitsViewport).toBe(true);
+		expect(phoneCompletionGeometry.starsBeforeArtwork).toBe(true);
+		expect(phoneCompletionGeometry.naturalContentVisible).toBe(true);
+		expect(phoneCompletionGeometry.actionsVisible).toBe(true);
+		expect(phoneCompletionGeometry.actionCount).toBe(2);
 		await expect(playAgain).toBeFocused();
 		await expect(playAgain).toBeVisible();
-		await page.getByTestId('celebration-modal').evaluate((modal) => {
-			modal.querySelector<HTMLElement>('.modal-box')?.scrollTo({ top: 0, left: 0 });
-		});
-		const resetScrollTop = await page
-			.getByTestId('celebration-modal')
-			.evaluate((modal) => modal.querySelector<HTMLElement>('.modal-box')?.scrollTop ?? 0);
-		expect(resetScrollTop).toBe(0);
-		await expect(playAgain).toBeFocused();
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-phone-completion.png', {
 			maxDiffPixelRatio: 0.005
@@ -584,6 +612,7 @@ test.describe('landscape tablet @visual', () => {
 			completion: { kind: 'success' },
 			seedPreferences: IMMEDIATE_START
 		});
+		await installVisualFixtureReference(page);
 		await gameplayPage.solveFixture();
 		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
 		await waitForVisualReady(page);
@@ -623,6 +652,7 @@ test.describe('desktop @visual', () => {
 			completion: { kind: 'success' },
 			seedPreferences: IMMEDIATE_START
 		});
+		await installVisualFixtureReference(page);
 		await gameplayPage.solveFixture();
 		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
 		await waitForVisualReady(page);
