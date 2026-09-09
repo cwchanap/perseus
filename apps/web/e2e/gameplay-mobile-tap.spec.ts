@@ -117,6 +117,32 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	await expect(zoomIn).toBeHidden();
 });
 
+test('phone keeps enabled Redo behind More after Undo @smoke', async ({ gameplayPage, page }) => {
+	test.skip(!isChromiumMobile(), 'Redo placement proof uses chromium-mobile');
+	await gameplayPage.gotoFixture({
+		fixtureId: 'e2e-square-4',
+		seedPreferences: IMMEDIATE_START
+	});
+	await gameplayPage.placeWithTap(0, 0, 0);
+	await page.getByRole('button', { name: 'Undo' }).click();
+
+	const more = page.getByRole('button', { name: 'More puzzle actions' });
+	const redo = page.getByRole('button', { name: 'Redo' });
+	const redoAction = page.locator('[data-toolbar-action="redo"]');
+	await expect(redo).toBeHidden();
+	await expect(redoAction).toBeEnabled();
+	await expect(more).toHaveAttribute('aria-expanded', 'false');
+
+	await more.click();
+	await expect(more).toHaveAttribute('aria-expanded', 'true');
+	await expect(redo).toBeVisible();
+	await expect(redoAction).toBeEnabled();
+
+	await more.click();
+	await expect(more).toHaveAttribute('aria-expanded', 'false');
+	await expect(redo).toBeHidden();
+});
+
 test('canonical phone workspace keeps the board above the half sheet and exposes direct actions @smoke', async ({
 	gameplayPage,
 	page

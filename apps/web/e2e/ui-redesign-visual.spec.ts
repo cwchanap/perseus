@@ -303,6 +303,26 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 			stage: bounds('.board-stage'),
 			board: bounds('.board-stage .board-panel'),
 			tray: bounds('[data-testid="puzzle-inventory-panel"]'),
+			trayControls: Array.from(
+				document.querySelectorAll<HTMLElement>(
+					'[data-testid="puzzle-inventory-panel"] .panel-header .inv-count, [data-testid="puzzle-inventory-panel"] .panel-header .inventory-tools .panel-action, [data-testid="puzzle-inventory-panel"] .panel-header .panel-actions .panel-action'
+				)
+			)
+				.filter((element) => {
+					const rect = element.getBoundingClientRect();
+					const style = getComputedStyle(element);
+					return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden';
+				})
+				.map((element) => {
+					const rect = element.getBoundingClientRect();
+					return {
+						label: element.getAttribute('aria-label') ?? element.className,
+						left: rect.left,
+						right: rect.right,
+						top: rect.top,
+						bottom: rect.bottom
+					};
+				}),
 			header: bounds('.board-stage > .hud-header'),
 			hud: bounds('[data-testid="gameplay-hud"]'),
 			actions: ['hint', 'reference', 'undo', 'fit', 'pause'].map((action) =>
@@ -346,6 +366,20 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 		expect(action.right).toBeLessThanOrEqual(geometry.rail.right + 1);
 		expect(action.top).toBeGreaterThanOrEqual(0);
 		expect(action.bottom).toBeLessThanOrEqual(geometry.viewport.height + 1);
+	}
+
+	for (const control of geometry.trayControls) {
+		expect(control.left).toBeGreaterThanOrEqual(geometry.tray.left);
+		expect(control.right).toBeLessThanOrEqual(geometry.tray.right + 1);
+	}
+	for (let index = 0; index < geometry.trayControls.length; index += 1) {
+		const control = geometry.trayControls[index]!;
+		const next = geometry.trayControls[index + 1];
+		if (next) {
+			expect(control.right, `${control.label} intersects ${next.label}`).toBeLessThanOrEqual(
+				next.left + 1
+			);
+		}
 	}
 }
 
