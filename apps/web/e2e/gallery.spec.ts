@@ -426,7 +426,11 @@ test.describe('Main Gallery Page', () => {
 		await page.reload();
 
 		await expect(page.getByTestId('continue-on-device')).toContainText('Newest Resume Fixture');
-		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await page.getByTestId('continue-secondary-toggle').click();
+		await page
+			.getByTestId('continue-on-device')
+			.getByRole('button', { name: 'View saved progress' })
+			.click();
 
 		const dialog = page.getByRole('dialog', { name: 'Saved progress' });
 		await expect(dialog.getByTestId(`saved-progress-row-${newestId}`)).toBeVisible();
