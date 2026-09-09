@@ -35,7 +35,7 @@
 	<span class="inline-flex items-center gap-0.5" aria-hidden="true">
 		{#each gemIndexes as index (index)}
 			<svg
-				class="h-4 w-4 text-(--gem-color) [filter:drop-shadow(0_0_4px_var(--gem-color))]"
+				class="difficulty-gem h-4 w-4"
 				viewBox="0 0 24 24"
 				fill="currentColor"
 				data-testid="difficulty-gem"
@@ -47,3 +47,10 @@
 	</span>
 	<span aria-hidden="true">{pieceCount}</span>
 </span>
+
+<style>
+	.difficulty-gem {
+		color: var(--gem-foreground, var(--gem-color));
+		filter: drop-shadow(0 0 4px var(--gem-foreground, var(--gem-color)));
+	}
+</style>

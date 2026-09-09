@@ -398,13 +398,8 @@
 						<p class="continue-title">SAVED PROGRESS AVAILABLE</p>
 					</div>
 				{/if}
-				{#if savedProgressCandidateIds.length > 0}
-					<button
-						type="button"
-						class="continue-more-action"
-						class:continue-more-action-compact-hidden={latestProgress}
-						onclick={openSavedProgress}
-					>
+				{#if savedProgressCandidateIds.length > 0 && !latestProgress}
+					<button type="button" class="continue-more-action" onclick={openSavedProgress}>
 						VIEW SAVED PROGRESS
 					</button>
 				{/if}
@@ -657,10 +652,12 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		gap: 1.375rem;
 		margin-top: 1.125rem;
 		margin-bottom: 1.25rem;
-		overflow: hidden;
+		overflow: visible;
 		padding: 1.375rem 1.625rem;
 		border: 1px solid var(--accent);
 		border-radius: 1.5rem;
+		background-clip: padding-box;
+		z-index: 2;
 		background:
 			linear-gradient(
 				100deg,
@@ -687,6 +684,7 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
+		border-radius: inherit;
 	}
 
 	.continue-art {
@@ -738,6 +736,7 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		letter-spacing: 0.03em;
 		text-overflow: ellipsis;
 		text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+		text-transform: uppercase;
 		white-space: nowrap;
 	}
 
@@ -958,10 +957,6 @@ hover:bg-[rgba(255,0,102,0.08)]"
 			color: var(--text-1);
 		}
 
-		.continue-more-action-compact-hidden {
-			display: none;
-		}
-
 		.continue-panel {
 			min-height: 6.375rem;
 			gap: 1.125rem;
@@ -1046,10 +1041,6 @@ hover:bg-[rgba(255,0,102,0.08)]"
 
 		.gallery-search-disclosure[open] + .gallery-search :global(.search-input)::placeholder {
 			color: var(--text-1);
-		}
-
-		.continue-more-action-compact-hidden {
-			display: none;
 		}
 
 		.gallery-categories {
