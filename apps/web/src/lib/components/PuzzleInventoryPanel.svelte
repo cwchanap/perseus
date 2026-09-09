@@ -112,6 +112,26 @@
 		onAnnouncement?.(`Piece tray: ${sheetState}.`);
 	}
 
+	let filterDisclosureOpen = $state(false);
+
+	function usesDirectFilterLayout(width: number): boolean {
+		return width < 1024 || width >= 1280;
+	}
+
+	function syncFilterDisclosure(): void {
+		filterDisclosureOpen = usesDirectFilterLayout(window.innerWidth);
+	}
+
+	function handleFilterDisclosureToggle(event: Event): void {
+		filterDisclosureOpen = (event.currentTarget as HTMLDetailsElement).open;
+	}
+
+	$effect(() => {
+		syncFilterDisclosure();
+		window.addEventListener('resize', syncFilterDisclosure);
+		return () => window.removeEventListener('resize', syncFilterDisclosure);
+	});
+
 	// Roving tab stop: exactly one unplaced piece is sequentially tabbable,
 	// and Left/Right move the active piece through the visible tray. R
 	// remains a rotation shortcut on the piece root; pointer rotation lives
@@ -251,85 +271,111 @@
 				</svg>
 				<span class="panel-action-label">ALL</span>
 			</button>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Corner pieces"
-				aria-pressed={activeFilter === 'corners'}
-				onclick={() => onFilterChange('corners')}
+			<details
+				class="inventory-filter-disclosure"
+				data-testid="inventory-filter-disclosure"
+				open={filterDisclosureOpen}
+				ontoggle={handleFilterDisclosureToggle}
 			>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
+				<summary
+					class="panel-action filter-disclosure-toggle"
+					aria-label="More piece filters"
+					aria-controls="inventory-filter-menu"
+					data-testid="inventory-filter-toggle"
+					data-active={activeFilter !== 'all' ? 'true' : undefined}
 				>
-					<path stroke-linecap="round" stroke-linejoin="round" d="M5 19V5h14M5 19h14" />
-				</svg>
-				<span class="panel-action-label">CORNERS</span>
-			</button>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Edge pieces"
-				aria-pressed={activeFilter === 'edges'}
-				onclick={() => onFilterChange('edges')}
-			>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+						<path stroke-linecap="round" stroke-width="2" d="M4 6h16M7 12h10m-7 6h4" />
+					</svg>
+					<span class="panel-action-label">MORE FILTERS</span>
+				</summary>
+				<div
+					id="inventory-filter-menu"
+					class="inventory-filter-menu"
+					role="group"
+					aria-label="Piece filters"
 				>
-					<path stroke-linecap="round" d="M5 19h14M5 5v14" />
-				</svg>
-				<span class="panel-action-label">EDGES</span>
-			</button>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Center pieces"
-				aria-pressed={activeFilter === 'center'}
-				onclick={() => onFilterChange('center')}
-			>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
-				>
-					<rect x="6" y="6" width="12" height="12" rx="1.5" /><path
-						stroke-linecap="round"
-						d="M12 9v6m-3-3h6"
-					/>
-				</svg>
-				<span class="panel-action-label">CENTER</span>
-			</button>
-			<button
-				type="button"
-				class="panel-action"
-				aria-label="Shuffle pieces"
-				disabled={unplacedPieces.length <= 1}
-				onclick={onShuffle}
-			>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						d="M4 7h2c3 0 4 2 6 5s3 5 6 5h2m-3-3l3 3-3 3M4 17h2c1.5 0 2.5-.6 3.4-1.8M15 8c1-1 1.8-1 3-1h2m-3-3l3 3-3 3"
-					/>
-				</svg>
-				<span class="panel-action-label">SHUFFLE</span>
-			</button>
+					<button
+						type="button"
+						class="panel-action"
+						aria-label="Corner pieces"
+						aria-pressed={activeFilter === 'corners'}
+						onclick={() => onFilterChange('corners')}
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							aria-hidden="true"
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M5 19V5h14M5 19h14" />
+						</svg>
+						<span class="panel-action-label">CORNERS</span>
+					</button>
+					<button
+						type="button"
+						class="panel-action"
+						aria-label="Edge pieces"
+						aria-pressed={activeFilter === 'edges'}
+						onclick={() => onFilterChange('edges')}
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							aria-hidden="true"
+						>
+							<path stroke-linecap="round" d="M5 19h14M5 5v14" />
+						</svg>
+						<span class="panel-action-label">EDGES</span>
+					</button>
+					<button
+						type="button"
+						class="panel-action"
+						aria-label="Center pieces"
+						aria-pressed={activeFilter === 'center'}
+						onclick={() => onFilterChange('center')}
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							aria-hidden="true"
+						>
+							<rect x="6" y="6" width="12" height="12" rx="1.5" /><path
+								stroke-linecap="round"
+								d="M12 9v6m-3-3h6"
+							/>
+						</svg>
+						<span class="panel-action-label">CENTER</span>
+					</button>
+					<button
+						type="button"
+						class="panel-action"
+						aria-label="Shuffle pieces"
+						disabled={unplacedPieces.length <= 1}
+						onclick={onShuffle}
+					>
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							aria-hidden="true"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M4 7h2c3 0 4 2 6 5s3 5 6 5h2m-3-3l3 3-3 3M4 17h2c1.5 0 2.5-.6 3.4-1.8M15 8c1-1 1.8-1 3-1h2m-3-3l3 3-3 3"
+							/>
+						</svg>
+						<span class="panel-action-label">SHUFFLE</span>
+					</button>
+				</div>
+			</details>
 		</div>
 
 		<div class="panel-actions">
@@ -795,6 +841,48 @@
 		background: transparent;
 	}
 
+	.inventory-filter-disclosure {
+		position: relative;
+		flex: 0 0 auto;
+	}
+
+	.inventory-filter-disclosure > summary {
+		display: inline-flex;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.inventory-filter-disclosure > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.inventory-filter-disclosure > summary[data-active='true'] {
+		color: var(--accent);
+		border-color: var(--accent);
+		background: rgb(58 255 255 / 10%);
+		box-shadow: 0 0 12px rgb(58 255 255 / 14%);
+	}
+
+	.inventory-filter-disclosure:not([open]) > .inventory-filter-menu {
+		display: none;
+	}
+
+	.inventory-filter-menu {
+		position: absolute;
+		top: calc(100% + 0.5rem);
+		left: 0;
+		z-index: 8;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.5rem;
+		min-width: 9.5rem;
+		padding: 0.5rem;
+		border: 1px solid var(--border-bright);
+		border-radius: 1rem;
+		background: rgba(21, 13, 51, 0.98);
+		box-shadow: 0 12px 28px rgb(0 0 0 / 40%);
+	}
+
 	.inventory-tools .panel-action[aria-pressed='true'] {
 		color: var(--accent);
 		background: rgb(58 255 255 / 10%);
@@ -841,8 +929,9 @@
 
 		.panel-actions .panel-action,
 		.inventory-tools .panel-action {
-			width: 2.5rem;
-			min-width: 2.5rem;
+			width: 2.75rem;
+			min-width: 2.75rem;
+			min-height: 2.75rem;
 			padding: 0;
 		}
 
@@ -854,33 +943,83 @@
 			width: 1.15rem;
 			height: 1.15rem;
 		}
+
+		.inventory-filter-disclosure {
+			display: contents;
+		}
+
+		.inventory-filter-disclosure > summary {
+			display: none;
+		}
+
+		.inventory-filter-disclosure > .inventory-filter-menu {
+			position: static;
+			display: contents;
+			padding: 0;
+			border: 0;
+			background: transparent;
+			box-shadow: none;
+		}
+
+		.inventory-filter-disclosure:not([open]) > .inventory-filter-menu {
+			display: contents;
+		}
 	}
 
 	@media (min-width: 1024px) and (max-width: 1279px) {
+		.inventory-panel {
+			overflow: visible;
+		}
+
 		.panel-header {
-			grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) auto;
+			grid-template-columns: minmax(3.5rem, max-content) minmax(0, 1fr) auto;
+			column-gap: 0.25rem;
 		}
 
 		.inventory-tools {
-			gap: 0.125rem;
+			gap: 0.25rem;
 			justify-content: flex-start;
+			overflow: visible;
 		}
 
+		.panel-actions {
+			gap: 0.25rem;
+		}
+
+		.panel-actions .panel-action,
 		.inventory-tools .panel-action {
-			width: 1.625rem;
-			min-width: 1.625rem;
+			width: 2.75rem;
+			min-width: 2.75rem;
+			min-height: 2.75rem;
 			padding: 0;
 		}
 
 		.inventory-tools .panel-action svg {
-			width: 0.7rem;
-			height: 0.7rem;
+			width: 1.15rem;
+			height: 1.15rem;
+		}
+	}
+
+	@media (min-width: 1280px) {
+		.inventory-filter-disclosure {
+			display: contents;
 		}
 
-		.panel-actions .drawer-toggle {
-			width: 1.75rem;
-			min-width: 1.75rem;
+		.inventory-filter-disclosure > summary {
+			display: none;
+		}
+
+		.inventory-filter-disclosure > .inventory-filter-menu {
+			position: static;
+			display: contents;
 			padding: 0;
+			border: 0;
+			background: transparent;
+			box-shadow: none;
+		}
+
+		.inventory-filter-disclosure:not([open]) > .inventory-filter-menu {
+			display: contents;
 		}
 	}
 </style>
