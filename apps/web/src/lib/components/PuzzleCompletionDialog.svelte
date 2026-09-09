@@ -574,18 +574,18 @@
 		font-size: 0.55rem;
 		font-weight: 700;
 		letter-spacing: 0.25em;
-		color: var(--gold);
-		border: 1px solid var(--gold-dim);
+		color: #3a2600;
+		border: 1px solid rgba(58, 38, 0, 0.55);
 		padding: 0.15rem 0.625rem;
-		text-shadow: 0 0 8px var(--gold);
-		box-shadow: 0 0 15px var(--gold-glow);
+		text-shadow: none;
+		box-shadow: 0 0 15px rgba(58, 38, 0, 0.2);
 	}
 
 	.new-record-badge.unsaved {
-		color: var(--hot, #ff4444);
-		border-color: var(--hot-dim, rgba(255, 68, 68, 0.4));
-		text-shadow: 0 0 8px var(--hot-glow, rgba(255, 68, 68, 0.5));
-		box-shadow: 0 0 12px var(--hot-glow, rgba(255, 68, 68, 0.3));
+		color: #720032;
+		border-color: rgba(114, 0, 50, 0.55);
+		text-shadow: none;
+		box-shadow: 0 0 12px rgba(114, 0, 50, 0.2);
 	}
 
 	.modal-actions {

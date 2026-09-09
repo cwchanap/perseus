@@ -1,0 +1,387 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { Page } from '@playwright/test';
+import type { PuzzleFamilySummary } from '@perseus/types';
+import { test, expect } from './support/test';
+import { seedApiVariantProgress } from './gameplay-fixtures/persisted-state';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VISUAL_ART = path.join(__dirname, 'fixtures', 'test-image.jpg');
+const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
+const VISUAL_PLAYER = {
+	id: '00000000-0000-4000-8000-00000000a001',
+	email: 'arcade@example.test',
+	name: 'Arcade Pilot',
+	createdAt: 1_710_000_000_020,
+	lastLoginAt: 1_710_000_000_021
+};
+const VISUAL_PROGRESSION = {
+	score: 900,
+	rank: 38,
+	easyClears: 4,
+	normalClears: 2,
+	hardClears: 1,
+	achievementsUnlocked: 3,
+	achievementsTotal: 9,
+	masteryEarned: 2
+};
+
+const VISUAL_FAMILIES: PuzzleFamilySummary[] = [
+	{
+		id: '00000000-0000-4000-8000-000000007a01',
+		name: 'Sunset Ridge',
+		category: 'Nature',
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1_710_000_000_000,
+		variants: {
+			easy: {
+				id: '00000000-0000-4000-8000-000000007a11',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'ready'
+			},
+			normal: {
+				id: '00000000-0000-4000-8000-000000007a12',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'ready'
+			},
+			hard: {
+				id: '00000000-0000-4000-8000-000000007a13',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'ready'
+			}
+		}
+	},
+	{
+		id: '00000000-0000-4000-8000-000000007b01',
+		name: 'Tide Pools',
+		category: 'Animals',
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1_710_000_000_001,
+		variants: {
+			easy: {
+				id: '00000000-0000-4000-8000-000000007b11',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'ready'
+			},
+			normal: {
+				id: '00000000-0000-4000-8000-000000007b12',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'ready'
+			},
+			hard: {
+				id: '00000000-0000-4000-8000-000000007b13',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'ready'
+			}
+		}
+	},
+	{
+		id: '00000000-0000-4000-8000-000000007c01',
+		name: 'Glass District',
+		category: 'Architecture',
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1_710_000_000_002,
+		variants: {
+			easy: {
+				id: '00000000-0000-4000-8000-000000007c11',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'ready'
+			},
+			normal: {
+				id: '00000000-0000-4000-8000-000000007c12',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'ready'
+			},
+			hard: {
+				id: '00000000-0000-4000-8000-000000007c13',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'ready'
+			}
+		}
+	}
+];
+
+const VISUAL_ALLOWLIST = [
+	{
+		email: 'pilot@example.com',
+		createdAt: 1_710_000_000_010,
+		addedBy: 'admin',
+		player: {
+			id: '00000000-0000-4000-8000-00000000a001',
+			email: 'pilot@example.com',
+			name: 'Pilot One',
+			createdAt: 1_710_000_000_010,
+			lastLoginAt: 1_710_000_000_100
+		}
+	},
+	{ email: 'navigator@example.com', createdAt: 1_710_000_000_011, addedBy: 'admin' },
+	{ email: 'builder@example.com', createdAt: 1_710_000_000_012, addedBy: 'admin' },
+	{ email: 'captain@example.com', createdAt: 1_710_000_000_013, addedBy: 'admin' }
+];
+
+async function installVisualAuth(page: Page, authenticated = false): Promise<void> {
+	await page.route(/\/api\/auth\/session$/, (route) =>
+		route.fulfill({
+			json: authenticated ? { authenticated: true, user: VISUAL_PLAYER } : { authenticated: false }
+		})
+	);
+	if (authenticated) {
+		await page.route(/\/api\/player\/progression$/, (route) =>
+			route.fulfill({ json: VISUAL_PROGRESSION })
+		);
+	}
+}
+
+async function installVisualThumbnail(page: Page): Promise<void> {
+	await page.route(/\/api\/puzzle-families\/[^/]+\/thumbnail$/, (route) =>
+		route.fulfill({ path: VISUAL_ART, contentType: 'image/jpeg' })
+	);
+}
+
+async function installVisualGallery(page: Page, families: PuzzleFamilySummary[]): Promise<void> {
+	await installVisualAuth(page, true);
+	await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
+		route.fulfill({ json: { families, total: families.length, offset: 0, limit: 20 } })
+	);
+	await installVisualThumbnail(page);
+}
+
+async function installVisualAdmin(page: Page): Promise<void> {
+	await installVisualAuth(page);
+	await page.route(/\/api\/admin\/puzzle-families(?:\?.*)?$/, (route) =>
+		route.fulfill({ json: { families: VISUAL_FAMILIES } })
+	);
+	await page.route(/\/api\/admin\/player-allowlist(?:\?.*)?$/, (route) =>
+		route.fulfill({ json: { entries: VISUAL_ALLOWLIST } })
+	);
+	await installVisualThumbnail(page);
+}
+
+async function prepareVisualGallery(page: Page): Promise<void> {
+	await installVisualGallery(page, VISUAL_FAMILIES);
+	await page.goto('/');
+	await seedApiVariantProgress(page, VISUAL_FAMILIES[0]!.variants.easy.id, '1:1', 16);
+	await page.reload();
+	await expect(page.getByTestId('continue-on-device')).toBeVisible();
+	await expect(page.getByTestId('puzzle-grid')).toBeVisible();
+	await expect(
+		page.locator(
+			'[data-testid="arcade-score"]:visible, [data-testid="arcade-compact-score"]:visible'
+		)
+	).toHaveText('900');
+	await expect(page.getByRole('link', { name: 'Profile for Arcade Pilot' })).toBeVisible();
+}
+
+async function waitForVisualReady(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		await document.fonts.ready;
+		await Promise.all(
+			Array.from(document.images).map(async (image) => {
+				if (!image.complete) {
+					await new Promise<void>((resolve) => {
+						image.addEventListener('load', () => resolve(), { once: true });
+						image.addEventListener('error', () => resolve(), { once: true });
+					});
+				}
+				try {
+					await image.decode();
+				} catch {
+					// load/error above is the deterministic boundary
+				}
+			})
+		);
+	});
+}
+
+test.describe('phone @visual', () => {
+	test.use({
+		viewport: { width: 390, height: 844 },
+		hasTouch: true,
+		isMobile: true,
+		reducedMotion: 'reduce'
+	});
+
+	test('2a gallery @visual', async ({ page }) => {
+		await prepareVisualGallery(page);
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-phone-gallery.png', {
+			fullPage: true,
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('2b gameplay @visual', async ({ gameplayPage, page }) => {
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-portrait-12',
+			seedPreferences: IMMEDIATE_START
+		});
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-phone-gameplay.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('2c completion @visual', async ({ gameplayPage, page }) => {
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-4',
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START
+		});
+		await gameplayPage.solveFixture();
+		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		await page.getByTestId('celebration-modal').evaluate((modal) => {
+			modal.querySelector<HTMLElement>('.modal-box')?.scrollTo({ top: 0, left: 0 });
+		});
+		const phoneCompletionScroll = await page.getByTestId('celebration-modal').evaluate((modal) => {
+			const box = modal.querySelector<HTMLElement>('.modal-box');
+			return {
+				scrollTop: box?.scrollTop ?? 0,
+				scrollHeight: box?.scrollHeight ?? 0,
+				clientHeight: box?.clientHeight ?? 0
+			};
+		});
+		expect(phoneCompletionScroll.scrollTop).toBe(0);
+		expect(phoneCompletionScroll.scrollHeight).toBeGreaterThan(phoneCompletionScroll.clientHeight);
+		await expect(page.getByRole('button', { name: 'PLAY AGAIN' })).toBeAttached();
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-phone-completion.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+});
+
+test.describe('landscape tablet @visual', () => {
+	test.use({
+		viewport: { width: 1080, height: 810 },
+		hasTouch: true,
+		isMobile: true,
+		reducedMotion: 'reduce'
+	});
+
+	test('2d gallery @visual', async ({ page }) => {
+		await prepareVisualGallery(page);
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-tablet-gallery.png', {
+			fullPage: true,
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('2e gameplay @visual', async ({ gameplayPage, page }) => {
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-portrait-12',
+			seedPreferences: IMMEDIATE_START
+		});
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-tablet-gameplay.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('2f completion @visual', async ({ gameplayPage, page }) => {
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-4',
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START
+		});
+		await gameplayPage.solveFixture();
+		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-tablet-completion.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+});
+
+test.describe('desktop @visual', () => {
+	test.use({
+		viewport: { width: 1440, height: 900 },
+		hasTouch: false,
+		isMobile: false,
+		reducedMotion: 'reduce'
+	});
+
+	test('3a gallery @visual', async ({ page }) => {
+		await prepareVisualGallery(page);
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-desktop-gallery.png', {
+			fullPage: true,
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('3b gameplay @visual', async ({ gameplayPage, page }) => {
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-portrait-12',
+			seedPreferences: IMMEDIATE_START
+		});
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-desktop-gameplay.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('3c completion @visual', async ({ gameplayPage, page }) => {
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-4',
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START
+		});
+		await gameplayPage.solveFixture();
+		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-desktop-completion.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+});
+
+test.describe('admin @visual', () => {
+	test.use({
+		viewport: { width: 1440, height: 900 },
+		hasTouch: false,
+		isMobile: false,
+		reducedMotion: 'reduce'
+	});
+
+	test('4a missions @visual', async ({ page }) => {
+		await installVisualAdmin(page);
+		await page.goto('/admin');
+		await expect(page.getByRole('tab', { name: 'Missions' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await expect(page.getByText('Sunset Ridge')).toBeVisible();
+		await expect(page.getByTestId('admin-missions-count')).toHaveText('3');
+		await expect(page.getByTestId('admin-players-count')).toHaveText('4');
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-admin-missions.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+
+	test('4a player access @visual', async ({ page }) => {
+		await installVisualAdmin(page);
+		await page.goto('/admin');
+		await page.getByRole('tab', { name: 'Player access' }).click();
+		await expect(page.getByText('pilot@example.com')).toBeVisible();
+		await expect(page.getByTestId('admin-players-count')).toHaveText('4');
+		await waitForVisualReady(page);
+		await expect(page).toHaveScreenshot('galaxy-admin-player-access.png', {
+			maxDiffPixelRatio: 0.005
+		});
+	});
+});
