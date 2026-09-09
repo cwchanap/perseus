@@ -1250,6 +1250,8 @@
 			</div>
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
+			{@const missionGemCount =
+				currentPuzzle.difficulty === 'easy' ? 1 : currentPuzzle.difficulty === 'hard' ? 3 : 2}
 			{@const currentBoardMetrics = boardMetrics}
 			{@const source = puzzleSource!}
 			<div class="game-workspace">
@@ -1275,6 +1277,9 @@
 						referenceAvailable={currentPuzzle.hasReference === true &&
 							source.resolveReferenceImage() !== null}
 						hasReference={currentPuzzle.hasReference === true}
+						canOpenLeaderboard={currentPuzzle.familyId !== undefined &&
+							puzzleSource?.source === 'api'}
+						onOpenLeaderboard={() => (showFamilyLeaderboard = true)}
 						onUndo={handleUndo}
 						onRedo={handleRedo}
 						onHint={handleHint}
@@ -1324,9 +1329,17 @@
 
 							<div class="hud-center">
 								<div class="mission-name">{currentPuzzle.name.toUpperCase()}</div>
-								<div class="mission-gems" aria-label="Mission rating: two gems">
-									<span aria-hidden="true">◆</span>
-									<span aria-hidden="true">◆</span>
+								<div
+									class="mission-gems"
+									role={currentPuzzle.difficulty ? 'img' : undefined}
+									aria-label={currentPuzzle.difficulty
+										? `${currentPuzzle.difficulty[0].toUpperCase()}${currentPuzzle.difficulty.slice(1)} difficulty`
+										: undefined}
+									aria-hidden={currentPuzzle.difficulty ? undefined : 'true'}
+								>
+									{#each Array.from({ length: missionGemCount }) as _, index (index)}
+										<span aria-hidden="true">◆</span>
+									{/each}
 								</div>
 							</div>
 
@@ -1821,7 +1834,7 @@
 			grid-column: 1;
 			grid-row: 1;
 			height: 100%;
-			overflow: hidden;
+			overflow: visible;
 			align-items: stretch;
 			flex-direction: column;
 			flex-wrap: nowrap;
@@ -2074,6 +2087,11 @@
 			grid-column: 1;
 			grid-row: 1;
 			padding: 4.25rem 0.25rem 0.5rem;
+			overflow: visible;
+		}
+
+		:global(.game-layout > .puzzle-toolbar:has(.toolbar-secondary[data-open='true'])) {
+			z-index: 10;
 		}
 
 		.game-layout > .board-stage {
