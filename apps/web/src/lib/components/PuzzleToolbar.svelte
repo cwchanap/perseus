@@ -419,7 +419,7 @@
 				<button
 					type="button"
 					aria-label="Open family leaderboard"
-					data-testid="open-family-leaderboard-secondary"
+					data-testid="open-family-leaderboard"
 					data-toolbar-action="leaderboard"
 					tabindex={toolbarTabIndex('leaderboard')}
 					onclick={onOpenLeaderboard}

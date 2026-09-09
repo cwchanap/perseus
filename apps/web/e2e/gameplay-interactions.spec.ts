@@ -83,19 +83,18 @@ test.describe('Gameplay interactions', () => {
 			inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')
 		).toHaveCount(1);
 
-		// The header follows the toolbar in the DOM. On desktop, Tab therefore
-		// reaches the family leaderboard and then the board; the mobile header
-		// hides that lower-frequency action, so the board follows the back link.
-		await page.getByRole('link', { name: 'Return to arcade' }).focus();
+		// The toolbar's active Hint action is followed by the header back link
+		// and then the board's roving drop-zone stop. Family leaderboard is
+		// owned by the toolbar's More rail at every viewport.
+		const hint = page.getByRole('button', { name: 'Hint' });
+		const back = page.getByRole('link', { name: 'Return to arcade' });
+		await hint.focus();
 		await page.keyboard.press('Tab');
-		if (PROJECT() === 'chromium-desktop') {
-			await expect(page.getByTestId('open-family-leaderboard')).toBeFocused();
-			await page.keyboard.press('Tab');
-		}
+		await expect(back).toBeFocused();
+		await page.keyboard.press('Tab');
 		await expect(gameplayPage.dropZone(0, 0)).toBeFocused();
 
 		// Toolbar arrows advance between visible actions: Hint -> Reference.
-		const hint = page.getByRole('button', { name: 'Hint' });
 		const reference = page.getByRole('button', { name: 'Toggle reference' });
 		await hint.focus();
 		await page.keyboard.press('ArrowRight');

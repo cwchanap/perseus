@@ -1362,19 +1362,6 @@
 									label="Puzzle progress"
 								/>
 							</div>
-
-							<div class="hud-right">
-								{#if currentPuzzle.familyId && puzzleSource?.source === 'api'}
-									<button
-										type="button"
-										class="leaderboard-btn"
-										data-testid="open-family-leaderboard"
-										onclick={() => (showFamilyLeaderboard = true)}
-									>
-										LEADERBOARD
-									</button>
-								{/if}
-							</div>
 						</header>
 
 						<!-- Board panel -->
@@ -1618,23 +1605,6 @@
 		line-height: 1;
 		color: var(--hot);
 		text-shadow: 0 0 10px var(--hot-glow);
-	}
-
-	.hud-right {
-		display: flex;
-		align-items: center;
-		gap: 0.875rem;
-		flex-shrink: 0;
-	}
-
-	.leaderboard-btn {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
-		letter-spacing: 0.14em;
-		color: var(--accent);
-		background: transparent;
-		border: 1px solid var(--accent-dim);
-		padding: 0.25rem 0.45rem;
 	}
 
 	.stat-label {
@@ -2027,8 +1997,7 @@
 			color: var(--text-0);
 		}
 
-		.game-workspace .back-btn span,
-		.game-workspace .hud-right {
+		.game-workspace .back-btn span {
 			display: none;
 		}
 
@@ -2173,10 +2142,6 @@
 		.game-workspace .hud-center {
 			flex: 0 1 auto;
 			text-align: left;
-		}
-
-		.game-workspace .hud-right {
-			margin-left: auto;
 		}
 	}
 
