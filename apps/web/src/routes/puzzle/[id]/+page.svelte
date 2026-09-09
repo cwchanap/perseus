@@ -2173,7 +2173,7 @@
 		.game-layout > :global(.puzzle-toolbar) {
 			grid-column: 1;
 			grid-row: 1;
-			padding: 4.25rem 0.25rem 0.5rem;
+			padding: 5.75rem 0.25rem 0.5rem;
 			overflow: visible;
 			align-items: center;
 		}
