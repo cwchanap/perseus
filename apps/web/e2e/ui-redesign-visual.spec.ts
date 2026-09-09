@@ -362,7 +362,9 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 	if (geometry.viewport.width < 1024) {
 		expect(geometry.rail.left).toBeGreaterThanOrEqual(geometry.board.right - 1);
 	} else {
+		expect(geometry.rail.left).toBeLessThanOrEqual(1);
 		expect(geometry.rail.right).toBeLessThanOrEqual(geometry.board.left + 1);
+		expect(geometry.tray.right).toBeGreaterThanOrEqual(geometry.viewport.width - 1);
 		expect(Math.round(geometry.tray.width)).toBe(geometry.viewport.width >= 1440 ? 352 : 300);
 	}
 	expect(geometry.header.left).toBeGreaterThanOrEqual(geometry.stage.left);
@@ -409,6 +411,38 @@ test.describe('phone @visual', () => {
 	test('2a gallery @visual', async ({ page }) => {
 		await prepareVisualGallery(page);
 		await waitForVisualReady(page);
+		const phoneCardGeometry = await page
+			.getByTestId('puzzle-card-art')
+			.first()
+			.evaluate((element) => {
+				const rect = element.getBoundingClientRect();
+				return { width: rect.width, height: rect.height, ratio: rect.width / rect.height };
+			});
+		expect(phoneCardGeometry.ratio).toBeCloseTo(343 / 215, 2);
+		const continueTitle = page.locator('.continue-title');
+		await expect(continueTitle).toHaveText('Sunset Ridge');
+		const continueTitleGeometry = await continueTitle.evaluate((element) => ({
+			clientWidth: element.clientWidth,
+			scrollWidth: element.scrollWidth
+		}));
+		expect(continueTitleGeometry.scrollWidth).toBeLessThanOrEqual(
+			continueTitleGeometry.clientWidth + 1
+		);
+		const compactControls = await page
+			.locator(
+				'[data-testid="arcade-compact-search"]:visible, [data-testid="arcade-mobile-menu-toggle"]:visible, a.compact-avatar:visible'
+			)
+			.evaluateAll((elements) =>
+				elements.map((element) => {
+					const rect = element.getBoundingClientRect();
+					return { width: rect.width, height: rect.height };
+				})
+			);
+		expect(compactControls).toHaveLength(3);
+		for (const control of compactControls) {
+			expect(control.width).toBeGreaterThanOrEqual(44);
+			expect(control.height).toBeGreaterThanOrEqual(44);
+		}
 		await expect(page).toHaveScreenshot('galaxy-phone-gallery.png', {
 			maxDiffPixelRatio: 0.005
 		});
@@ -459,6 +493,32 @@ test.describe('phone @visual', () => {
 	test('2b gameplay @visual', async ({ page }) => {
 		await prepareVisualGameplay(page);
 		await expectGameplayGeometry(page);
+		const phoneStatus = await page.getByTestId('phone-status-capsule').evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			const style = getComputedStyle(element);
+			const backRect = document
+				.querySelector<HTMLElement>('[data-testid="back-to-arcade-link"]')
+				?.getBoundingClientRect();
+			return {
+				width: rect.width,
+				height: rect.height,
+				left: rect.left,
+				backRight: backRect?.right ?? 0,
+				borderRadius: style.borderRadius,
+				borderColor: style.borderColor,
+				hasTimer: element.querySelector('[data-testid="game-timer"]') !== null,
+				hasPieces: element.querySelector('.hud-pieces') !== null,
+				hasProgressRing: element.querySelector('.progress-ring') !== null
+			};
+		});
+		expect(phoneStatus.width).toBeGreaterThanOrEqual(200);
+		expect(phoneStatus.height).toBeGreaterThanOrEqual(40);
+		expect(phoneStatus.left).toBeGreaterThan(phoneStatus.backRight + 8);
+		expect(phoneStatus.borderRadius).toBe('18px');
+		expect(phoneStatus.borderColor).toBe('rgb(56, 36, 111)');
+		expect(phoneStatus.hasTimer).toBe(true);
+		expect(phoneStatus.hasPieces).toBe(true);
+		expect(phoneStatus.hasProgressRing).toBe(false);
 		await expect(page).toHaveScreenshot('galaxy-phone-gameplay.png', {
 			maxDiffPixelRatio: 0.005
 		});

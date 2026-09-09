@@ -661,14 +661,19 @@
 		}
 
 		.compact-header .compact-search {
-			width: 38px;
-			height: 38px;
+			width: 44px;
+			height: 44px;
 		}
 
 		.compact-menu-toggle {
-			width: 34px;
-			height: 34px;
+			width: 44px;
+			height: 44px;
 			border-radius: 11px;
+		}
+
+		.compact-header .compact-avatar {
+			width: 44px;
+			height: 44px;
 		}
 	}
 </style>

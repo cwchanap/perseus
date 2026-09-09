@@ -174,6 +174,12 @@
 		text-transform: uppercase;
 	}
 
+	@media (max-width: 39.999rem) {
+		.puzzle-card [data-testid='puzzle-card-art'] {
+			aspect-ratio: 343 / 215;
+		}
+	}
+
 	.card-difficulty-picker :global([data-testid='difficulty-gems']) {
 		font-family: var(--font-display);
 		font-size: 1rem;
