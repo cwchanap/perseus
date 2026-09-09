@@ -17,6 +17,12 @@ const authenticatedProps = {
 	}))
 };
 
+const unknownProgressProps = {
+	...authenticatedProps,
+	score: null,
+	rank: null
+};
+
 describe('ArcadeShell', () => {
 	it('activates the persistent sidebar only at 1440px', async () => {
 		const originalWidth = window.innerWidth;
@@ -44,6 +50,44 @@ describe('ArcadeShell', () => {
 		await expect.element(page.getByTestId('arcade-score')).toHaveTextContent('900');
 		await expect.element(page.getByTestId('arcade-rank')).toHaveTextContent('#38');
 		await expect.element(page.getByTestId('shell-child')).toBeVisible();
+	});
+
+	it('exposes known desktop score and rank as ordinary accessible text', async () => {
+		await page.viewport(1440, 900);
+		render(ArcadeShell, authenticatedProps);
+
+		await expect.element(page.getByTestId('arcade-score')).toHaveTextContent('900');
+		await expect.element(page.getByTestId('arcade-rank')).toHaveTextContent('#38');
+		expect(document.querySelector('.score-card')).not.toHaveAttribute('aria-label');
+	});
+
+	it('exposes known compact score as ordinary accessible text', async () => {
+		await page.viewport(390, 844);
+		render(ArcadeShell, authenticatedProps);
+
+		await expect.element(page.getByTestId('arcade-compact-score')).toHaveTextContent('900');
+		expect(document.querySelector('.compact-score')).not.toHaveAttribute('aria-label');
+	});
+
+	it('keeps unknown desktop score and rank as visible dashes without announcing zero', async () => {
+		await page.viewport(1440, 900);
+		render(ArcadeShell, unknownProgressProps);
+
+		await expect.element(page.getByTestId('arcade-score')).toHaveTextContent('—');
+		await expect.element(page.getByTestId('arcade-rank')).toHaveTextContent('#—');
+		const cardText = document.querySelector('.score-card')?.textContent ?? '';
+		expect(cardText).not.toContain('0');
+		expect(document.querySelector('.score-card')).not.toHaveAttribute('aria-label');
+	});
+
+	it('keeps unknown compact score as a visible dash without announcing zero', async () => {
+		await page.viewport(390, 844);
+		render(ArcadeShell, unknownProgressProps);
+
+		await expect.element(page.getByTestId('arcade-compact-score')).toHaveTextContent('—');
+		const compactText = document.querySelector('.compact-score')?.textContent ?? '';
+		expect(compactText).not.toContain('0');
+		expect(document.querySelector('.compact-score')).not.toHaveAttribute('aria-label');
 	});
 
 	it('fills the desktop content area beside the fixed sidebar', async () => {

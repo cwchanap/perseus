@@ -26,12 +26,6 @@
 			.map((variant) => progressByVariantId?.get(variant.id))
 			.find((progress) => progress !== undefined)
 	);
-	const masteryStars = $derived(
-		featuredProgress && featuredProgress.pieceCount > 0
-			? Math.min(3, Math.floor((featuredProgress.placedCount / featuredProgress.pieceCount) * 3))
-			: 0
-	);
-	const starIndexes = [0, 1, 2];
 </script>
 
 <article
@@ -74,7 +68,6 @@
 				class="absolute top-3 right-3 rounded-[14px] bg-[rgba(10,6,32,0.72)] px-2.5 py-1
 				text-[0.62rem] font-(--font-mono) tracking-[0.08em] text-(--accent)"
 				data-testid="card-progress"
-				aria-label={`Progress ${featuredProgress.placedCount} of ${featuredProgress.pieceCount}`}
 			>
 				{featuredProgress.placedCount}/{featuredProgress.pieceCount}
 			</span>
@@ -102,25 +95,6 @@
 			>
 				{family.name}
 			</h3>
-			<div
-				class="mt-1.5 flex gap-1"
-				data-testid="card-mastery"
-				role="img"
-				aria-label={`Mastery ${masteryStars} of 3`}
-			>
-				{#each starIndexes as index (index)}
-					<svg
-						class="h-[15px] w-[15px] {index < masteryStars
-							? 'text-(--gold)'
-							: 'text-[rgba(255,255,255,0.22)]'}"
-						viewBox="0 0 24 24"
-						fill="currentColor"
-						aria-hidden="true"
-					>
-						<path d="M12 2l2.6 5.6 6.1.7-4.4 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.3 8.3l6.1-.7z" />
-					</svg>
-				{/each}
-			</div>
 		</div>
 	</div>
 
