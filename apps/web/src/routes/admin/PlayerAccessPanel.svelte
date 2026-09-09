@@ -133,10 +133,11 @@
 			<button
 				type="submit"
 				disabled={allowlistSaving || removingAllowlistEmail !== null || !allowlistEmail.trim()}
-				class="inline-flex items-center justify-center gap-2 rounded-[18px] border border-(--accent)
-				bg-[linear-gradient(160deg,#5affff,#00c2dc)] px-5 py-3 text-[0.65rem] font-(--font-display)
-				font-black tracking-[0.12em] text-[#03202a] shadow-[0_4px_0_#00707f]
-				transition-all duration-200 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+				class="inline-flex h-[47px] w-full shrink-0 items-center justify-center gap-2 rounded-[18px]
+				border border-(--accent) bg-[linear-gradient(160deg,#5affff,#00c2dc)]
+				px-5 py-3 text-[0.65rem] font-(--font-display) font-black
+				tracking-[0.12em] text-[#03202a] shadow-[0_4px_0_#00707f] transition-all
+				duration-200 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 sm:w-[183px]"
 			>
 				<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
 					<path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" />
@@ -213,7 +214,7 @@
 									title={`Remove ${entry.email}`}
 									onclick={() => handleAllowlistRemove(entry.email)}
 									disabled={allowlistSaving || removingAllowlistEmail !== null}
-									class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim)
+									class="flex h-11 w-11 items-center justify-center rounded-xl border border-(--hot-dim)
 								bg-[rgba(255,0,102,0.1)] text-(--hot) transition-colors hover:border-(--hot)
 								hover:bg-(--hot-glow) focus-visible:outline-2 focus-visible:outline-(--hot)
 								disabled:cursor-not-allowed disabled:opacity-40"

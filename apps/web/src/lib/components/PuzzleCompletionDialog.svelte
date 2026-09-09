@@ -307,8 +307,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(4, 4, 13, 0.9);
-		backdrop-filter: blur(6px);
 	}
 
 	.modal-box {
@@ -690,8 +688,11 @@
 	.modal-backdrop {
 		background:
 			radial-gradient(circle at 50% 34%, rgba(255, 197, 64, 0.16), transparent 30rem),
-			radial-gradient(circle at 50% 100%, rgba(255, 143, 48, 0.14), transparent 38rem),
-			rgba(8, 6, 24, 0.94);
+			radial-gradient(circle at 15% 20%, rgba(0, 240, 255, 0.08), transparent 28rem),
+			radial-gradient(circle at 88% 16%, rgba(255, 46, 166, 0.08), transparent 28rem),
+			radial-gradient(circle at 50% 100%, rgba(255, 143, 48, 0.14), transparent 38rem), #080618;
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
 	}
 
 	.modal-box {

@@ -259,20 +259,19 @@
 				></span>
 				{failedCount} <span class="status-summary-label status-failed" aria-hidden="true"></span>
 			</span>
-			<span
-				class="rounded-full border border-(--border-bright) bg-(--bg-3) px-3 py-1.5 text-[0.62rem]
-				font-(--font-mono) tracking-[0.1em] text-(--text-1)"
-			>
-				{#if hasActiveCriteria}
+			{#if hasActiveCriteria}
+				<span
+					class="rounded-full border border-(--border-bright) bg-(--bg-3) px-3 py-1.5 text-[0.62rem]
+					font-(--font-mono) tracking-[0.1em] text-(--text-1)"
+				>
 					{filteredPuzzles.length} OF {puzzles.length}
-				{:else}
-					{puzzles.length} TOTAL
-				{/if}
-			</span>
+				</span>
+			{/if}
 			<a
 				href={resolve('/upload')}
-				class="inline-flex items-center gap-1.5 rounded-full border border-(--accent) bg-[linear-gradient(160deg,#5affff,#00c2dc)]
-				px-3 py-1.5 text-[0.62rem] font-(--font-display) font-black tracking-[0.1em] text-[#03202a]
+				class="inline-flex h-[47px] items-center gap-1.5 rounded-full border border-(--accent)
+				bg-[linear-gradient(160deg,#5affff,#00c2dc)] px-4 text-[0.62rem] font-(--font-display)
+				font-black tracking-[0.1em] text-[#03202a]
 				shadow-[0_3px_0_#00707f] transition-[filter] hover:brightness-105"
 			>
 				<svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
@@ -462,7 +461,7 @@
 										aria-label={`View full image for ${puzzle.name}`}
 										title={`Preview ${puzzle.name}`}
 										onclick={() => (previewFamily = puzzle)}
-										class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--border-bright) bg-(--bg-3) text-(--text-1)
+										class="flex h-11 w-11 items-center justify-center rounded-xl border border-(--border-bright) bg-(--bg-3) text-(--text-1)
 									transition-colors hover:border-(--accent) hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-(--accent)"
 									>
 										<svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
@@ -480,7 +479,7 @@
 										: 'Delete family'}
 									onclick={() => handleDelete(puzzle.id, puzzle.status === 'processing')}
 									disabled={deletingId === puzzle.id}
-									class="flex h-10 w-10 items-center justify-center rounded-xl border border-(--hot-dim) bg-[rgba(255,0,102,0.1)]
+									class="flex h-11 w-11 items-center justify-center rounded-xl border border-(--hot-dim) bg-[rgba(255,0,102,0.1)]
 								text-(--hot) transition-colors hover:border-(--hot) hover:bg-(--hot-glow)
 								focus-visible:outline-2 focus-visible:outline-(--hot) disabled:cursor-not-allowed disabled:opacity-40"
 								>
