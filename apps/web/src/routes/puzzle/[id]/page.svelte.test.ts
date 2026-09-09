@@ -5,6 +5,8 @@ import PuzzlePage from './+page.svelte';
 import type { GameProgress, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 import {
 	clampTrayWidth,
+	DESKTOP_TRAY_BASE_WIDTH,
+	DESKTOP_TRAY_MIN_WIDTH,
 	getDefaultPuzzleTrayWidth,
 	getGameplayRailWidth,
 	getResponsivePuzzleBoardMetrics
@@ -464,6 +466,18 @@ async function openMoreActions(): Promise<void> {
 	}
 }
 
+async function expectPiecesRemaining(remaining: number): Promise<void> {
+	await expect
+		.poll(() => document.querySelector<HTMLElement>('.hud-pieces .stat-value')?.textContent?.trim())
+		.toBe(String(remaining));
+}
+
+async function expectMissionName(name: string): Promise<void> {
+	await expect
+		.poll(() => document.querySelector<HTMLElement>('.mission-name')?.textContent?.trim())
+		.toBe(name);
+}
+
 async function getPieceRotation(pieceId: number): Promise<number> {
 	const piece = await page.getByLabelText(`Puzzle piece ${pieceId}`).element();
 	const visual = piece.querySelector('[data-testid="puzzle-piece-visual"]');
@@ -675,14 +689,19 @@ describe('Puzzle route gameplay integration', () => {
 				.poll(() => gameLayout.style.getPropertyValue('--board-width').trim())
 				.not.toBe('');
 
+			const viewportWidth = 1280;
+			const requestedTrayWidth = Math.min(
+				getDefaultPuzzleTrayWidth(puzzle, { width: viewportWidth, height: 900 }),
+				viewportWidth >= 1440 ? DESKTOP_TRAY_BASE_WIDTH : DESKTOP_TRAY_MIN_WIDTH
+			);
 			const expectedTrayWidth = clampTrayWidth(
 				layoutWidth,
-				getDefaultPuzzleTrayWidth(puzzle, { width: 1280, height: 900 }),
-				getGameplayRailWidth(1280)
+				requestedTrayWidth,
+				getGameplayRailWidth(viewportWidth)
 			);
 			const expected = getResponsivePuzzleBoardMetrics(
 				puzzle,
-				{ width: 1280, height: 900 },
+				{ width: viewportWidth, height: 900 },
 				expectedTrayWidth,
 				layoutWidth
 			);
@@ -1129,7 +1148,7 @@ describe('Puzzle route gameplay integration', () => {
 	it('blocks undo and redo keyboard shortcuts while the persistent reference overlay is open', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 
 		// Open the persistent reference overlay; it visually obscures the
 		// board and traps keyboard focus on its Close control.
@@ -1140,7 +1159,7 @@ describe('Puzzle route gameplay integration', () => {
 		// Ctrl+Y): the placement must not be reverted behind the overlay.
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 
 		// The undo stack was not consumed behind the overlay: after closing
 		// it, undo still reverts the placement.
@@ -1148,7 +1167,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 	});
 
 	it('ignores a stale hold release after Hold -> Toggle', async () => {
@@ -1272,7 +1291,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		// The configured run is active and playable.
 		await placePiece(0, 0, 0);
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 	});
 
 	it('shows a RELAXED indicator and a neutral completion for a relaxed run', async () => {
@@ -1464,7 +1483,7 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('style', 'transform: rotate(90deg);');
 
 		await placeSelectedPieceAt(0, 0);
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 
 		await rotateSelectedPiece();
 		await rotateSelectedPiece();
@@ -1478,7 +1497,7 @@ describe('Puzzle route gameplay integration', () => {
 		// Re-selecting would now toggle it off (Enter on a selected piece
 		// deselects), so place the still-selected piece directly.
 		await placeSelectedPieceAt(0, 0);
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 	});
 
 	it('rotates a focused tray piece with R without selecting it', async () => {
@@ -1502,17 +1521,17 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
 
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		await expect.element(page.getByLabelText('Undo')).toBeEnabled();
 		await expect.element(page.getByLabelText('Redo')).toBeDisabled();
 
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 		await expect.element(page.getByLabelText('Redo')).toBeEnabled();
 
 		await openMoreActions();
 		await page.getByLabelText('Redo').click();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 	});
 
 	it('re-enables rotation toggle after undoing back to empty board', async () => {
@@ -1521,11 +1540,11 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
 
 		await placePiece(0, 0, 0);
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
 
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
 	});
 
@@ -1549,34 +1568,34 @@ describe('Puzzle route gameplay integration', () => {
 		await selectPiece(1);
 		await rotateSelectedPiece();
 		await placePiece(0, 0, 0);
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		expect(await getPieceRotation(1)).toBe(90);
 
 		await selectPiece(1);
 		await rotateSelectedPiece();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		expect(await getPieceRotation(1)).toBe(180);
 
 		// First undo reverses the rotation (180 -> 90), piece remains placed
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		expect(await getPieceRotation(1)).toBe(90);
 
 		// Second undo removes the placement, rotation preserved from pre-placement state
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 		expect(await getPieceRotation(1)).toBe(90);
 
 		// Redo re-applies the placement
 		await openMoreActions();
 		await page.getByLabelText('Redo').click();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		expect(await getPieceRotation(1)).toBe(90);
 
 		// Second redo re-applies the rotation
 		await openMoreActions();
 		await page.getByLabelText('Redo').click();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		expect(await getPieceRotation(1)).toBe(180);
 	});
 
@@ -1658,13 +1677,13 @@ describe('Puzzle route gameplay integration', () => {
 
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
 
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
 		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
 
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
 		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 	});
@@ -1700,7 +1719,7 @@ describe('Puzzle route gameplay integration', () => {
 			error: null
 		});
 
-		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		await expectMissionName('NEXT MISSION');
 		expect(page.getByTestId('hint-target').query()).toBeNull();
 		const nextPieceSlot = await page.getByTestId('piece-slot-1').element();
 		expect(nextPieceSlot.classList.contains('hinted')).toBe(false);
@@ -1738,7 +1757,7 @@ describe('Puzzle route gameplay integration', () => {
 			error: null
 		});
 
-		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		await expectMissionName('NEXT MISSION');
 		const nextSlot = await page.getByTestId('piece-slot-0').element();
 		expect(nextSlot.classList.contains('rejected')).toBe(false);
 	});
@@ -1774,7 +1793,7 @@ describe('Puzzle route gameplay integration', () => {
 			error: null
 		});
 
-		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		await expectMissionName('NEXT MISSION');
 		// The new session starts without an active reference mode.
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 
@@ -1826,7 +1845,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByText('TEST MISSION').query()).toBeNull();
 
 		secondLoad.resolve(nextPuzzle);
-		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		await expectMissionName('NEXT MISSION');
 		await expect.poll(() => page.getByText('TEST MISSION').query()).toBeNull();
 	});
 
@@ -1880,7 +1899,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		// Undo the last piece — should transition from complete to incomplete
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
 
 		// Redo — should re-show celebration but NOT call recordLocalCompletion again
@@ -1898,7 +1917,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		// Undo: piece 0 goes back to the tray
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 
 		// Select piece 0 from the tray via keyboard
 		await selectPiece(0);
@@ -1909,7 +1928,7 @@ describe('Puzzle route gameplay integration', () => {
 		// Redo: piece 0 is placed back on the board
 		await openMoreActions();
 		await page.getByLabelText('Redo').click();
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 
 		// Selection should be cleared since piece 0 is now on the board. Scoped
 		// to the tray control: the board cell's accessible name ("...,
@@ -1947,7 +1966,7 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByRole('button', { name: 'Start Mission' }).click();
 		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
 
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-off');
 		await expect.element(page.getByLabelText('Puzzle piece 0')).toBeVisible();
 		await expect.element(page.getByLabelText('Puzzle piece 1')).toBeVisible();
@@ -2217,13 +2236,13 @@ describe('Puzzle route gameplay integration', () => {
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
 
 		// Board state remains complete — undo/redo shortcuts were blocked.
-		await expect.element(page.getByText('2/2')).toBeVisible();
+		await expectPiecesRemaining(0);
 	});
 
 	it('blocks undo and redo keyboard shortcuts while a session dialog is open', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 
 		// Open the pause dialog; the route is inert while it is open.
 		await page.getByLabelText('More puzzle actions').click();
@@ -2233,7 +2252,7 @@ describe('Puzzle route gameplay integration', () => {
 		// Ctrl+Z is blocked (the same top-of-handler guard also blocks
 		// Ctrl+Y): the placement must not be reverted behind the dialog.
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
-		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expectPiecesRemaining(1);
 
 		// The undo stack was not consumed behind the dialog: nothing is
 		// redoable after resuming.
@@ -2245,7 +2264,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		// Undo still reverts the placement — the stack survived intact.
 		await page.getByLabelText('Undo').click();
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 	});
 
 	it('zooms in and out via toolbar buttons', async () => {
@@ -2325,7 +2344,7 @@ describe('Puzzle route gameplay integration', () => {
 			.element(page.getByTestId('completion-result-label'))
 			.toHaveTextContent('STANDARD TIMED');
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
-		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+		await expect.element(page.getByTestId('completion-best-time')).toBeVisible();
 	});
 
 	it('shows the known standard best for a standard completion that is not a new record', async () => {
@@ -2549,10 +2568,10 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		// The in-memory new-best presentation is still available (PERSONAL BEST
-		// label + time), but the persisted-best wording (NEW RECORD) is
+		// The in-memory new-best presentation is still available (record label
+		// + time), but the persisted-best wording (NEW RECORD) is
 		// suppressed because the local write did not succeed.
-		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+		await expect.element(page.getByTestId('completion-best-time')).toBeVisible();
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
 		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
 	});
@@ -2990,7 +3009,7 @@ describe('Puzzle page defensive guard coverage', () => {
 		// triggers the rejected animation on the piece slot.
 		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
 		// Board should still show 0/2 (placement was rejected).
-		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expectPiecesRemaining(2);
 	});
 
 	it('clears a pending rejected-piece timeout when a second rejection arrives', async () => {
@@ -3494,7 +3513,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 			error: null
 		});
 
-		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		await expectMissionName('NEXT MISSION');
 		const announcer = await page.getByTestId('gameplay-announcer').element();
 		expect(announcer.textContent?.trim()).toBe('');
 	});

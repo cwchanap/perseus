@@ -12,8 +12,10 @@
 		onZoomOut: () => void;
 		onResetView: () => void;
 		onRotationToggle: () => void;
+		onOpenLeaderboard?: () => void;
 		onPause?: () => void;
 		onOpenSetup?: () => void;
+		canOpenLeaderboard?: boolean;
 		canOpenSetup?: boolean;
 		canPause?: boolean;
 		canUndo: boolean;
@@ -36,8 +38,10 @@
 		onZoomOut,
 		onResetView,
 		onRotationToggle,
+		onOpenLeaderboard,
 		onPause,
 		onOpenSetup,
+		canOpenLeaderboard = false,
 		canOpenSetup = false,
 		canPause = false,
 		canUndo,
@@ -68,6 +72,7 @@
 		| 'fit'
 		| 'rotation'
 		| 'peek'
+		| 'leaderboard'
 		| 'pause'
 		| 'setup';
 
@@ -85,6 +90,7 @@
 		fit: true,
 		rotation: !rotationToggleDisabled,
 		peek: hasReference && referenceAvailable && !referenceToggled,
+		leaderboard: canOpenLeaderboard,
 		pause: canPause,
 		setup: canOpenSetup
 	});
@@ -408,6 +414,25 @@
 			</div>
 		{/if}
 
+		{#if canOpenLeaderboard}
+			<div class="toolbar-group">
+				<button
+					type="button"
+					aria-label="Open family leaderboard"
+					data-testid="open-family-leaderboard-secondary"
+					data-toolbar-action="leaderboard"
+					tabindex={toolbarTabIndex('leaderboard')}
+					onclick={onOpenLeaderboard}
+					class="arcade-btn-ghost toolbar-button"
+					title="Open family leaderboard"
+				>
+					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+						<path d="M4 20V9h4v11zM10 20V4h4v16zM16 20v-7h4v7z" />
+					</svg>
+				</button>
+			</div>
+		{/if}
+
 		{#if canOpenSetup}
 			<div class="toolbar-group">
 				<button
@@ -652,7 +677,7 @@
 			flex-direction: column;
 			flex-wrap: nowrap;
 			align-items: stretch;
-			overflow: hidden;
+			overflow: visible;
 		}
 
 		.puzzle-toolbar > .toolbar-group,
@@ -692,6 +717,7 @@
 
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='peek'],
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='setup'],
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='leaderboard'],
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='zoom-out'],
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='zoom-in'],
 		.puzzle-toolbar > .more-toggle {
@@ -746,6 +772,10 @@
 		}
 
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button {
+			width: 3.25rem;
+		}
+
+		.puzzle-toolbar > .toolbar-secondary[data-open='true'] .toolbar-button {
 			width: 100%;
 		}
 	}

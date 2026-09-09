@@ -61,8 +61,10 @@
 		role={dismissible ? 'dialog' : undefined}
 		aria-modal={dismissible ? 'true' : undefined}
 		aria-label={dismissible ? 'Reference image' : undefined}
-		class={`fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 ${
-			dismissible ? '' : 'pointer-events-none'
+		class={`reference-overlay fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 ${
+			dismissible
+				? 'reference-overlay-dismissible'
+				: 'reference-overlay-pass-through pointer-events-none'
 		}`}
 		onkeydown={dismissible ? handleOverlayKeyDown : undefined}
 	>
@@ -92,6 +94,18 @@
 {/if}
 
 <style>
+	.reference-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1000;
+	}
+	.reference-overlay-pass-through {
+		pointer-events: none;
+	}
+	.reference-overlay-dismissible {
+		pointer-events: auto;
+	}
+
 	.reference-overlay-close {
 		position: absolute;
 		top: 1rem;
