@@ -128,6 +128,13 @@ async function mockProgressionApis(
 	);
 }
 
+async function openFamilyLeaderboard(page: import('@playwright/test').Page): Promise<void> {
+	const more = page.getByRole('button', { name: 'More puzzle actions' });
+	await more.click();
+	await expect(more).toHaveAttribute('aria-expanded', 'true');
+	await page.getByTestId('open-family-leaderboard').click();
+}
+
 test.describe('Progression and leaderboards @smoke', () => {
 	test('authenticated Easy complete surfaces awards, leaderboards, and profile progression', async ({
 		gameplayPage
@@ -154,12 +161,7 @@ test.describe('Progression and leaderboards @smoke', () => {
 		await page.keyboard.press('Escape');
 		await expect(gameplayPage.celebrationModal()).toBeHidden();
 
-		if ((page.viewportSize()?.width ?? 0) < 1024) {
-			await page.getByRole('button', { name: 'More puzzle actions' }).click();
-			await page.getByTestId('open-family-leaderboard-secondary').click();
-		} else {
-			await page.getByTestId('open-family-leaderboard').click();
-		}
+		await openFamilyLeaderboard(page);
 		await expect(page.getByTestId('family-leaderboard-modal')).toBeVisible();
 		await expect(page.getByTestId('leaderboard-entries')).toContainText('Rival Player');
 		await expect(page.getByTestId('leaderboard-me')).toContainText('#5');
