@@ -168,25 +168,25 @@
 					<span class="brand-name">PERSEUS</span>
 				</a>
 				<div class="compact-spacer"></div>
+				{#if currentPath === '/'}
+					<button
+						type="button"
+						class="compact-search"
+						aria-label="Search puzzles"
+						data-testid="arcade-compact-search"
+						onclick={openGallerySearch}
+					>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+							<path stroke-linecap="round" stroke-width="2.2" d="M21 21l-5.6-5.6" />
+							<circle cx="10" cy="10" r="6.4" stroke-width="2.2" />
+						</svg>
+					</button>
+				{/if}
 				{#if authStatus === 'authenticated'}
 					<div class="compact-score">
 						<span aria-hidden="true">★</span>
 						<span data-testid="arcade-compact-score">{score ?? '—'}</span>
 					</div>
-					{#if currentPath === '/'}
-						<button
-							type="button"
-							class="compact-search"
-							aria-label="Search puzzles"
-							data-testid="arcade-compact-search"
-							onclick={openGallerySearch}
-						>
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-								<path stroke-linecap="round" stroke-width="2.2" d="M21 21l-5.6-5.6" />
-								<circle cx="10" cy="10" r="6.4" stroke-width="2.2" />
-							</svg>
-						</button>
-					{/if}
 					<span class="compact-profile-name">{playerDisplayName || 'Player'}</span>
 					<a
 						href={resolve('/profile')}

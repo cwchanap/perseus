@@ -99,6 +99,24 @@
 			width: 100%;
 			justify-content: center;
 		}
+
+		.search-input:focus {
+			width: 100%;
+			padding: 0.625rem 1rem 0.625rem 3rem;
+			color: var(--text-1);
+			font-size: 0.95rem;
+		}
+
+		.search-input:focus::placeholder {
+			color: var(--text-1);
+			opacity: 0.8;
+		}
+
+		.search-control:has(.search-input:focus) .search-icon {
+			inset: 0 auto 0 1rem;
+			width: 1.2rem;
+			justify-content: flex-start;
+		}
 	}
 
 	@media (max-width: 39.999rem) {

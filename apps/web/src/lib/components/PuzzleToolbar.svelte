@@ -534,6 +534,10 @@
 		box-shadow: 0 0 10px var(--accent-glow);
 	}
 
+	.toolbar-secondary[data-open='true'] {
+		pointer-events: auto;
+	}
+
 	.more-toggle {
 		display: none;
 	}
