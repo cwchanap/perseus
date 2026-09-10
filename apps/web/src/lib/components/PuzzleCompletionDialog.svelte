@@ -201,21 +201,25 @@
 
 					<div class="completion-summary" data-testid="completion-run-summary">
 						<div class="summary-item">
-							<svg viewBox="0 0 24 24" aria-hidden="true">
+							<svg class="summary-icon summary-icon-pieces" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M5 5h14v14H5zM8 8h3v3H8zm5 0h3v3h-3zM8 13h3v3H8zm5 0h3v3h-3z" />
 							</svg>
 							<span class="mstat-label">PIECES</span>
 							<span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
 						</div>
 						<div class="summary-item">
-							<svg viewBox="0 0 24 24" aria-hidden="true">
+							<svg class="summary-icon summary-icon-hints" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M12 3a7 7 0 0 0-4 12.74V19h8v-3.26A7 7 0 0 0 12 3Zm-2 18h4v-1h-4v1Z" />
 							</svg>
 							<span class="mstat-label">HINTS USED</span>
 							<span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
 						</div>
 						<div class="summary-item">
-							<svg viewBox="0 0 24 24" aria-hidden="true">
+							<svg
+								class="summary-icon summary-icon-incorrect"
+								viewBox="0 0 24 24"
+								aria-hidden="true"
+							>
 								<path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3Zm1 0v7h7v2h-9V3h2Z" />
 							</svg>
 							<span class="mstat-label">INCORRECT ATTEMPTS</span>
@@ -224,7 +228,11 @@
 							</span>
 						</div>
 						<div class="summary-item">
-							<svg viewBox="0 0 24 24" aria-hidden="true">
+							<svg
+								class="summary-icon summary-icon-rotation"
+								viewBox="0 0 24 24"
+								aria-hidden="true"
+							>
 								<path
 									d="M6 7h10.17l-1.58-1.59L16 4l4 4-4 4-1.41-1.41L16.17 9H6V7Zm12 10H7.83l1.58 1.59L8 20l-4-4 4-4 1.41 1.41L7.83 15H18v2Z"
 								/>
@@ -686,11 +694,11 @@
 
 	/* ===== RESULTS PRESENTATION ===== */
 	.modal-backdrop {
-		background:
-			radial-gradient(circle at 50% 34%, rgba(255, 197, 64, 0.16), transparent 30rem),
-			radial-gradient(circle at 15% 20%, rgba(0, 240, 255, 0.08), transparent 28rem),
-			radial-gradient(circle at 88% 16%, rgba(255, 46, 166, 0.08), transparent 28rem),
-			radial-gradient(circle at 50% 100%, rgba(255, 143, 48, 0.14), transparent 38rem), #080618;
+		background: #0a0620;
+		background-image:
+			radial-gradient(circle at 50% 26%, rgba(255, 204, 0, 0.26), transparent 50%),
+			radial-gradient(circle at 12% 82%, rgba(255, 46, 166, 0.2), transparent 46%),
+			radial-gradient(circle at 88% 70%, rgba(0, 240, 255, 0.18), transparent 44%);
 		backdrop-filter: none;
 		-webkit-backdrop-filter: none;
 	}
@@ -701,8 +709,7 @@
 		height: 100%;
 		max-height: 100vh;
 		padding: 1rem;
-		background:
-			radial-gradient(circle at 50% 74%, rgba(255, 197, 64, 0.1), transparent 25rem), transparent;
+		background: transparent;
 		border: 0;
 		box-shadow: none;
 		animation: celebration-in 0.35s ease-out;
@@ -853,6 +860,17 @@
 		filter: drop-shadow(0 0 7px var(--accent-glow));
 	}
 
+	.summary-icon-hints,
+	.summary-icon-rotation {
+		fill: var(--gold) !important;
+		filter: drop-shadow(0 0 7px var(--gold-glow)) !important;
+	}
+
+	.summary-icon-incorrect {
+		fill: var(--hot) !important;
+		filter: drop-shadow(0 0 7px var(--hot-glow)) !important;
+	}
+
 	.summary-item .mstat-label {
 		position: absolute;
 		width: 1px;
@@ -949,6 +967,26 @@
 		.modal-actions {
 			justify-content: flex-start;
 			margin-top: 2rem;
+		}
+	}
+
+	@media (min-width: 640px) and (max-width: 1439px) {
+		.modal-backdrop {
+			background: #0a0620;
+			background-image:
+				radial-gradient(circle at 50% 12%, rgba(255, 204, 0, 0.24), transparent 46%),
+				radial-gradient(circle at 10% 86%, rgba(255, 46, 166, 0.2), transparent 42%),
+				radial-gradient(circle at 90% 78%, rgba(0, 240, 255, 0.18), transparent 40%);
+		}
+	}
+
+	@media (min-width: 1440px) {
+		.modal-backdrop {
+			background: #0a0620;
+			background-image:
+				radial-gradient(circle at 50% 16%, rgba(255, 204, 0, 0.22), transparent 44%),
+				radial-gradient(circle at 8% 88%, rgba(255, 46, 166, 0.18), transparent 38%),
+				radial-gradient(circle at 92% 80%, rgba(0, 240, 255, 0.16), transparent 36%);
 		}
 	}
 

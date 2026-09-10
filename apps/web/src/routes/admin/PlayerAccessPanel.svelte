@@ -135,7 +135,7 @@
 				disabled={allowlistSaving || removingAllowlistEmail !== null || !allowlistEmail.trim()}
 				class="inline-flex h-[47px] w-full shrink-0 items-center justify-center gap-2 rounded-[18px]
 				border border-(--accent) bg-[linear-gradient(160deg,#5affff,#00c2dc)]
-				px-5 py-3 text-[0.65rem] font-(--font-display) font-black
+				px-5 py-3 text-sm font-(--font-display) font-black
 				tracking-[0.12em] text-[#03202a] shadow-[0_4px_0_#00707f] transition-all
 				duration-200 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 sm:w-[183px]"
 			>

@@ -757,7 +757,7 @@
 
 		.puzzle-toolbar
 			> .toolbar-secondary[data-open='false']
-			.toolbar-button:not([data-toolbar-action='redo']) {
+			.toolbar-button:not([data-toolbar-action='redo']):not([data-toolbar-action='rotation']) {
 			display: none;
 		}
 

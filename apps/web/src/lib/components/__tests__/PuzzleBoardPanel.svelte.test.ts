@@ -42,7 +42,8 @@ const largeMetrics: ResponsivePuzzleBoardMetrics = {
 	boardWidth: 2400,
 	boardHeight: 1200,
 	cellSize: 1200,
-	pieceSlotSize: 1200
+	pieceSlotSize: 1200,
+	trayColumns: 3
 };
 
 const resizedMetrics: ResponsivePuzzleBoardMetrics = {
@@ -50,7 +51,8 @@ const resizedMetrics: ResponsivePuzzleBoardMetrics = {
 	boardWidth: 2200,
 	boardHeight: 1100,
 	cellSize: 1100,
-	pieceSlotSize: 1100
+	pieceSlotSize: 1100,
+	trayColumns: 2
 };
 
 function props(overrides: Record<string, unknown> = {}) {
