@@ -163,7 +163,7 @@ describe('PuzzleInventoryPanel', () => {
 			rejectedPieceId: 1
 		});
 
-		await expect.element(page.getByLabelText('1 pieces left')).toBeVisible();
+		await expect.element(page.getByText('1 piece left')).toBeVisible();
 		expect(document.querySelector('[data-testid="piece-slot-0"]')).toBeNull();
 		const slot = document.querySelector('[data-testid="piece-slot-1"]');
 		expect(slot).not.toBeNull();
@@ -380,7 +380,7 @@ describe('PuzzleInventoryPanel', () => {
 			activeFilter: 'corners'
 		});
 
-		await expect.element(page.getByLabelText('8 pieces left')).toBeVisible();
+		await expect.element(page.getByText('8 pieces left')).toBeVisible();
 		expect(page.getByTestId('piece-slot-0').query()).toBeNull();
 		await expect.element(page.getByTestId('piece-slot-2')).toBeVisible();
 		await expect.element(page.getByTestId('piece-slot-6')).toBeVisible();

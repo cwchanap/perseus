@@ -386,7 +386,7 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
-		await page.getByRole('button', { name: 'DELETE' }).first().click();
+		await page.getByRole('button', { name: /delete forest scene/i }).click();
 		await expect.element(page.getByText('First warning')).toBeVisible();
 
 		await page.getByRole('button', { name: /delete city lights/i }).click();

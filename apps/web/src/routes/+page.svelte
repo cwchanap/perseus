@@ -361,7 +361,7 @@
 					<a
 						href={resolve(`/puzzle/${latestProgress.puzzleId}`)}
 						class="continue-action arcade-btn"
-						aria-label={`Continue ${latestProgress.name}${latestProgress.difficulty ? ` (${getDifficultyLabel(latestProgress.difficulty)})` : ''}`}
+						aria-label={`Resume ${latestProgress.name}${latestProgress.difficulty ? ` (${getDifficultyLabel(latestProgress.difficulty)})` : ''}`}
 					>
 						<svg
 							class="continue-action-icon"

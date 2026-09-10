@@ -64,6 +64,11 @@
 
 	const unplacedPieces = $derived(orderedPieces.filter((piece) => !placedPieceIds.has(piece.id)));
 
+	const remainingPieces = $derived(puzzle.pieceCount - placedPieces.length);
+	const piecesLeftLabel = $derived(
+		`${remainingPieces} ${remainingPieces === 1 ? 'piece' : 'pieces'} left`
+	);
+
 	const visiblePieces = $derived(
 		unplacedPieces.filter((piece) => matchesInventoryFilter(piece, puzzle, activeFilter))
 	);
@@ -238,11 +243,7 @@
 		<span class="sheet-handle" aria-hidden="true"></span>
 		<div class="panel-heading">
 			<span class="panel-tag">INVENTORY</span>
-			<span
-				class="inv-count"
-				role="status"
-				aria-label={`${puzzle.pieceCount - placedPieces.length} pieces left`}
-			>
+			<span class="inv-count">
 				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 					<circle cx="7" cy="7" r="2.2" /><circle cx="17" cy="7" r="2.2" /><circle
 						cx="7"
@@ -250,7 +251,8 @@
 						r="2.2"
 					/><circle cx="17" cy="17" r="2.2" />
 				</svg>
-				<span aria-hidden="true">{puzzle.pieceCount - placedPieces.length}</span>
+				<span aria-hidden="true">{remainingPieces}</span>
+				<span class="sr-only">{piecesLeftLabel}</span>
 			</span>
 		</div>
 
