@@ -280,15 +280,6 @@
 		overflow: visible;
 	}
 
-	.panel-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.625rem 1rem;
-		border-bottom: 1px solid var(--border);
-		background: var(--bg-2);
-	}
-
 	.panel-tag {
 		font-family: var(--font-display);
 		font-size: 0.6rem;
