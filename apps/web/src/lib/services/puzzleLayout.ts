@@ -18,6 +18,7 @@ export interface ResponsivePuzzleBoardMetrics {
 	boardHeight: number;
 	cellSize: number;
 	pieceSlotSize: number;
+	trayColumns: number;
 }
 
 const TIER_LONG_EDGE: Record<PuzzleBoardViewportTier, number> = {
@@ -28,6 +29,12 @@ const TIER_LONG_EDGE: Record<PuzzleBoardViewportTier, number> = {
 };
 
 const MIN_BOARD_CELL_SIZE = 24;
+
+const TABLET_TRAY_COLUMNS = 2;
+const DESKTOP_TRAY_COLUMNS = 3;
+const TABLET_TRAY_PIECE_SCALE = 1.125;
+const TRAY_INVENTORY_PADDING = 28;
+const TRAY_INVENTORY_GAP = 6;
 
 export const DESKTOP_TRAY_MIN_WIDTH = 300;
 export const DESKTOP_TRAY_BASE_WIDTH = 352;
@@ -49,8 +56,25 @@ export const MOBILE_SHEET_HEIGHT = {
 
 export const MOBILE_GAMEPLAY_GAP = 20;
 
-const DESKTOP_TRAY_TARGET_COLUMNS = 3;
 const DESKTOP_TRAY_CHROME_WIDTH = 42;
+
+function getTrayTargetColumns(tier: PuzzleBoardViewportTier): number {
+	return tier === 'large' ? TABLET_TRAY_COLUMNS : DESKTOP_TRAY_COLUMNS;
+}
+
+function getTrayPieceSlotSize(
+	tier: PuzzleBoardViewportTier,
+	cellSize: number,
+	trayWidth: number
+): number {
+	const trayColumns = getTrayTargetColumns(tier);
+	const preferredSize = tier === 'large' ? cellSize * TABLET_TRAY_PIECE_SCALE : cellSize;
+	const availableSize =
+		(trayWidth - TRAY_INVENTORY_PADDING - Math.max(0, trayColumns - 1) * TRAY_INVENTORY_GAP) /
+		trayColumns;
+
+	return roundMetric(Math.min(preferredSize, Math.max(MIN_BOARD_CELL_SIZE, availableSize)));
+}
 
 export function getPuzzleBoardViewportTier(width: number): PuzzleBoardViewportTier {
 	if (width < 640) return 'small';
@@ -113,7 +137,7 @@ export function getDefaultPuzzleTrayWidth(
 	const { tier, width } = getPreferredBoardWidth(puzzle, viewport);
 	const cellSize = width / Math.max(1, puzzle.gridCols);
 	const baseWidth = tier === 'large' ? 300 : DESKTOP_TRAY_BASE_WIDTH;
-	return Math.max(baseWidth, cellSize * DESKTOP_TRAY_TARGET_COLUMNS + DESKTOP_TRAY_CHROME_WIDTH);
+	return Math.max(baseWidth, cellSize * getTrayTargetColumns(tier) + DESKTOP_TRAY_CHROME_WIDTH);
 }
 
 export function clampTrayWidth(layoutWidth: number, requestedWidth: number, railWidth = 0): number {
@@ -161,12 +185,14 @@ export function getResponsivePuzzleBoardMetrics(
 		Math.min(preferredWidth, desktopWidthCap)
 	);
 	const cellSize = boardWidth / gridCols;
+	const trayColumns = getTrayTargetColumns(tier);
 
 	return {
 		tier,
 		boardWidth: roundMetric(boardWidth),
 		boardHeight: roundMetric(boardWidth / imageAspect),
 		cellSize: roundMetric(cellSize),
-		pieceSlotSize: roundMetric(cellSize)
+		pieceSlotSize: getTrayPieceSlotSize(tier, cellSize, trayWidth),
+		trayColumns
 	};
 }

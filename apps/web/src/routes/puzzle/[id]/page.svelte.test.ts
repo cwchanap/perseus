@@ -5,8 +5,6 @@ import PuzzlePage from './+page.svelte';
 import type { GameProgress, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 import {
 	clampTrayWidth,
-	DESKTOP_TRAY_BASE_WIDTH,
-	DESKTOP_TRAY_MIN_WIDTH,
 	getDefaultPuzzleTrayWidth,
 	getGameplayRailWidth,
 	getResponsivePuzzleBoardMetrics
@@ -690,10 +688,10 @@ describe('Puzzle route gameplay integration', () => {
 				.not.toBe('');
 
 			const viewportWidth = 1280;
-			const requestedTrayWidth = Math.min(
-				getDefaultPuzzleTrayWidth(puzzle, { width: viewportWidth, height: 900 }),
-				viewportWidth >= 1440 ? DESKTOP_TRAY_BASE_WIDTH : DESKTOP_TRAY_MIN_WIDTH
-			);
+			const requestedTrayWidth = getDefaultPuzzleTrayWidth(puzzle, {
+				width: viewportWidth,
+				height: 900
+			});
 			const expectedTrayWidth = clampTrayWidth(
 				layoutWidth,
 				requestedTrayWidth,
@@ -715,13 +713,14 @@ describe('Puzzle route gameplay integration', () => {
 			expect(boardCanvas!.style.width).not.toBe(`${puzzle.imageWidth}px`);
 
 			const pieceSlot = await page.getByTestId('piece-slot-0').element();
-			// The slot inherits --piece-slot-size from .game-layout (the route's
-			// board-derived inline source) rather than carrying its own inline
-			// override, so the mobile clamp(3rem, 16vw, 4.5rem) override can take
-			// effect below 1024px. Verify the route injects the cell-matching
-			// value at the grid source; the per-tier rendered slot size is proven
-			// by the chromium-mobile E2E layout spec.
-			expect(gameLayout.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			// The route injects the responsive preview size at the grid source;
+			// mobile CSS may still override it below 1024px.
+			expect(gameLayout.style.getPropertyValue('--piece-slot-size').trim()).toBe(
+				`${expected.pieceSlotSize}px`
+			);
+			expect(gameLayout.style.getPropertyValue('--tray-columns').trim()).toBe(
+				String(expected.trayColumns)
+			);
 			// The slot no longer carries its own inline override.
 			expect(pieceSlot.getAttribute('style') ?? '').not.toContain('--piece-slot-size');
 		} finally {

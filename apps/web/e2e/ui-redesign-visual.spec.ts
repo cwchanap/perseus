@@ -125,6 +125,94 @@ const VISUAL_FAMILIES: PuzzleFamilySummary[] = [
 	}
 ];
 
+const VISUAL_ADMIN_FAMILIES: PuzzleFamilySummary[] = [
+	...VISUAL_FAMILIES,
+	{
+		id: '00000000-0000-4000-8000-000000007d01',
+		name: 'Aurora Valley',
+		category: 'Nature',
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1_710_000_000_003,
+		variants: {
+			easy: {
+				id: '00000000-0000-4000-8000-000000007d11',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'ready'
+			},
+			normal: {
+				id: '00000000-0000-4000-8000-000000007d12',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'ready'
+			},
+			hard: {
+				id: '00000000-0000-4000-8000-000000007d13',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'ready'
+			}
+		}
+	},
+	{
+		id: '00000000-0000-4000-8000-000000007e01',
+		name: 'Signal Drift',
+		category: 'Abstract',
+		aspectRatio: '1:1',
+		status: 'processing',
+		createdAt: 1_710_000_000_004,
+		variants: {
+			easy: {
+				id: '00000000-0000-4000-8000-000000007e11',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'processing'
+			},
+			normal: {
+				id: '00000000-0000-4000-8000-000000007e12',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'processing'
+			},
+			hard: {
+				id: '00000000-0000-4000-8000-000000007e13',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'processing'
+			}
+		}
+	},
+	{
+		id: '00000000-0000-4000-8000-000000007f01',
+		name: 'Broken Orbit',
+		category: 'Architecture',
+		aspectRatio: '1:1',
+		status: 'failed',
+		createdAt: 1_710_000_000_005,
+		variants: {
+			easy: {
+				id: '00000000-0000-4000-8000-000000007f11',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'failed'
+			},
+			normal: {
+				id: '00000000-0000-4000-8000-000000007f12',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'failed'
+			},
+			hard: {
+				id: '00000000-0000-4000-8000-000000007f13',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'failed'
+			}
+		}
+	}
+];
+
 const VISUAL_ALLOWLIST = [
 	{
 		email: 'pilot@example.com',
@@ -183,7 +271,7 @@ async function installVisualGallery(page: Page, families: PuzzleFamilySummary[])
 async function installVisualAdmin(page: Page): Promise<void> {
 	await installVisualAuth(page);
 	await page.route(/\/api\/admin\/puzzle-families(?:\?.*)?$/, (route) =>
-		route.fulfill({ json: { families: VISUAL_FAMILIES } })
+		route.fulfill({ json: { families: VISUAL_ADMIN_FAMILIES } })
 	);
 	await page.route(/\/api\/admin\/player-allowlist(?:\?.*)?$/, (route) =>
 		route.fulfill({ json: { entries: VISUAL_ALLOWLIST } })
@@ -302,7 +390,8 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 				right: rect.right,
 				top: rect.top,
 				bottom: rect.bottom,
-				width: rect.width
+				width: rect.width,
+				height: rect.height
 			};
 		};
 		return {
@@ -311,6 +400,23 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 			stage: bounds('.board-stage'),
 			board: bounds('.board-stage .board-panel'),
 			tray: bounds('[data-testid="puzzle-inventory-panel"]'),
+			trayColumns: (() => {
+				const grid = document.querySelector<HTMLElement>('.pieces-grid');
+				if (!grid) return 0;
+				return getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+			})(),
+			boardMetrics: (() => {
+				const layout = document.querySelector<HTMLElement>('.game-layout');
+				if (!layout) return null;
+				const style = getComputedStyle(layout);
+				return {
+					boardWidth: Number.parseFloat(style.getPropertyValue('--board-width')),
+					boardHeight: Number.parseFloat(style.getPropertyValue('--board-height')),
+					cellSize: Number.parseFloat(style.getPropertyValue('--board-cell-size')),
+					pieceSlotSize: Number.parseFloat(style.getPropertyValue('--piece-slot-size')),
+					trayColumns: Number.parseInt(style.getPropertyValue('--tray-columns'), 10)
+				};
+			})(),
 			back: bounds('[data-testid="back-to-arcade-link"]'),
 			trayControls: Array.from(
 				document.querySelectorAll<HTMLElement>(
@@ -339,7 +445,16 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 			hud: bounds('[data-testid="gameplay-hud"]'),
 			actions: ['hint', 'reference', 'undo', 'fit', 'pause'].map((action) =>
 				bounds(`[data-testid="puzzle-toolbar"] [data-toolbar-action="${action}"]`)
-			)
+			),
+			dockedActions: ['redo', 'rotation'].map((action) => {
+				const button = document.querySelector<HTMLButtonElement>(
+					`[data-testid="puzzle-toolbar"] [data-toolbar-action="${action}"]`
+				);
+				return {
+					bounds: bounds(`[data-testid="puzzle-toolbar"] [data-toolbar-action="${action}"]`),
+					disabled: button?.disabled ?? false
+				};
+			})
 		};
 	});
 
@@ -368,6 +483,23 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 		expect(geometry.rail.right).toBeLessThanOrEqual(geometry.board.left + 1);
 		expect(geometry.tray.right).toBeGreaterThanOrEqual(geometry.viewport.width - 1);
 		expect(Math.round(geometry.tray.width)).toBe(geometry.viewport.width >= 1440 ? 352 : 300);
+		expect(geometry.trayColumns).toBe(geometry.viewport.width >= 1440 ? 3 : 2);
+		expect(geometry.boardMetrics).not.toBeNull();
+		if (geometry.boardMetrics) {
+			expect(geometry.boardMetrics.boardWidth).toBeGreaterThan(0);
+			expect(geometry.boardMetrics.boardHeight).toBeGreaterThan(0);
+			expect(geometry.boardMetrics.cellSize).toBeGreaterThan(0);
+			expect(geometry.boardMetrics.pieceSlotSize).toBeGreaterThan(0);
+			expect(geometry.boardMetrics.trayColumns).toBe(geometry.viewport.width >= 1440 ? 3 : 2);
+		}
+		for (const action of geometry.dockedActions) {
+			expect(action.bounds).not.toBeNull();
+			if (action.bounds) {
+				expect(action.bounds.width).toBeGreaterThan(0);
+				expect(action.bounds.height).toBeGreaterThan(0);
+			}
+		}
+		expect(geometry.dockedActions[1]?.disabled).toBe(true);
 		const hint = geometry.actions[0];
 		expect(hint).not.toBeNull();
 		if (hint) {
@@ -405,6 +537,41 @@ async function expectGameplayGeometry(page: Page): Promise<void> {
 			);
 		}
 	}
+}
+
+async function expectCompletionPresentation(
+	page: Page,
+	backgroundPositions: string[]
+): Promise<void> {
+	const presentation = await page.evaluate(() => {
+		const backdrop = document.querySelector<HTMLElement>('.modal-backdrop');
+		const hints = document.querySelector<SVGElement>('.summary-icon-hints');
+		const incorrect = document.querySelector<SVGElement>('.summary-icon-incorrect');
+		const actions = Array.from(document.querySelectorAll<HTMLElement>('.modal-actions > button'));
+		return {
+			backgroundImage: backdrop ? getComputedStyle(backdrop).backgroundImage : '',
+			hintsFill: hints ? getComputedStyle(hints).fill : '',
+			incorrectFill: incorrect ? getComputedStyle(incorrect).fill : '',
+			actionFontSizes: actions.map((button) =>
+				Number.parseFloat(getComputedStyle(button).fontSize)
+			),
+			actionOverflowFree: actions.every((button) => button.scrollWidth <= button.clientWidth + 1),
+			pageOverflowFree:
+				document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+		};
+	});
+
+	for (const position of backgroundPositions) {
+		expect(presentation.backgroundImage).toContain(position);
+	}
+	expect(presentation.backgroundImage).not.toContain('255, 143, 48');
+	expect(presentation.hintsFill).toBe('rgb(255, 204, 0)');
+	expect(presentation.incorrectFill).toBe('rgb(255, 46, 166)');
+	for (const fontSize of presentation.actionFontSizes) {
+		expect(fontSize).toBeGreaterThanOrEqual(14);
+	}
+	expect(presentation.actionOverflowFree).toBe(true);
+	expect(presentation.pageOverflowFree).toBe(true);
 }
 
 test.describe('phone @visual', () => {
@@ -596,6 +763,7 @@ test.describe('phone @visual', () => {
 		expect(phoneCompletionGeometry.actionCount).toBe(2);
 		await expect(playAgain).toBeFocused();
 		await expect(playAgain).toBeVisible();
+		await expectCompletionPresentation(page, ['50% 26%', '12% 82%', '88% 70%']);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-phone-completion.png', {
 			maxDiffPixelRatio: 0.005
@@ -682,6 +850,7 @@ test.describe('landscape tablet @visual', () => {
 		await installVisualFixtureReference(page);
 		await gameplayPage.solveFixture();
 		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		await expectCompletionPresentation(page, ['50% 12%', '10% 86%', '90% 78%']);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-tablet-completion.png', {
 			maxDiffPixelRatio: 0.005
@@ -722,6 +891,7 @@ test.describe('desktop @visual', () => {
 		await installVisualFixtureReference(page);
 		await gameplayPage.solveFixture();
 		await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		await expectCompletionPresentation(page, ['50% 16%', '8% 88%', '92% 80%']);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-desktop-completion.png', {
 			maxDiffPixelRatio: 0.005
@@ -745,8 +915,13 @@ test.describe('admin @visual', () => {
 			'true'
 		);
 		await expect(page.getByText('Sunset Ridge')).toBeVisible();
-		await expect(page.getByTestId('admin-missions-count')).toHaveText('3');
+		await expect(page.getByText('Signal Drift')).toBeVisible();
+		await expect(page.getByText('Broken Orbit')).toBeVisible();
+		await expect(page.getByTestId('admin-missions-count')).toHaveText('6');
 		await expect(page.getByTestId('admin-players-count')).toHaveText('4');
+		await expect(page.getByLabel('4 ready')).toBeVisible();
+		await expect(page.getByLabel('1 processing')).toBeVisible();
+		await expect(page.getByLabel('1 failed')).toBeVisible();
 		for (const controls of [
 			page.getByRole('button', { name: /^View full image/ }),
 			page.getByRole('button', { name: /delete/i })
@@ -766,9 +941,17 @@ test.describe('admin @visual', () => {
 			.getByRole('link', { name: 'UPLOAD MISSION' })
 			.evaluate((element) => {
 				const rect = element.getBoundingClientRect();
-				return { width: rect.width, height: rect.height };
+				return {
+					width: rect.width,
+					height: rect.height,
+					fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+					scrollWidth: element.scrollWidth,
+					clientWidth: element.clientWidth
+				};
 			});
 		expect(uploadBounds.height).toBeGreaterThanOrEqual(47);
+		expect(uploadBounds.fontSize).toBeGreaterThanOrEqual(14);
+		expect(uploadBounds.scrollWidth).toBeLessThanOrEqual(uploadBounds.clientWidth + 1);
 		await waitForVisualReady(page);
 		await expect(page).toHaveScreenshot('galaxy-admin-missions.png', {
 			maxDiffPixelRatio: 0.005
@@ -785,10 +968,18 @@ test.describe('admin @visual', () => {
 			.getByRole('button', { name: 'ADD PLAYER' })
 			.evaluate((element) => {
 				const rect = element.getBoundingClientRect();
-				return { width: rect.width, height: rect.height };
+				return {
+					width: rect.width,
+					height: rect.height,
+					fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+					scrollWidth: element.scrollWidth,
+					clientWidth: element.clientWidth
+				};
 			});
 		expect(addPlayerBounds.width).toBeGreaterThanOrEqual(183);
 		expect(addPlayerBounds.height).toBeGreaterThanOrEqual(47);
+		expect(addPlayerBounds.fontSize).toBeGreaterThanOrEqual(14);
+		expect(addPlayerBounds.scrollWidth).toBeLessThanOrEqual(addPlayerBounds.clientWidth + 1);
 		const removeBounds = await page
 			.getByRole('button', { name: /remove pilot@example.com/i })
 			.evaluate((element) => {
