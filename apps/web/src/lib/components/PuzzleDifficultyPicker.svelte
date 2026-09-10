@@ -78,6 +78,7 @@
 			<div
 				class="difficulty-action difficulty-action-unavailable"
 				aria-label={`${presentation.label} difficulty, ${variant.pieceCount} pieces, unavailable`}
+				role="group"
 				data-testid="difficulty-action"
 				data-difficulty={difficulty}
 			>

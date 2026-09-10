@@ -135,4 +135,26 @@ describe('ArcadeShell', () => {
 			await page.viewport(originalWidth, originalHeight);
 		}
 	});
+
+	it('shows the gallery compact search for an anonymous player on mobile', async () => {
+		const originalWidth = window.innerWidth;
+		const originalHeight = window.innerHeight;
+		try {
+			await page.viewport(390, 844);
+			render(ArcadeShell, {
+				...authenticatedProps,
+				authStatus: 'anonymous' as const,
+				currentPath: '/'
+			});
+
+			const search = await page.getByTestId('arcade-compact-search').element();
+			await expect.element(page.getByTestId('arcade-compact-search')).toBeVisible();
+			expect(search.getAttribute('aria-label')).toBe('Search puzzles');
+			// Usable: clicking invokes openGallerySearch without throwing even when
+			// the gallery disclosure is absent in this isolated shell render.
+			await page.getByTestId('arcade-compact-search').click();
+		} finally {
+			await page.viewport(originalWidth, originalHeight);
+		}
+	});
 });

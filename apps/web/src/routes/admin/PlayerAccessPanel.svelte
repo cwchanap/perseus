@@ -173,7 +173,7 @@
 		{:else}
 			<div
 				data-testid="player-access-table"
-				class="flex min-h-0 min-h-[340px] flex-1 overflow-x-auto rounded-2xl border border-(--border) bg-[rgba(10,7,28,0.46)]"
+				class="flex min-h-[340px] flex-1 overflow-x-auto rounded-2xl border border-(--border) bg-[rgba(10,7,28,0.46)]"
 			>
 				<div class="min-h-full min-w-[560px] flex-1">
 					<div

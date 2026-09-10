@@ -27,6 +27,7 @@
 
 <span
 	class="inline-flex items-center gap-1.5 font-(--font-display) font-black tracking-[0.04em] text-(--text-0)"
+	role="img"
 	aria-label={accessibleLabel}
 	data-testid="difficulty-gems"
 	data-difficulty={difficulty}

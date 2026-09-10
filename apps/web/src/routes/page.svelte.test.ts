@@ -377,7 +377,7 @@ describe('Gallery Page', () => {
 		const panel = page.getByTestId('continue-on-device');
 		await expect.element(panel).toBeVisible();
 		await expect
-			.element(panel.getByRole('link', { name: 'CONTINUE' }))
+			.element(panel.getByRole('link', { name: 'Resume Local Mission' }))
 			.toHaveAttribute('href', '/puzzle/q-local');
 		expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(0);
 	});
