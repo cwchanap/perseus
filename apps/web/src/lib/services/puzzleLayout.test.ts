@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	DESKTOP_TRAY_BASE_WIDTH,
+	DESKTOP_TRAY_MIN_WIDTH,
 	DESKTOP_BOARD_MIN_WIDTH,
 	DESKTOP_TRAY_SEPARATOR_WIDTH,
 	clampTrayWidth,
@@ -86,7 +87,27 @@ describe('puzzle layout', () => {
 
 		expect(metrics.boardWidth).toBeCloseTo(metrics.cellSize * portraitPuzzle.gridCols);
 		expect(metrics.boardHeight).toBeCloseTo(metrics.cellSize * portraitPuzzle.gridRows);
-		expect(metrics.pieceSlotSize).toBeCloseTo(metrics.cellSize);
+		expect(metrics.trayColumns).toBe(2);
+		expect(metrics.pieceSlotSize).toBeGreaterThan(metrics.cellSize);
+		expect(metrics.pieceSlotSize).toBeLessThanOrEqual((352 - 28 - 6) / 2);
+	});
+
+	it('keeps tablet previews to two columns and desktop previews to three', () => {
+		const tablet = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{ width: 1080, height: 810 },
+			DESKTOP_TRAY_MIN_WIDTH
+		);
+		const desktop = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{ width: 1440, height: 900 },
+			DESKTOP_TRAY_BASE_WIDTH
+		);
+
+		expect(tablet.trayColumns).toBe(2);
+		expect(desktop.trayColumns).toBe(3);
+		expect(tablet.pieceSlotSize * tablet.trayColumns + 28 + 6).toBeLessThanOrEqual(300);
+		expect(desktop.pieceSlotSize * desktop.trayColumns + 28 + 12).toBeLessThanOrEqual(352);
 	});
 
 	it('keeps small square and landscape metrics within the mobile board column', () => {
@@ -137,7 +158,7 @@ describe('puzzle layout', () => {
 		expect(getDefaultPuzzleTrayWidth(dense, { width: 1280, height: 900 })).toBe(300);
 	});
 
-	it('does not narrow a coarse three-column tray to 360px', () => {
+	it('does not narrow a coarse tablet tray to the 300px floor', () => {
 		const coarse = {
 			imageWidth: 1200,
 			imageHeight: 900,
@@ -146,8 +167,9 @@ describe('puzzle layout', () => {
 		};
 
 		// Preferred board width is 720, so preferred cell is 180.
-		// Existing tray chrome is 42px: 3 * 180 + 42 = 582.
-		expect(getDefaultPuzzleTrayWidth(coarse, { width: 1280, height: 900 })).toBe(582);
+		// The tablet target is two columns and the existing tray chrome is 42px:
+		// 2 * 180 + 42 = 402.
+		expect(getDefaultPuzzleTrayWidth(coarse, { width: 1280, height: 900 })).toBe(402);
 	});
 
 	it('uses the tiered docked tray base for a portrait puzzle', () => {

@@ -726,6 +726,11 @@
 			overflow: visible;
 		}
 
+		.pieces-grid {
+			grid-template-columns: repeat(var(--tray-columns, 3), minmax(0, var(--piece-slot-size)));
+			justify-content: start;
+		}
+
 		.inventory-body,
 		.inventory-panel[data-sheet-state='peek'] .inventory-body {
 			display: flex;

@@ -270,7 +270,7 @@
 			<a
 				href={resolve('/upload')}
 				class="inline-flex h-[47px] items-center gap-1.5 rounded-full border border-(--accent)
-				bg-[linear-gradient(160deg,#5affff,#00c2dc)] px-4 text-[0.62rem] font-(--font-display)
+				bg-[linear-gradient(160deg,#5affff,#00c2dc)] px-4 text-sm font-(--font-display)
 				font-black tracking-[0.1em] text-[#03202a]
 				shadow-[0_3px_0_#00707f] transition-[filter] hover:brightness-105"
 			>

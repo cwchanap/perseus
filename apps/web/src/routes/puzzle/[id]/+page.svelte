@@ -652,13 +652,10 @@
 			const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 
 			puzzle = loadedPuzzle;
-			requestedTrayWidth = Math.min(
-				getDefaultPuzzleTrayWidth(loadedPuzzle, {
-					width: viewportWidth,
-					height: viewportHeight
-				}),
-				viewportWidth >= 1440 ? DESKTOP_TRAY_BASE_WIDTH : DESKTOP_TRAY_MIN_WIDTH
-			);
+			requestedTrayWidth = getDefaultPuzzleTrayWidth(loadedPuzzle, {
+				width: viewportWidth,
+				height: viewportHeight
+			});
 			// Restore the celebration modal for a previously completed session
 			// so the user retains access to Play Again and retry controls.
 			// Fresh sessions start without the modal. (The
@@ -1262,7 +1259,7 @@
 					data-reference-toggled={referenceToggled ? 'true' : 'false'}
 					style={`--gameplay-rail-width: ${gameplayRailWidth}px; --gameplay-gap: ${MOBILE_GAMEPLAY_GAP}px; --tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
 						currentBoardMetrics
-							? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
+							? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px; --tray-columns: ${currentBoardMetrics.trayColumns};`
 							: ''
 					}`}
 				>
