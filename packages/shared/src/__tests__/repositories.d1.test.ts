@@ -613,66 +613,78 @@ describe('recordVersionedCompletion against real D1', () => {
 		]);
 	});
 
-	it('admits only one concurrent run at the final retained-run capacity', async () => {
-		const executor = createD1CompletionWriteExecutor(db, 3);
-		await executor.write({
-			playerId: 'p1',
-			puzzleId: 'pz1',
-			familyId: FAMILY_ID,
-			difficulty: DIFFICULTY,
-			runId: 'run-1',
-			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 100,
-			hintsUsed: 0,
-			incorrectAttempts: 0,
-			receivedAt: 1_000
-		});
-		await executor.write({
-			playerId: 'p1',
-			puzzleId: 'pz1',
-			familyId: FAMILY_ID,
-			difficulty: DIFFICULTY,
-			runId: 'run-2',
-			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 90,
-			hintsUsed: 0,
-			incorrectAttempts: 0,
-			receivedAt: 2_000
-		});
-
-		const outcomes = await Promise.all([
-			executor.write({
+	// The concurrent writes below issue ~40 calls through miniflare's proxy
+	// worker. A client-side GC can finalize a statement stub while its CALL is
+	// still in flight, and the batched FREE may then overtake that CALL —
+	// tripping the proxy's internal `Native` reviver heap assert. That is a
+	// harness transport race, not a product failure, so retry past it.
+	it(
+		'admits only one concurrent run at the final retained-run capacity',
+		{ retry: 2 },
+		async () => {
+			const executor = createD1CompletionWriteExecutor(db, 3);
+			await executor.write({
 				playerId: 'p1',
 				puzzleId: 'pz1',
 				familyId: FAMILY_ID,
 				difficulty: DIFFICULTY,
-				runId: 'run-3',
+				runId: 'run-1',
 				resultClass: 'standard_timed',
-				elapsedActiveSeconds: 80,
+				elapsedActiveSeconds: 100,
 				hintsUsed: 0,
 				incorrectAttempts: 0,
-				receivedAt: 3_000
-			}),
-			executor.write({
+				receivedAt: 1_000
+			});
+			await executor.write({
 				playerId: 'p1',
 				puzzleId: 'pz1',
 				familyId: FAMILY_ID,
 				difficulty: DIFFICULTY,
-				runId: 'run-4',
+				runId: 'run-2',
 				resultClass: 'standard_timed',
-				elapsedActiveSeconds: 70,
+				elapsedActiveSeconds: 90,
 				hintsUsed: 0,
 				incorrectAttempts: 0,
-				receivedAt: 4_000
-			})
-		]);
+				receivedAt: 2_000
+			});
 
-		expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['quota_exceeded', 'stored']);
-		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
-		expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
-			{ playerId: 'p1', retainedRuns: 3 }
-		]);
-	});
+			const outcomes = await Promise.all([
+				executor.write({
+					playerId: 'p1',
+					puzzleId: 'pz1',
+					familyId: FAMILY_ID,
+					difficulty: DIFFICULTY,
+					runId: 'run-3',
+					resultClass: 'standard_timed',
+					elapsedActiveSeconds: 80,
+					hintsUsed: 0,
+					incorrectAttempts: 0,
+					receivedAt: 3_000
+				}),
+				executor.write({
+					playerId: 'p1',
+					puzzleId: 'pz1',
+					familyId: FAMILY_ID,
+					difficulty: DIFFICULTY,
+					runId: 'run-4',
+					resultClass: 'standard_timed',
+					elapsedActiveSeconds: 70,
+					hintsUsed: 0,
+					incorrectAttempts: 0,
+					receivedAt: 4_000
+				})
+			]);
+
+			expect(outcomes.map((outcome) => outcome.status).sort()).toEqual([
+				'quota_exceeded',
+				'stored'
+			]);
+			expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
+			expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
+				{ playerId: 'p1', retainedRuns: 3 }
+			]);
+		}
+	);
 
 	it('records the first standard timed run in the ledger and creates a zero-baseline best', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
