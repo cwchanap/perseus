@@ -101,9 +101,26 @@
 
 	function visibleEnabledToolbarButtons(): HTMLButtonElement[] {
 		if (!toolbarElement) return [];
-		return Array.from(
-			toolbarElement.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
-		).filter((button) => !button.disabled && button.offsetParent !== null);
+		const secondary = toolbarElement.querySelector<HTMLElement>('.toolbar-secondary');
+		// The desktop rail flattens the secondary group via display:contents and
+		// reorders buttons with CSS `order`, so DOM order disagrees with what
+		// users see. Sort by rendered position; buttons in a detached overlay
+		// (mobile sheet or the open desktop panel — their offsetParent is the
+		// secondary element itself rather than the toolbar) read after the rail.
+		return Array.from(toolbarElement.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]'))
+			.filter((button) => !button.disabled && button.offsetParent !== null)
+			.map((button) => ({
+				button,
+				detached: secondary !== null && button.offsetParent === secondary,
+				rect: button.getBoundingClientRect()
+			}))
+			.sort(
+				(a, b) =>
+					Number(a.detached) - Number(b.detached) ||
+					a.rect.top - b.rect.top ||
+					a.rect.left - b.rect.left
+			)
+			.map((entry) => entry.button);
 	}
 
 	function handleToolbarFocusIn(event: FocusEvent): void {

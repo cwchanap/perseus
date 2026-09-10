@@ -212,6 +212,49 @@ describe('PuzzleToolbar', () => {
 			// MORE must no longer hold the roving tab stop — it is hidden.
 			expect(moreButton.tabIndex).toBe(-1);
 		});
+
+		it('follows the desktop rail visual order across Undo -> Redo -> Fit -> Rotation', async () => {
+			// The desktop rail order is produced by CSS `order` on buttons that
+			// the puzzle route flattens into the rail via display:contents (the
+			// .game-layout override in routes/puzzle/[id]/+page.svelte).
+			// Replicate that context so traversal is checked against the
+			// production visual order rather than DOM order — DOM order would
+			// skip Redo after Undo.
+			const host = document.createElement('div');
+			host.className = 'game-layout';
+			document.body.appendChild(host);
+			const style = document.createElement('style');
+			style.textContent =
+				'.game-layout > .puzzle-toolbar .toolbar-secondary .toolbar-group { display: contents; }';
+			document.head.appendChild(style);
+			await page.viewport(1440, 900);
+			try {
+				render(PuzzleToolbar, {
+					target: host,
+					props: createToolbarProps({ canUndo: true, canRedo: true })
+				});
+				const undo = await page.getByRole('button', { name: 'Undo' }).element();
+				const expectedOrder = [
+					await page.getByRole('button', { name: 'Redo' }).element(),
+					await page.getByRole('button', { name: 'Reset view' }).element(),
+					await page.getByRole('button', { name: 'Rotation mode' }).element()
+				];
+
+				undo.focus();
+				for (const next of expectedOrder) {
+					(document.activeElement as HTMLButtonElement).dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+					);
+					expect(document.activeElement).toBe(next);
+				}
+			} finally {
+				await page.viewport(414, 896);
+				style.remove();
+				// host is the render target — vitest-browser-svelte's cleanup
+				// removes it from document.body; removing it here would break
+				// that bookkeeping.
+			}
+		});
 	});
 
 	describe('rendering', () => {

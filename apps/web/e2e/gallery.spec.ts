@@ -230,8 +230,13 @@ test.describe('Main Gallery Page', () => {
 
 		const easyRow = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
 		const normalRow = page.locator('[data-testid="difficulty-action"][data-difficulty="normal"]');
-		await expect(easyRow).toContainText('CONTINUE 1/16');
-		await expect(normalRow).not.toContainText('CONTINUE');
+		await expect(easyRow.getByTestId('difficulty-progress')).toHaveText('1/16');
+		await expect(easyRow).toHaveAttribute(
+			'aria-label',
+			'Easy difficulty, 16 pieces, continue saved progress'
+		);
+		await expect(normalRow.getByTestId('difficulty-progress')).toHaveCount(0);
+		await expect(normalRow).toHaveAttribute('aria-label', 'Normal difficulty, 49 pieces');
 		const stored = await page.evaluate(
 			(key) => localStorage.getItem(key),
 			progressKey(STANDARD_EASY_VARIANT)
@@ -280,11 +285,16 @@ test.describe('Main Gallery Page', () => {
 
 		await expect(page.getByTestId('continue-on-device')).toHaveCount(0);
 		const easyRow = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
-		await expect(easyRow).not.toContainText('CONTINUE');
+		await expect(easyRow.getByTestId('difficulty-progress')).toHaveCount(0);
+		await expect(easyRow).toHaveAttribute('aria-label', 'Easy difficulty, 16 pieces');
 
 		await seedApiVariantProgress(page, variantId, '1:1', 16);
 		await page.reload();
-		await expect(easyRow).toContainText('CONTINUE 1/16');
+		await expect(easyRow.getByTestId('difficulty-progress')).toHaveText('1/16');
+		await expect(easyRow).toHaveAttribute(
+			'aria-label',
+			'Easy difficulty, 16 pieces, continue saved progress'
+		);
 	});
 
 	test('quick puzzle resume still uses puzzle-progress-q keys', async ({ page }) => {
@@ -328,7 +338,10 @@ test.describe('Main Gallery Page', () => {
 		});
 		expect(quickProgressKey).toBe(`puzzle-progress-${quickId}`);
 
-		await page.getByTestId('continue-on-device').getByRole('link', { name: 'CONTINUE' }).click();
+		await page
+			.getByTestId('continue-on-device')
+			.getByRole('link', { name: 'Resume test-image' })
+			.click();
 		await expect(page).toHaveURL(new RegExp(`/puzzle/${quickId}`));
 	});
 
@@ -366,9 +379,16 @@ test.describe('Main Gallery Page', () => {
 		await expect(page.getByTestId('continue-on-device')).toContainText('Resume Fixture');
 		await expect(page.getByTestId('continue-on-device')).toContainText('1/16 PLACED');
 		const easyRow = page.locator('[data-testid="difficulty-action"][data-difficulty="easy"]');
-		await expect(easyRow).toContainText('CONTINUE 1/16');
+		await expect(easyRow.getByTestId('difficulty-progress')).toHaveText('1/16');
+		await expect(easyRow).toHaveAttribute(
+			'aria-label',
+			'Easy difficulty, 16 pieces, continue saved progress'
+		);
 
-		await page.getByTestId('continue-on-device').getByRole('link', { name: 'CONTINUE' }).click();
+		await page
+			.getByTestId('continue-on-device')
+			.getByRole('link', { name: 'Resume Resume Fixture (Easy)' })
+			.click();
 		await expect(page).toHaveURL(new RegExp(`/puzzle/${newestVariant}`));
 	});
 
