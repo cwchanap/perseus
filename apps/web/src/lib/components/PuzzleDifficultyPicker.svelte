@@ -47,12 +47,14 @@
 		{@const bestTime =
 			playableLinks && variant.status === 'ready' ? variantBestTime(variant.id) : null}
 		{@const hasProgress = playableLinks && variant.status === 'ready' && progress !== undefined}
+		{@const progressLabel =
+			progress !== undefined ? ` ${progress.placedCount}/${progress.pieceCount}` : ''}
 		{#if variant.status === 'ready' && playableLinks}
 			<a
 				href={resolve(`/puzzle/${variant.id}`)}
 				class="difficulty-action"
 				class:difficulty-action-active={hasProgress}
-				aria-label={`${presentation.label} difficulty, ${variant.pieceCount} pieces${hasProgress ? ', continue saved progress' : ''}`}
+				aria-label={`${presentation.label} difficulty, ${variant.pieceCount} pieces${hasProgress ? `, continue saved progress${progressLabel}` : ''}`}
 				data-testid="difficulty-action"
 				data-difficulty={difficulty}
 			>

@@ -79,7 +79,7 @@ afterAll(async () => {
 	await mf.dispose();
 });
 
-beforeEach(async () => {
+async function resetTables() {
 	await d1.prepare('DELETE FROM puzzle_completion_runs').run();
 	await d1.prepare('DELETE FROM puzzle_best_times').run();
 	await d1.prepare('DELETE FROM player_difficulty_completions').run();
@@ -89,7 +89,20 @@ beforeEach(async () => {
 	await d1.prepare('DELETE FROM player_profiles').run();
 	await d1.prepare('DELETE FROM player_completion_usage').run();
 	await d1.prepare('DELETE FROM puzzle_deletion_tombstones').run();
-});
+}
+
+beforeEach(resetTables);
+
+// A freed heap address in miniflare's ProxyServer surfaces to the test as a
+// revived `AssertionError` whose stack runs through the proxy worker's
+// `Native` reviver. Vitest's own AssertionErrors never contain those frames.
+function isMiniflareProxyRace(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		error.name === 'AssertionError' &&
+		(error.stack ?? '').includes('proxy.worker')
+	);
+}
 
 function completion(overrides: Partial<RecordPuzzleCompletionV2> = {}): RecordPuzzleCompletionV2 {
 	return {
@@ -617,74 +630,80 @@ describe('recordVersionedCompletion against real D1', () => {
 	// worker. A client-side GC can finalize a statement stub while its CALL is
 	// still in flight, and the batched FREE may then overtake that CALL —
 	// tripping the proxy's internal `Native` reviver heap assert. That is a
-	// harness transport race, not a product failure, so retry past it.
-	it(
-		'admits only one concurrent run at the final retained-run capacity',
-		{ retry: 2 },
-		async () => {
-			const executor = createD1CompletionWriteExecutor(db, 3);
-			await executor.write({
-				playerId: 'p1',
-				puzzleId: 'pz1',
-				familyId: FAMILY_ID,
-				difficulty: DIFFICULTY,
-				runId: 'run-1',
-				resultClass: 'standard_timed',
-				elapsedActiveSeconds: 100,
-				hintsUsed: 0,
-				incorrectAttempts: 0,
-				receivedAt: 1_000
-			});
-			await executor.write({
-				playerId: 'p1',
-				puzzleId: 'pz1',
-				familyId: FAMILY_ID,
-				difficulty: DIFFICULTY,
-				runId: 'run-2',
-				resultClass: 'standard_timed',
-				elapsedActiveSeconds: 90,
-				hintsUsed: 0,
-				incorrectAttempts: 0,
-				receivedAt: 2_000
-			});
-
-			const outcomes = await Promise.all([
-				executor.write({
+	// harness transport race, not a product failure, so retry past it — but
+	// only that specific error. A generic `retry` option would also rerun
+	// after quota assertion failures, hiding an intermittent regression.
+	it('admits only one concurrent run at the final retained-run capacity', async () => {
+		for (let attempt = 1; ; attempt++) {
+			try {
+				const executor = createD1CompletionWriteExecutor(db, 3);
+				await executor.write({
 					playerId: 'p1',
 					puzzleId: 'pz1',
 					familyId: FAMILY_ID,
 					difficulty: DIFFICULTY,
-					runId: 'run-3',
+					runId: 'run-1',
 					resultClass: 'standard_timed',
-					elapsedActiveSeconds: 80,
+					elapsedActiveSeconds: 100,
 					hintsUsed: 0,
 					incorrectAttempts: 0,
-					receivedAt: 3_000
-				}),
-				executor.write({
+					receivedAt: 1_000
+				});
+				await executor.write({
 					playerId: 'p1',
 					puzzleId: 'pz1',
 					familyId: FAMILY_ID,
 					difficulty: DIFFICULTY,
-					runId: 'run-4',
+					runId: 'run-2',
 					resultClass: 'standard_timed',
-					elapsedActiveSeconds: 70,
+					elapsedActiveSeconds: 90,
 					hintsUsed: 0,
 					incorrectAttempts: 0,
-					receivedAt: 4_000
-				})
-			]);
+					receivedAt: 2_000
+				});
 
-			expect(outcomes.map((outcome) => outcome.status).sort()).toEqual([
-				'quota_exceeded',
-				'stored'
-			]);
-			expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
-			expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
-				{ playerId: 'p1', retainedRuns: 3 }
-			]);
+				const outcomes = await Promise.all([
+					executor.write({
+						playerId: 'p1',
+						puzzleId: 'pz1',
+						familyId: FAMILY_ID,
+						difficulty: DIFFICULTY,
+						runId: 'run-3',
+						resultClass: 'standard_timed',
+						elapsedActiveSeconds: 80,
+						hintsUsed: 0,
+						incorrectAttempts: 0,
+						receivedAt: 3_000
+					}),
+					executor.write({
+						playerId: 'p1',
+						puzzleId: 'pz1',
+						familyId: FAMILY_ID,
+						difficulty: DIFFICULTY,
+						runId: 'run-4',
+						resultClass: 'standard_timed',
+						elapsedActiveSeconds: 70,
+						hintsUsed: 0,
+						incorrectAttempts: 0,
+						receivedAt: 4_000
+					})
+				]);
+
+				expect(outcomes.map((outcome) => outcome.status).sort()).toEqual([
+					'quota_exceeded',
+					'stored'
+				]);
+				expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
+				expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
+					{ playerId: 'p1', retainedRuns: 3 }
+				]);
+				return;
+			} catch (error) {
+				if (attempt >= 3 || !isMiniflareProxyRace(error)) throw error;
+				await resetTables();
+			}
 		}
-	);
+	});
 
 	it('records the first standard timed run in the ledger and creates a zero-baseline best', async () => {
 		const executor = createD1CompletionWriteExecutor(db);

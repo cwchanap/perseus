@@ -52,7 +52,9 @@ describe('PuzzleDifficultyPicker', () => {
 		await expect.element(page.getByTestId('difficulty-progress').nth(1)).toHaveTextContent('3/49');
 		await expect
 			.element(
-				page.getByRole('link', { name: 'Easy difficulty, 16 pieces, continue saved progress' })
+				page.getByRole('link', {
+					name: 'Easy difficulty, 16 pieces, continue saved progress 7/16'
+				})
 			)
 			.toBeVisible();
 	});

@@ -55,7 +55,9 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByTestId('difficulty-progress')).toHaveTextContent('7/16');
 		await expect
 			.element(
-				page.getByRole('link', { name: 'Easy difficulty, 16 pieces, continue saved progress' })
+				page.getByRole('link', {
+					name: 'Easy difficulty, 16 pieces, continue saved progress 7/16'
+				})
 			)
 			.toBeVisible();
 		await expect.element(page.getByTestId('card-progress')).toHaveTextContent('7/16');
