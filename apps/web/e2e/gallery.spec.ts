@@ -233,7 +233,7 @@ test.describe('Main Gallery Page', () => {
 		await expect(easyRow.getByTestId('difficulty-progress')).toHaveText('1/16');
 		await expect(easyRow).toHaveAttribute(
 			'aria-label',
-			'Easy difficulty, 16 pieces, continue saved progress'
+			'Easy difficulty, 16 pieces, continue saved progress 1/16'
 		);
 		await expect(normalRow.getByTestId('difficulty-progress')).toHaveCount(0);
 		await expect(normalRow).toHaveAttribute('aria-label', 'Normal difficulty, 49 pieces');
@@ -293,7 +293,7 @@ test.describe('Main Gallery Page', () => {
 		await expect(easyRow.getByTestId('difficulty-progress')).toHaveText('1/16');
 		await expect(easyRow).toHaveAttribute(
 			'aria-label',
-			'Easy difficulty, 16 pieces, continue saved progress'
+			'Easy difficulty, 16 pieces, continue saved progress 1/16'
 		);
 	});
 
@@ -382,7 +382,7 @@ test.describe('Main Gallery Page', () => {
 		await expect(easyRow.getByTestId('difficulty-progress')).toHaveText('1/16');
 		await expect(easyRow).toHaveAttribute(
 			'aria-label',
-			'Easy difficulty, 16 pieces, continue saved progress'
+			'Easy difficulty, 16 pieces, continue saved progress 1/16'
 		);
 
 		await page
