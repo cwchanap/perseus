@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Miniflare } from 'miniflare';
+import { createMiniflareD1, D1_HARNESS_WORKER_SOURCE } from './miniflare-d1';
 import type { PuzzleDifficulty, RecordPuzzleCompletionV2 } from '@perseus/types';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -60,11 +61,11 @@ let d1: D1Database;
 
 beforeAll(async () => {
 	mf = new Miniflare({
-		modules: [{ type: 'ESModule', path: 'index.js', contents: 'export default {}' }],
+		modules: [{ type: 'ESModule', path: 'index.js', contents: D1_HARNESS_WORKER_SOURCE }],
 		d1Databases: ['DB'],
 		compatibilityDate: '2024-12-30'
 	});
-	d1 = await mf.getD1Database('DB');
+	d1 = createMiniflareD1(mf);
 	// Split on drizzle's statement-breakpoint marker and execute each
 	// statement individually via prepare().run() — miniflare's D1 exec()
 	// has edge cases with statement parsing, so we use the lower-level API.
@@ -92,17 +93,6 @@ async function resetTables() {
 }
 
 beforeEach(resetTables);
-
-// A freed heap address in miniflare's ProxyServer surfaces to the test as a
-// revived `AssertionError` whose stack runs through the proxy worker's
-// `Native` reviver. Vitest's own AssertionErrors never contain those frames.
-function isMiniflareProxyRace(error: unknown): boolean {
-	return (
-		error instanceof Error &&
-		error.name === 'AssertionError' &&
-		(error.stack ?? '').includes('proxy.worker')
-	);
-}
 
 function completion(overrides: Partial<RecordPuzzleCompletionV2> = {}): RecordPuzzleCompletionV2 {
 	return {
@@ -626,83 +616,65 @@ describe('recordVersionedCompletion against real D1', () => {
 		]);
 	});
 
-	// The concurrent writes below issue ~40 calls through miniflare's proxy
-	// worker. A client-side GC can finalize a statement stub while its CALL is
-	// still in flight, and the batched FREE may then overtake that CALL —
-	// tripping the proxy's internal `Native` reviver heap assert. That is a
-	// harness transport race, not a product failure, so retry past it — but
-	// only that specific error. A generic `retry` option would also rerun
-	// after quota assertion failures, hiding an intermittent regression.
 	it('admits only one concurrent run at the final retained-run capacity', async () => {
-		for (let attempt = 1; ; attempt++) {
-			try {
-				const executor = createD1CompletionWriteExecutor(db, 3);
-				await executor.write({
-					playerId: 'p1',
-					puzzleId: 'pz1',
-					familyId: FAMILY_ID,
-					difficulty: DIFFICULTY,
-					runId: 'run-1',
-					resultClass: 'standard_timed',
-					elapsedActiveSeconds: 100,
-					hintsUsed: 0,
-					incorrectAttempts: 0,
-					receivedAt: 1_000
-				});
-				await executor.write({
-					playerId: 'p1',
-					puzzleId: 'pz1',
-					familyId: FAMILY_ID,
-					difficulty: DIFFICULTY,
-					runId: 'run-2',
-					resultClass: 'standard_timed',
-					elapsedActiveSeconds: 90,
-					hintsUsed: 0,
-					incorrectAttempts: 0,
-					receivedAt: 2_000
-				});
+		const executor = createD1CompletionWriteExecutor(db, 3);
+		await executor.write({
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
+			runId: 'run-1',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 100,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			receivedAt: 1_000
+		});
+		await executor.write({
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
+			runId: 'run-2',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			receivedAt: 2_000
+		});
 
-				const outcomes = await Promise.all([
-					executor.write({
-						playerId: 'p1',
-						puzzleId: 'pz1',
-						familyId: FAMILY_ID,
-						difficulty: DIFFICULTY,
-						runId: 'run-3',
-						resultClass: 'standard_timed',
-						elapsedActiveSeconds: 80,
-						hintsUsed: 0,
-						incorrectAttempts: 0,
-						receivedAt: 3_000
-					}),
-					executor.write({
-						playerId: 'p1',
-						puzzleId: 'pz1',
-						familyId: FAMILY_ID,
-						difficulty: DIFFICULTY,
-						runId: 'run-4',
-						resultClass: 'standard_timed',
-						elapsedActiveSeconds: 70,
-						hintsUsed: 0,
-						incorrectAttempts: 0,
-						receivedAt: 4_000
-					})
-				]);
+		const outcomes = await Promise.all([
+			executor.write({
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
+				runId: 'run-3',
+				resultClass: 'standard_timed',
+				elapsedActiveSeconds: 80,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
+				receivedAt: 3_000
+			}),
+			executor.write({
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
+				runId: 'run-4',
+				resultClass: 'standard_timed',
+				elapsedActiveSeconds: 70,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
+				receivedAt: 4_000
+			})
+		]);
 
-				expect(outcomes.map((outcome) => outcome.status).sort()).toEqual([
-					'quota_exceeded',
-					'stored'
-				]);
-				expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
-				expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
-					{ playerId: 'p1', retainedRuns: 3 }
-				]);
-				return;
-			} catch (error) {
-				if (attempt >= 3 || !isMiniflareProxyRace(error)) throw error;
-				await resetTables();
-			}
-		}
+		expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['quota_exceeded', 'stored']);
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
+		expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
+			{ playerId: 'p1', retainedRuns: 3 }
+		]);
 	});
 
 	it('records the first standard timed run in the ledger and creates a zero-baseline best', async () => {
