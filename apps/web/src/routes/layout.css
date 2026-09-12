@@ -242,6 +242,17 @@ body {
 	background: linear-gradient(90deg, var(--bg-2) 0%, var(--bg-3) 50%, var(--bg-2) 100%);
 }
 
+/* Keep infinite-scroll feedback visible while the next page is prefetched. */
+.puzzle-grid + [role='status'][aria-live='polite'] {
+	position: fixed;
+	right: 0;
+	bottom: 1.5rem;
+	left: 0;
+	z-index: 20;
+	padding: 0;
+	pointer-events: none;
+}
+
 /* Puzzle pieces (game board interaction) */
 .puzzle-piece {
 	transition:
