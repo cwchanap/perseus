@@ -2,55 +2,53 @@
 
 ## Summary
 
-Add account-scoped puzzle-family bookmarks across the web and NativeScript mobile clients. A signed-in player can bookmark a puzzle family from the gallery, view a dedicated bookmarked collection, and remove bookmarks from either surface. Bookmarks sync across devices because D1 is the source of truth; puzzle metadata remains KV-authoritative.
+Add account-scoped puzzle-family bookmarks across the web and NativeScript mobile clients. A signed-in player can bookmark a puzzle family from the gallery, view a dedicated bookmarked collection, and remove bookmarks from either surface. Bookmarks sync across devices because D1 is the durable source of truth; puzzle metadata remains KV-authoritative.
 
-This is intentionally a narrow player feature. It does not introduce a generic reactions/favorites framework, anonymous bookmarks, folders/tags, public counts, or changes to gameplay/session persistence.
+This is a bounded player feature. It does not introduce a generic favorites/reactions framework, anonymous bookmarks, local bookmark persistence, folders/tags, public counts, or gameplay/session changes.
 
 ## Goals
 
-- Let signed-in players bookmark puzzle families from the web gallery.
-- Provide a dedicated `/bookmarks` web page that lists all bookmarked families.
-- Let signed-in mobile players bookmark puzzle families from the NativeScript Gallery.
-- Show a mobile `BOOKMARKS` section in the existing Library flow, between Gallery and Downloaded.
-- Sync bookmark state across web and mobile through the existing player account.
-- Reuse the current puzzle-family presentation and download/difficulty behavior rather than create a parallel puzzle model.
-- Keep the feature small enough for one implementation PR.
+- Bookmark puzzle families, not individual Easy/Normal/Hard variants.
+- Let signed-in web players bookmark from the gallery and browse all bookmarks at `/bookmarks`.
+- Let signed-in NativeScript players bookmark from Gallery and browse the same collection in the existing Library.
+- Keep bookmark state account-scoped and cross-device.
+- Reuse existing family metadata resolution, auth, card, gallery, and mobile Library seams.
+- Keep the implementation in one cohesive PR.
 
 ## Non-goals
 
-- Anonymous or device-local bookmarks.
-- Bookmark folders, tags, notes, ordering controls, or search within bookmarks.
-- Public bookmark counts, social feeds, sharing, or recommendations.
-- Quick-puzzle bookmarks.
-- Gameplay-screen bookmark actions.
-- Offline bookmark mutation queues or a local bookmark database.
-- Bookmark pagination in v1.
-- Automatic cleanup/cascades when a puzzle family disappears from KV.
-- Changes to `@perseus/game-core`, session codecs, or downloaded-puzzle storage.
-- A generic favorites/reactions subsystem.
+- Anonymous/device-local bookmarks.
+- Bookmark folders, tags, notes, custom ordering, search, or pagination.
+- Public bookmark counts, sharing, feeds, recommendations, or reactions.
+- Quick-puzzle or gameplay-screen bookmarks.
+- Offline bookmark mutation queues or a local bookmark database/cache.
+- Automatic cross-store cleanup/cascades when a family disappears from KV.
+- Changes to `@perseus/game-core`, session codecs, or downloaded-puzzle manifests.
+- A new mobile navigation/tab framework.
 
 ## Product model
 
 ### Bookmark unit
 
-Bookmarks apply to a `PuzzleFamilySummary`, not to an individual difficulty variant. A family already represents one puzzle across Easy/Normal/Hard variants, and both web and mobile UIs present those variants together. The bookmark therefore answers “I want to keep this puzzle,” while download/play actions continue to target a specific variant.
+A bookmark targets a `PuzzleFamilySummary`. Web `PuzzleCard` and mobile Gallery already present one family with Easy/Normal/Hard variants, so the bookmark means “keep this puzzle” while play/download actions continue to target a concrete variant.
 
 ### Authentication
 
 Bookmarks are account-scoped.
 
-- Signed-in users can add, remove, and list bookmarks.
-- Signed-out web users do not issue bookmark API requests; `/bookmarks` presents a sign-in state.
-- Signed-out mobile users keep the Library fully usable; bookmark controls are hidden and the Bookmarks section points to the existing sign-in control.
-- A reconnecting/offline mobile account never blocks the offline Library, downloaded puzzles, or gameplay. Bookmark failures are isolated to bookmark UI.
+- Web uses the existing player session cookie through `requirePlayerAuth`.
+- Mobile uses the existing bearer token through the same middleware.
+- Signed-out web users do not issue bookmark requests; `/bookmarks` shows the normal sign-in state.
+- Signed-out mobile users keep Gallery/Downloaded usable, hide bookmark actions, and see `Sign in below to use bookmarks.` in the Bookmarks section.
+- Mobile reconnect/offline failure never blocks the offline Library, downloaded puzzles, or gameplay.
 
 ### Ordering
 
-Bookmarked families are returned newest-first by bookmark creation time. No user-controlled sorting is added in v1.
+Bookmarks are listed newest-first by `createdAt`. No user-controlled sorting is added in v1.
 
 ## Data design
 
-Add a D1 table via the next additive shared migration:
+Add an additive D1 table using the next migration number available at implementation time; `0008_player_bookmarks.sql` is the current expected slot.
 
 ```sql
 CREATE TABLE player_bookmarks (
@@ -60,314 +58,338 @@ CREATE TABLE player_bookmarks (
 	PRIMARY KEY (player_id, family_id)
 );
 
-CREATE INDEX player_bookmarks_player_created_idx
+CREATE INDEX idx_player_bookmarks_player_created
 	ON player_bookmarks (player_id, created_at DESC);
 ```
 
-The table stores only account ownership and family identity. It must not copy family name, category, status, variant metadata, or asset URLs from KV.
-
-### Why no foreign key to puzzle families?
-
-Puzzle-family metadata is KV-authoritative, not D1-authoritative. Creating a cross-store referential model would add coordination without improving the user experience. If a bookmarked family later disappears or is no longer ready, list resolution simply skips it.
+The table stores only ownership and family identity. Do not copy name, category, status, variants, piece counts, or asset URLs from KV.
 
 ### Shared repository boundary
 
-Prefer a focused `packages/shared/src/bookmarks.ts` module rather than adding more bookmark-specific code to the already broad repository module.
+Prefer a focused `packages/shared/src/bookmarks.ts` module instead of extending the already broad `repositories.ts`.
 
 Required operations:
 
 - `addPlayerBookmark(db, playerId, familyId, createdAt?)`
 - `removePlayerBookmark(db, playerId, familyId)`
-- `listPlayerBookmarks(db, playerId)`
+- `listPlayerBookmarks(db, playerId): Promise<Array<{ familyId: string; createdAt: number }>>`
 
-`addPlayerBookmark` uses conflict-ignore semantics so repeated PUT requests are idempotent. `removePlayerBookmark` is also idempotent.
+`addPlayerBookmark` follows the existing idempotent insert pattern with `onConflictDoNothing`. `removePlayerBookmark` is a successful no-op when the row is absent. `listPlayerBookmarks` returns newest-first rows and does not resolve KV metadata.
+
+## Family-resolution reuse
+
+Bookmark routes must not recreate family lookup/enrichment rules inside `player.worker.ts`.
+
+Add this focused helper next to `listFamiliesPage` in `apps/api/src/services/storage.worker.ts`:
+
+```ts
+resolveReadyFamiliesByIds(
+	kv: KVNamespace,
+	familyIds: readonly string[]
+): Promise<PuzzleFamilySummary[]>
+```
+
+Contract:
+
+1. Resolve every ID with the existing `getFamily`.
+2. Skip `null` families.
+3. Skip families whose status is not `ready`.
+4. Enrich survivors with the existing `enrichFamilySummary`.
+5. Preserve the input ID order after skipped entries are removed.
+6. Perform independent lookups concurrently, matching the existing `listFamiliesPage` pattern.
+7. Do not catch corrupt-family errors per ID. `getFamily` already treats corrupt metadata as an error; let the request fail consistently with catalog behavior.
+
+The helper exists because bookmark GET needs the same “IDs → ready family summaries” operation as catalog code. It is not a new storage abstraction.
 
 ## API design
 
-Extend the existing authenticated player route; do not add another route subsystem.
+Extend the existing authenticated player router.
 
-### `GET /api/player/bookmarks`
+### Shared response contract
 
-Requires player authentication.
+Add the smallest client-shared response type to `@perseus/types`:
 
-Response:
-
-```json
-{
-	"families": []
+```ts
+export interface PlayerBookmarkListResponse {
+	families: PuzzleFamilySummary[];
 }
 ```
 
-Resolution flow:
+Add `isPlayerBookmarkListResponse(value)` using the existing `isPuzzleFamilySummary` guard.
 
-1. Read bookmarked family IDs from D1 in newest-first order.
-2. Resolve each family through the existing KV family lookup.
-3. Reuse family-summary enrichment so the response shape matches normal gallery families.
-4. Skip missing, deleted, or non-ready families.
-5. Preserve the bookmark order of all surviving families.
+Do **not** reuse `PuzzleFamilyListResponse`: that public-catalog contract requires `total`, `offset`, and `limit`, while bookmark GET intentionally has no pagination fields.
 
-No pagination is added for v1. Bookmark collections are expected to remain small, and introducing another cursor contract now would add complexity without a demonstrated need.
+Both web and mobile should consume this one response contract. Do not let each client invent a weaker check.
+
+### `GET /api/player/bookmarks`
+
+Requires `requirePlayerAuth`.
+
+Flow:
+
+1. Read `{ familyId, createdAt }[]` from D1 newest-first.
+2. Pass the family IDs to `resolveReadyFamiliesByIds`.
+3. Return `{ families } satisfies PlayerBookmarkListResponse`.
+4. Validate the assembled response with `isPlayerBookmarkListResponse` before returning, matching existing defense-in-depth response validation style.
+
+Missing/deleted/non-ready KV families are skipped. Corrupt KV metadata fails the request instead of being silently skipped.
+
+No pagination is added in v1.
 
 ### `PUT /api/player/bookmarks/:familyId`
 
-Requires player authentication.
+Requires `requirePlayerAuth`.
 
-Before writing, validate that the family exists in KV and is ready. A missing/unavailable family is rejected rather than creating a stale bookmark immediately.
+Closed status contract:
 
-The operation is idempotent: bookmarking an already-bookmarked family succeeds without creating a duplicate.
+- malformed `familyId` by `isPuzzleId` → `400 { error: 'bad_request', ... }`
+- syntactically valid but missing/non-ready family → `404 { error: 'not_found', ... }`
+- ready family → idempotent insert and success
+
+The ID and readiness semantics must match `GET /api/puzzle-families/:familyId`; do not invent a second interpretation in the player route. The implementation may use `resolveReadyFamiliesByIds(kv, [familyId])` for the readiness check so the predicate stays aligned with bookmark GET.
 
 ### `DELETE /api/player/bookmarks/:familyId`
 
-Requires player authentication.
+Requires `requirePlayerAuth`.
 
-The operation is idempotent: deleting a missing bookmark is a successful no-op.
+Validate the ID format with `isPuzzleId`; malformed IDs are `400 bad_request`. A valid ID does not need to exist in KV because removing a stale bookmark should still be possible. Deleting an absent row is a successful no-op.
 
-### Shared response types
+### Public catalog
 
-If a response type/guard is needed by both clients, add the smallest bookmark response contract to `@perseus/types`. Do not create a larger bookmark domain model unless the implementation actually needs one.
+`GET /api/puzzle-families` remains unauthenticated and unchanged. Do not attach per-player bookmark flags to catalog responses.
 
 ## Web UX
 
 ### Gallery card
 
-Extend `PuzzleCard.svelte` with presentation-only bookmark inputs, for example:
+Extend `PuzzleCard.svelte` with presentation-only state, for example:
 
 - `bookmarked?: boolean`
 - `bookmarkPending?: boolean`
-- `onBookmarkToggle?: (familyId: string) => void`
+- `onBookmarkToggle?: (family: PuzzleFamilySummary) => void`
 
-The card does not own API calls.
+The callback receives the family object. This lets callers update their transient collection after a successful add without refetching family metadata.
 
-Show a bookmark control as an artwork overlay. It must not collide with the existing progress/category badges and must not interfere with Easy/Normal/Hard links.
+The card does not call bookmark APIs itself.
 
-Use a non-optimistic mutation model:
+Show an accessible bookmark control near/on the artwork without colliding with category/progress badges or activating difficulty links.
 
-1. Mark that family pending.
-2. Disable repeated bookmark taps.
-3. Call PUT or DELETE.
-4. Update local bookmark state after success.
-5. Clear pending state.
+Use non-optimistic mutation behavior:
 
-This avoids rollback/race machinery for a low-latency, low-frequency action.
+1. mark that family pending,
+2. disable repeat interaction for that family,
+3. call PUT/DELETE,
+4. update state only after success,
+5. clear pending in `finally`.
 
 ### Gallery page state
 
-When player auth becomes authenticated, fetch bookmarks once and derive a `Set<familyId>` used by visible cards. Bookmark state is independent from catalog pagination: loading more families only checks membership in the same set.
+When `playerAuth` is authenticated, fetch bookmarks once independently of catalog pagination and derive a `Set<familyId>`. Newly loaded infinite-scroll cards read membership from the same set; loading another catalog page does not refetch bookmarks.
 
-The public puzzle-family catalog remains unchanged. Do not add user-specific bookmark state to its response because the web catalog can be fetched independently of authenticated player requests.
+On logout/account transition, clear bookmark UI state belonging to the old account without disturbing catalog/search/progress state.
 
 ### `/bookmarks`
 
-Add a dedicated route rather than an “All / Bookmarked” client filter on the infinite-scroll gallery.
+Use a dedicated route, not an All/Bookmarked filter on the infinite-scroll gallery. A loaded-page filter could hide bookmarked families that are not in the currently fetched catalog pages.
 
-Reasons:
+Files include:
 
-- The gallery already owns search, category filters, cursor pagination, request abort/version handling, progress discovery, and infinite scrolling.
-- A client-side “bookmarked” filter would only know about families already fetched by infinite scroll and could silently hide bookmarks that live on later catalog pages.
-- The player endpoint can return the complete bookmark collection directly.
+- `apps/web/src/routes/bookmarks/+page.svelte`
+- `apps/web/src/routes/bookmarks/+page.ts`
+
+`+page.ts` must set:
+
+```ts
+export const prerender = false;
+```
+
+This matches the auth-gated `/profile` route under the static adapter and prevents `/bookmarks` from being emitted as anonymous prerendered chrome.
 
 Route states:
 
-- auth loading: normal loading state
-- anonymous: sign-in prompt/state
-- authenticated + loading: bookmark loading state
-- authenticated + empty: useful empty state
-- authenticated + populated: normal `PuzzleCard` grid
-- error: isolated retry/error presentation
+- auth loading
+- anonymous/sign-in
+- authenticated + bookmark loading
+- authenticated + empty
+- authenticated + populated
+- bookmark request error
 
-Removing a bookmark from this page removes the card after the DELETE succeeds.
+Successful unbookmark removes the family from the displayed collection after DELETE succeeds.
 
 ### Navigation
 
-Extend the existing `ArcadeShell` route union/navigation with `/bookmarks` and a `Bookmarks` entry. Reuse its current desktop/mobile navigation generation.
+`ArcadeShell.svelte` owns a closed `ArcadeRoute` union and one shared nav item list. Add `/bookmarks` to both.
+
+Update the existing shell/layout browser test in `apps/web/src/routes/layout.svelte.test.ts` to pin the Bookmarks nav item alongside the existing links. There is no separate `ArcadeShell.svelte.test.ts` on current `main`; use the existing layout test seam rather than creating a redundant test file.
+
+## Web E2E boundary
+
+Playwright is a client-wiring test for this feature, **not** the D1 persistence test.
+
+The existing auth persona only stubs `GET /api/auth/session`; it does not mint a real session cookie/token. Therefore bookmark E2E must not accidentally call the real authenticated `/api/player/*` backend.
+
+Follow the existing profile/progression style:
+
+1. install an authenticated session persona or equivalent session route,
+2. install stateful in-memory `page.route` handlers for `GET/PUT/DELETE /api/player/bookmarks`,
+3. keep catalog routes mocked as existing gallery E2E already does,
+4. bookmark a family,
+5. navigate to `/bookmarks`,
+6. reload and verify the GET handler rehydrates the same in-memory bookmark state,
+7. unbookmark and verify removal.
+
+This proves browser routing, mutation, reload, and rendering wiring. D1 idempotency/persistence/isolation are proven in shared/API worker tests. Do not add OAuth/cookie seeding or a new E2E auth subsystem.
 
 ## Mobile UX
 
-The current NativeScript app uses a single Library screen with Gallery and Downloaded sections in one scroll. Do not introduce a new mobile navigation stack or tab system solely for bookmarks.
+The NativeScript app currently uses one Library screen with Gallery and Downloaded sections in one scroll. Keep that architecture.
 
-The Library order becomes:
+The order becomes:
 
 1. `GALLERY`
 2. `BOOKMARKS`
 3. `DOWNLOADED`
 
-### Family card reuse
+### `FamilyCard.svelte` reuse
 
-Extract the current mobile gallery family-card markup into a small `FamilyCard.svelte` and reuse it in Gallery and Bookmarks. This extraction is justified because both sections need the same family title, thumbnail, difficulty rows, download state, and actions.
+Extract the current family card from `Gallery.svelte` into one small `FamilyCard.svelte`. Reuse it from Gallery and Bookmarks.
 
-Do not generalize it into a configurable list framework.
+The component owns presentation only:
+
+- family thumbnail/title,
+- Easy/Normal/Hard rows,
+- installed/download state,
+- download progress/cancel action,
+- optional bookmark state/action.
+
+Do not turn this into a list framework.
 
 ### Gallery bookmark action
 
-For authenticated players, show a family-level bookmark control near the family title. Download controls remain per difficulty.
+When authenticated, show a family-level bookmark control near the title. The handler receives the `PuzzleFamilySummary`, not just the ID, so a successful add can update `bookmarkedFamilies` without another family-detail request.
 
-Use bookmark terminology rather than “Save” because Download already represents local/offline persistence in this UI.
-
-When signed out, hide the card bookmark action rather than presenting non-functional controls.
+When signed out, hide the bookmark action.
 
 ### Bookmarks section
 
-`Bookmarks.svelte` receives resolved bookmarked families plus the same download/install state and handlers needed by `FamilyCard`.
+`Bookmarks.svelte` receives resolved bookmarked families plus the same install/download state and handlers as Gallery/`FamilyCard`.
 
 States:
 
 - signed out: `Sign in below to use bookmarks.`
 - authenticated + loading: activity indicator
 - authenticated + empty: `No bookmarked puzzles yet.`
-- authenticated + populated: family cards newest-first
-- request failure: bookmark-specific error text without breaking Gallery/Downloaded
+- authenticated + populated: newest-first family cards
+- bookmark-specific error text
 
-Unbookmarking a family removes it from the section after the server succeeds.
+Unbookmarking removes the card after DELETE succeeds.
 
-A user can therefore bookmark on web, open mobile, find the same family, then download any desired difficulty.
+### Mobile account/offline ownership
 
-### Mobile account/offline behavior
+Keep bookmark state in `App.svelte` next to the active session and `accountEpoch`.
 
-`App.svelte` already owns the active mobile account/session and intentionally allows the offline Library to boot independently from account probing. Preserve that separation.
-
-Bookmark fetching occurs only when a validated account session/token is available. A bookmark transport/server failure must not:
-
-- clear a valid local account by itself,
-- block Gallery rendering,
-- block downloaded puzzles,
-- block gameplay,
-- create a local bookmark queue.
-
-When the active account changes, discard bookmark state belonging to the previous account and load the new account's collection.
+- Load bookmarks only for a validated authenticated session.
+- Capture the current epoch for bookmark fetch/mutation work.
+- Ignore async results after the epoch changes.
+- Clear old bookmark state on sign-out/account switch.
+- Bookmark failures do not clear the account or affect Gallery, downloads, completion sync, or gameplay.
+- Do not create a local bookmark queue/cache.
 
 ### Mobile API client
 
-Extend `apps/mobile/app/api/playerApi.ts` rather than introduce another API client.
+Extend `apps/mobile/app/api/playerApi.ts`:
 
-Add:
-
-- `getBookmarks(token)`
-- `bookmarkFamily(familyId, token)`
-- `unbookmarkFamily(familyId, token)`
-
-The current mobile HTTP request method union must be expanded to include `PUT` and `DELETE`. The NativeScript transport remains a thin pass-through.
-
-Use bearer authentication consistently with the rest of the mobile player API.
+- expand `PlayerHttpRequest.method` from `GET | POST` to `GET | POST | PUT | DELETE`,
+- add `getBookmarks(token): Promise<PlayerBookmarkListResponse>`,
+- add `bookmarkFamily(familyId, token)`,
+- add `unbookmarkFamily(familyId, token)`,
+- validate GET with `isPlayerBookmarkListResponse`,
+- keep bearer authentication and the existing thin NativeScript HTTP transport.
 
 ## State and consistency
 
-### One server-authoritative bookmark collection
+### Server-authoritative collection
 
-Web and mobile maintain only transient UI copies of the account's bookmark IDs/families. D1 is the durable source of truth.
-
-No localStorage/file/SQLite bookmark persistence is added.
+D1 is the durable bookmark source of truth. Web and mobile hold transient UI copies only. No localStorage/file/SQLite persistence is added.
 
 ### Mutation concurrency
 
-Track pending mutations by family ID, not with one global busy flag. A user may mutate two different family bookmarks independently, but repeated taps on the same family are disabled until that request settles.
+Track pending mutations by family ID. Two different families may mutate independently; repeated taps on one family are disabled until its request settles. No general request queue is added.
 
-Do not add a general request queue.
+### Account identity
 
-### Stale async results
+Never apply a bookmark fetch/mutation result to a different account after auth/session changes. Mobile uses the existing `accountEpoch`; web keys work to current `playerAuth` identity/state.
 
-Client code must avoid applying bookmark results to a different signed-in identity after account/session changes. Web naturally keys work to current auth state; mobile should follow its existing account-epoch/stale-result approach or an equally small identity check when bookmark requests are owned by `App.svelte`.
-
-## Testing strategy
+## Verification ownership
 
 ### Shared/D1
 
-- add is idempotent
-- newest-first listing
-- delete is idempotent
-- bookmarks are isolated by player
+Proves:
 
-### API
+- add idempotency,
+- newest-first list order,
+- delete idempotency,
+- player isolation.
 
-- auth required for all three endpoints
-- PUT rejects missing/non-ready family
-- PUT + GET returns resolved family summary
-- repeat PUT does not duplicate
-- DELETE removes bookmark
-- repeat DELETE succeeds
-- GET skips a stale D1 row whose KV family is missing/non-ready
-- ordering survives KV enrichment
+### API worker
 
-### Web
+Proves:
 
-`api.test.ts`:
+- auth required,
+- malformed ID → 400,
+- missing/non-ready PUT → 404,
+- ready PUT succeeds,
+- typed GET response,
+- skip/order behavior through `resolveReadyFamiliesByIds`,
+- corrupt family metadata fails instead of being silently skipped,
+- DELETE behavior.
 
-- GET/PUT/DELETE paths
-- methods
-- `credentials: 'include'`
+### Web unit/browser tests
 
-`PuzzleCard.svelte.test.ts`:
+Proves:
 
-- bookmarked/unbookmarked states
-- callback receives family ID
-- pending state disables repeat interaction
-- difficulty links still work
+- API method/path/credentials/response guard,
+- card bookmark state/pending behavior,
+- gallery membership/mutation wiring,
+- `/bookmarks` route states,
+- `prerender = false` route contract,
+- ArcadeShell/layout nav update.
 
-Bookmarks route tests:
+### Web Playwright
 
-- loading/authenticated/anonymous/empty/error states
-- populated card rendering
-- successful unbookmark removes card
-
-Gallery tests:
-
-- authenticated bookmark set marks matching loaded cards
-- successful mutation updates state
-- catalog pagination behavior remains unchanged
-
-Existing Playwright gallery coverage:
-
-- signed-in user bookmarks a family
-- Bookmarks page shows it
-- reload still shows it
-- unbookmark removes it
+Uses stateful mocked bookmark routes and proves browser flow only. It does not claim to prove D1 persistence.
 
 ### Mobile
 
-Extend `playerApi.test.ts`:
-
-- GET bookmark list sends bearer token
-- PUT bookmark path/method/header
-- DELETE bookmark path/method/header
-- non-2xx handling
-
-Add focused pure/unit tests for any extracted bookmark-state helper needed to protect account switches/stale results. Do not introduce a NativeScript UI E2E framework for this feature.
-
-Where component behavior can be covered cheaply in the existing test stack, cover `FamilyCard`/Bookmarks presentation; otherwise keep UI logic thin and test its pure inputs/handlers.
+- `playerApi.test.ts` pins bearer GET/PUT/DELETE behavior and GET response validation.
+- A small pure bookmark/account helper test pins stale-epoch rejection and add/remove state changes if extracting that helper keeps `App.svelte` thin.
+- Existing `familyGallery.test.ts` continues to pin difficulty-to-variant selection.
+- After `FamilyCard` extraction, `Gallery.svelte` must pass through the same family/install/download/progress/cancel inputs and `cd apps/mobile && bun run test:unit` must remain green.
+- Do not introduce a NativeScript UI E2E framework solely for bookmarks.
 
 ## Delivery shape
 
-The implementation remains one PR because it is one cohesive vertical feature:
+One implementation PR, in this dependency order:
 
-1. additive D1 bookmark persistence
-2. authenticated player endpoints
-3. web bookmark UI and dedicated route
-4. mobile bookmark UI in the existing Library
-5. focused tests across the touched seams
-
-The web and mobile work share the same server contract and product behavior, so splitting them would create an unnecessary period where the account feature exists on only one client.
-
-## Risks and constraints
-
-### Cross-store resolution
-
-D1 contains family IDs while family metadata lives in KV. GET therefore performs KV lookups after the D1 query. This is acceptable for the intentionally unpaginated, expected-small v1 collection. If real collections become large, pagination/batched metadata strategy can be added from observed need.
-
-### Mobile Library complexity
-
-`Library.svelte` already coordinates Gallery and Downloaded state. Bookmark state should stay narrow; if extracting one small bookmark-state helper makes account transitions easier to test, do so, but do not turn this PR into a mobile state-management rewrite.
-
-### Web gallery complexity
-
-The web gallery is already state-heavy. Keep bookmark fetching/mutations orthogonal to search and cursor logic; do not refactor unrelated gallery behavior while adding the feature.
+1. D1/shared persistence
+2. ready-family resolution helper + typed API contract
+3. authenticated player routes
+4. web API/card/gallery
+5. `/bookmarks` static-adapter route + navigation
+6. mobile API
+7. mobile `FamilyCard` extraction
+8. mobile bookmark state/section
+9. focused E2E/regression verification
 
 ## Acceptance criteria
 
-- A signed-in web player can bookmark/unbookmark a family from the gallery.
-- A signed-in web player can view all current bookmarks at `/bookmarks`.
-- The bookmark persists after reload.
-- A signed-in mobile player sees the same server-backed bookmark collection.
-- A signed-in mobile player can bookmark/unbookmark a family from Gallery.
-- Mobile Bookmarks cards can download Easy/Normal/Hard variants using the existing download flow.
-- Signed-out users cannot create account bookmarks and existing public/offline functionality still works.
-- Missing/deleted/non-ready families do not break bookmark listing.
-- No session schema, game-core, download manifest, or generic favorites framework is introduced.
+- Signed-in web users can bookmark/unbookmark a family from Gallery.
+- `/bookmarks` lists the complete server-backed collection and is `prerender = false`.
+- Web bookmark state survives a browser reload when the backing API returns the stored collection.
+- Signed-in mobile users see the same account collection and can add/remove bookmarks.
+- Mobile bookmarked families retain existing per-difficulty download controls.
+- PUT returns 400 for malformed IDs and 404 for valid-but-missing/non-ready families.
+- GET returns the typed `PlayerBookmarkListResponse` and preserves D1 bookmark order while skipping missing/non-ready families.
+- Signed-out/offline behavior remains usable.
+- Shared/API tests, not Playwright, prove D1 persistence/idempotency/isolation.
+- No session schema, download manifest, generic favorites framework, bookmark pagination, or offline bookmark cache is introduced.
