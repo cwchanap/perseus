@@ -4,6 +4,7 @@
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import type { PuzzleApi } from '../api/puzzleApi';
 	import Downloaded from './Downloaded.svelte';
+	import Bookmarks from './Bookmarks.svelte';
 	import {
 		buildDownloadedRows,
 		type DownloadedPuzzleRow,
@@ -32,6 +33,12 @@
 	export let onDownload: (puzzleId: string) => void;
 	export let onCancelDownload: () => void;
 	export let onLaunch: (launch: GameplayLaunch) => void;
+	export let signedIn = false;
+	export let bookmarkFamilies: readonly PuzzleFamilySummary[] = [];
+	export let bookmarkLoading = false;
+	export let bookmarkError: string | null = null;
+	export let bookmarkPendingIds: readonly string[] = [];
+	export let onBookmarkToggle: ((family: PuzzleFamilySummary) => void) | undefined = undefined;
 
 	let galleryRows: PuzzleFamilySummary[] = [];
 	let galleryCursor: string | undefined;
@@ -131,6 +138,7 @@
 	$: corruptRows = downloadedEntries.filter(
 		(entry): entry is CorruptDownload => entry.kind === 'corrupt'
 	);
+	$: bookmarkedIds = new Set(bookmarkFamilies.map((family) => family.id));
 
 	onMount(() => {
 		void Promise.all([refreshDownloads(), loadGallery(false)]);
@@ -162,6 +170,22 @@
 				loading={galleryLoading}
 				hasMore={galleryCursor !== undefined}
 				error={galleryError}
+				{bookmarkedIds}
+				{bookmarkPendingIds}
+				onBookmarkToggle={signedIn ? onBookmarkToggle : undefined}
+			/>
+			<Bookmarks
+				families={bookmarkFamilies}
+				{signedIn}
+				loading={bookmarkLoading}
+				error={bookmarkError}
+				pendingIds={bookmarkPendingIds}
+				{installedIds}
+				{downloadJob}
+				familyThumbnailUrl={puzzleApi.familyThumbnailUrl}
+				{onDownload}
+				{onCancelDownload}
+				{onBookmarkToggle}
 			/>
 			<Downloaded
 				rows={downloadedRows}

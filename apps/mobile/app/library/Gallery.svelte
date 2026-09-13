@@ -18,6 +18,9 @@
 	export let loading = false;
 	export let hasMore = false;
 	export let error: string | null = null;
+	export let bookmarkedIds: ReadonlySet<string> = new Set();
+	export let bookmarkPendingIds: readonly string[] = [];
+	export let onBookmarkToggle: ((family: PuzzleFamilySummary) => void) | undefined = undefined;
 </script>
 
 <stackLayout class="library-section">
@@ -41,6 +44,9 @@
 			{familyThumbnailUrl}
 			{onDownload}
 			{onCancelDownload}
+			bookmarked={bookmarkedIds.has(family.id)}
+			bookmarkPending={bookmarkPendingIds.includes(family.id)}
+			{onBookmarkToggle}
 		/>
 	{/each}
 
