@@ -13,7 +13,7 @@
 		onLogout: () => void;
 	}
 
-	type ArcadeRoute = '/' | '/leaderboard' | '/upload' | '/quick' | '/profile';
+	type ArcadeRoute = '/' | '/leaderboard' | '/upload' | '/quick' | '/bookmarks' | '/profile';
 
 	interface NavItem {
 		label: string;
@@ -62,6 +62,13 @@
 			path: '/quick',
 			icon: 'M8 3l8 9h-5l1 9-8-11h5z',
 			testId: 'quick-puzzle-link'
+		},
+		{
+			label: 'Bookmarks',
+			href: '/bookmarks',
+			path: '/bookmarks',
+			icon: 'M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z',
+			testId: 'bookmarks-link'
 		},
 		{
 			label: 'Profile',
