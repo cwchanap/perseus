@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker';
-import { getWorkerDb } from '../db.worker';
+import { getWorkerDb, getWorkerDbContext } from '../db.worker';
 import {
+	addPlayerBookmark,
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
@@ -11,15 +12,23 @@ import {
 	getPlayerProgressionSummary,
 	listPlayerPuzzleFamilies,
 	listPlayerStats,
+	listPlayerBookmarks,
+	removePlayerBookmark,
 	InvalidPlayerStatsCursorError,
 	InvalidPlayerPuzzleFamilyCursorError,
 	sniffImageType,
 	parseImageDimensions,
 	validateImageEndMarker
 } from '@perseus/shared';
-import type { PlayerProfile, PlayerStatRow, PlayerProgressionSummary } from '@perseus/types';
+import type {
+	PlayerBookmarkListResponse,
+	PlayerProfile,
+	PlayerStatRow,
+	PlayerProgressionSummary
+} from '@perseus/types';
 import {
 	coercePuzzleStatus,
+	isPlayerBookmarkListResponse,
 	isPlayerProfile,
 	isPlayerStatRow,
 	isPlayerProgressionSummary,
@@ -30,6 +39,7 @@ import {
 	type PuzzleCategory,
 	type PuzzleStatus
 } from '@perseus/types';
+import { getFamily, resolveReadyFamiliesByIds } from '../services/storage.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import { avatarRateLimit, resetAvatarAttempts } from '../middleware/rate-limit.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
@@ -471,6 +481,59 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to list stats' }, 500);
 	}
 	return c.json({ stats, nextCursor });
+});
+
+// Bookmarks: the player's saved puzzle families. D1 rows (via @perseus/shared)
+// are the source of truth; KV resolves each saved id to a ready-family summary
+// at read time, silently skipping ids whose family has since been deleted,
+// unpublished, or not yet finished processing.
+player.get('/bookmarks', requirePlayerAuth, async (c) => {
+	const db = getWorkerDbContext(c.env).db;
+	const session = c.get('playerSession');
+	const rows = await listPlayerBookmarks(db, session.user.id);
+	const families = await resolveReadyFamiliesByIds(
+		c.env.PUZZLE_METADATA,
+		rows.map((row) => row.familyId)
+	);
+	if (!isPlayerBookmarkListResponse({ families })) {
+		console.error(`Player bookmarks response failed validation for player ${session.user.id}`);
+		return c.json({ error: 'internal_error', message: 'Failed to list bookmarks' }, 500);
+	}
+	return c.json({ families } satisfies PlayerBookmarkListResponse);
+});
+
+player.put('/bookmarks/:familyId', requirePlayerAuth, async (c) => {
+	const familyId = c.req.param('familyId');
+	if (!isPuzzleId(familyId)) {
+		return c.json({ error: 'bad_request', message: 'Invalid family ID format' }, 400);
+	}
+	// Direct KV lookup (not resolveReadyFamiliesByIds): a bookmark can only
+	// target a family that exists and is ready, matching family detail.
+	const family = await getFamily(c.env.PUZZLE_METADATA, familyId);
+	if (!family || family.status !== 'ready') {
+		return c.json({ error: 'not_found', message: 'Puzzle family not found' }, 404);
+	}
+	const db = getWorkerDbContext(c.env).db;
+	const result = await addPlayerBookmark(db, c.get('playerSession').user.id, familyId);
+	if (result === 'limit_reached') {
+		return c.json(
+			{ error: 'bookmark_limit_reached', message: 'Maximum 200 bookmarks reached' },
+			409
+		);
+	}
+	return c.json({ ok: true });
+});
+
+player.delete('/bookmarks/:familyId', requirePlayerAuth, async (c) => {
+	const familyId = c.req.param('familyId');
+	if (!isPuzzleId(familyId)) {
+		return c.json({ error: 'bad_request', message: 'Invalid family ID format' }, 400);
+	}
+	// No KV lookup: deleting a bookmark for a since-deleted family must still
+	// succeed, and repeated deletes are idempotent.
+	const db = getWorkerDbContext(c.env).db;
+	await removePlayerBookmark(db, c.get('playerSession').user.id, familyId);
+	return c.json({ ok: true });
 });
 
 export default player;

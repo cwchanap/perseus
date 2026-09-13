@@ -1,9 +1,12 @@
 import { createD1CompletionWriteExecutor, createD1Db } from '@perseus/shared/d1';
+import type { D1AppDb } from '@perseus/shared/d1';
 import type { AppDb, CompletionWriteExecutor } from '@perseus/shared';
 import type { Env } from './worker';
 
 export interface ApiDbContext {
-	db: AppDb;
+	// Typed as the D1 driver so batch-capable repositories (completion writes,
+	// bookmarks) accept it directly; every AppDb consumer still accepts it.
+	db: D1AppDb;
 	completionWrites: CompletionWriteExecutor;
 }
 
