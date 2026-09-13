@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type {
-	MobilePlayerSessionResponse,
-	PlayerUser,
-	RecordPuzzleCompletionV2
+import {
+	getDifficultyPieceCount,
+	type MobilePlayerSessionResponse,
+	type PlayerUser,
+	type PuzzleFamilySummary,
+	type PuzzleVariantSummary,
+	type RecordPuzzleCompletionV2
 } from '@perseus/types';
 import {
 	createPlayerApi,
@@ -52,6 +55,42 @@ function failingTransport(): PlayerHttpTransport {
 	return async () => {
 		throw new Error('transport_offline');
 	};
+}
+
+const FAMILY_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+const VARIANT_IDS: Record<'easy' | 'normal' | 'hard', string> = {
+	easy: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
+	normal: 'c3d4e5f6-a7b8-4c9d-8e1f-2a3b4c5d6e7f',
+	hard: 'd4e5f6a7-b8c9-4d0e-9f1a-3b4c5d6e7f80'
+};
+
+function variantSummary(difficulty: 'easy' | 'normal' | 'hard'): PuzzleVariantSummary {
+	return {
+		id: VARIANT_IDS[difficulty],
+		difficulty,
+		pieceCount: getDifficultyPieceCount('4:3', difficulty),
+		status: 'ready'
+	};
+}
+
+function familySummary(): PuzzleFamilySummary {
+	return {
+		id: FAMILY_ID,
+		name: 'Mountain Vista',
+		category: 'Nature',
+		aspectRatio: '4:3',
+		status: 'ready',
+		createdAt: 1716500000000,
+		variants: {
+			easy: variantSummary('easy'),
+			normal: variantSummary('normal'),
+			hard: variantSummary('hard')
+		}
+	};
+}
+
+function bookmarkList(): { families: PuzzleFamilySummary[] } {
+	return { families: [familySummary()] };
 }
 
 describe('createPlayerApi', () => {
@@ -228,6 +267,103 @@ describe('createPlayerApi', () => {
 			await expect(api.submitCompletion('variant-1', completionRequest(), 'token')).rejects.toThrow(
 				'transport_offline'
 			);
+		});
+	});
+
+	describe('getBookmarks', () => {
+		it('sends the bearer token to the bookmarks path and returns the validated list', async () => {
+			const requests: PlayerHttpRequest[] = [];
+			const list = bookmarkList();
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport([{ status: 200, body: list }], requests)
+			});
+
+			await expect(api.getBookmarks('token')).resolves.toEqual(list);
+			expect(requests).toEqual([
+				{
+					method: 'GET',
+					url: 'https://api.example.test/api/player/bookmarks',
+					headers: { Authorization: 'Bearer token' }
+				}
+			]);
+		});
+
+		it('rejects a 2xx body that fails the bookmark list guard', async () => {
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport([{ status: 200, body: { families: {} } }], [])
+			});
+
+			await expect(api.getBookmarks('token')).rejects.toThrow('invalid_bookmark_list_response');
+		});
+
+		it('rejects a non-2xx status', async () => {
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport([{ status: 500, body: null }], [])
+			});
+
+			await expect(api.getBookmarks('token')).rejects.toThrow('player_api_http_500');
+		});
+	});
+
+	describe('bookmarkFamily', () => {
+		it('puts the URL-encoded family id with the bearer token', async () => {
+			const requests: PlayerHttpRequest[] = [];
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport([{ status: 200, body: null }], requests)
+			});
+
+			await expect(api.bookmarkFamily('fam/1', 'token')).resolves.toBeUndefined();
+			expect(requests).toEqual([
+				{
+					method: 'PUT',
+					url: 'https://api.example.test/api/player/bookmarks/fam%2F1',
+					headers: { Authorization: 'Bearer token' }
+				}
+			]);
+		});
+
+		it('rejects a 409 status from the bookmark limit', async () => {
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport(
+					[{ status: 409, body: { error: 'bookmark_limit_reached' } }],
+					[]
+				)
+			});
+
+			await expect(api.bookmarkFamily('fam-1', 'token')).rejects.toThrow('player_api_http_409');
+		});
+	});
+
+	describe('unbookmarkFamily', () => {
+		it('deletes the URL-encoded family id with the bearer token', async () => {
+			const requests: PlayerHttpRequest[] = [];
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport([{ status: 200, body: null }], requests)
+			});
+
+			await expect(api.unbookmarkFamily('fam/1', 'token')).resolves.toBeUndefined();
+			expect(requests).toEqual([
+				{
+					method: 'DELETE',
+					url: 'https://api.example.test/api/player/bookmarks/fam%2F1',
+					headers: { Authorization: 'Bearer token' }
+				}
+			]);
+		});
+
+		it('rejects a non-2xx status', async () => {
+			const api = createPlayerApi({
+				baseUrl: 'https://api.example.test',
+				transport: scriptedTransport([{ status: 503, body: null }], [])
+			});
+
+			await expect(api.unbookmarkFamily('fam-1', 'token')).rejects.toThrow('player_api_http_503');
 		});
 	});
 });

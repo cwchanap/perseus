@@ -3,14 +3,16 @@
 // and response validation.
 import {
 	isMobilePlayerSessionResponse,
+	isPlayerBookmarkListResponse,
 	isPlayerSessionResponse,
 	type MobilePlayerSessionResponse,
+	type PlayerBookmarkListResponse,
 	type PlayerSessionResponse,
 	type RecordPuzzleCompletionV2
 } from '@perseus/types';
 
 export interface PlayerHttpRequest {
-	method: 'GET' | 'POST';
+	method: 'GET' | 'POST' | 'PUT' | 'DELETE';
 	url: string;
 	headers?: Record<string, string>;
 	body?: unknown;
@@ -32,6 +34,9 @@ export interface PlayerApi {
 		request: RecordPuzzleCompletionV2,
 		token: string
 	): Promise<PlayerHttpResponse>;
+	getBookmarks(token: string): Promise<PlayerBookmarkListResponse>;
+	bookmarkFamily(familyId: string, token: string): Promise<void>;
+	unbookmarkFamily(familyId: string, token: string): Promise<void>;
 }
 
 function requireOk(status: number): void {
@@ -96,6 +101,37 @@ export function createPlayerApi(options: {
 				},
 				body: JSON.stringify(request)
 			});
+		},
+
+		async getBookmarks(token: string): Promise<PlayerBookmarkListResponse> {
+			const response = await transport({
+				method: 'GET',
+				url: `${baseUrl}/api/player/bookmarks`,
+				headers: { Authorization: `Bearer ${token}` }
+			});
+			requireOk(response.status);
+			if (!isPlayerBookmarkListResponse(response.body)) {
+				throw new Error('invalid_bookmark_list_response');
+			}
+			return response.body;
+		},
+
+		async bookmarkFamily(familyId: string, token: string): Promise<void> {
+			const response = await transport({
+				method: 'PUT',
+				url: `${baseUrl}/api/player/bookmarks/${encodeURIComponent(familyId)}`,
+				headers: { Authorization: `Bearer ${token}` }
+			});
+			requireOk(response.status);
+		},
+
+		async unbookmarkFamily(familyId: string, token: string): Promise<void> {
+			const response = await transport({
+				method: 'DELETE',
+				url: `${baseUrl}/api/player/bookmarks/${encodeURIComponent(familyId)}`,
+				headers: { Authorization: `Bearer ${token}` }
+			});
+			requireOk(response.status);
 		}
 	};
 }
