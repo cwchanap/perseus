@@ -1929,6 +1929,27 @@ describe('player bookmarks (Worker)', () => {
 		});
 	});
 
+	it('PUT returns 404 when the family was deleted behind a stale KV read', async () => {
+		// The KV readiness check passed (or served a stale read) but the D1
+		// ownership row is already gone — the fenced insert refuses to
+		// resurrect a bookmark and the route reports the same not_found as the
+		// KV check.
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.addPlayerBookmark).mockResolvedValueOnce('family_missing');
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID);
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({
+			error: 'not_found',
+			message: 'Puzzle family not found'
+		});
+	});
+
 	it('GET returns typed enriched family summaries in bookmark order', async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__bookmarksStore.set('p1', [{ familyId: FAMILY_ID, createdAt: 100 }]);

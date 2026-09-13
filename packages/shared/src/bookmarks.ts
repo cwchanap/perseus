@@ -1,17 +1,22 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { D1AppDb } from './types';
-import { playerBookmarks } from './schema';
+import { playerBookmarks, puzzleFamilies } from './schema';
 
 export const MAX_PLAYER_BOOKMARKS = 200;
 
-export type AddPlayerBookmarkResult = 'added' | 'existing' | 'limit_reached';
+export type AddPlayerBookmarkResult = 'added' | 'existing' | 'limit_reached' | 'family_missing';
 
 /**
- * Adds a bookmark with the capacity check inside the persistence operation:
- * the INSERT only selects a row while the player is under the cap, and the
- * batch (transactional in D1) reads back existence to distinguish
- * 'existing' from 'limit_reached'. Re-adding an existing bookmark succeeds
- * even at the cap.
+ * Adds a bookmark with the capacity check and family-deletion fence inside the
+ * persistence operation: the INSERT only selects a row while the player is
+ * under the cap AND a puzzle_families row still exists for the family. The
+ * ownership row is the durable D1 marker of a live family — family deletion
+ * removes it before deleting bookmark rows, so an insert that lands after the
+ * deletion fence cannot resurrect a bookmark the cleanup already swept (the
+ * route's KV readiness check alone can be raced by stale KV). The batch
+ * (transactional in D1) reads back bookmark and family existence to
+ * distinguish 'existing' from 'limit_reached' from 'family_missing'.
+ * Re-adding an existing bookmark succeeds even at the cap.
  */
 export async function addPlayerBookmark(
 	db: D1AppDb,
@@ -32,7 +37,8 @@ export async function addPlayerBookmark(
 				.where(
 					sql`(
 						SELECT COUNT(*) FROM player_bookmarks WHERE player_id = ${playerId}
-					) < ${MAX_PLAYER_BOOKMARKS}`
+					) < ${MAX_PLAYER_BOOKMARKS}
+					AND EXISTS (SELECT 1 FROM puzzle_families WHERE id = ${familyId})`
 				)
 		)
 		.onConflictDoNothing({ target: [playerBookmarks.playerId, playerBookmarks.familyId] });
@@ -41,9 +47,19 @@ export async function addPlayerBookmark(
 		.from(playerBookmarks)
 		.where(and(eq(playerBookmarks.playerId, playerId), eq(playerBookmarks.familyId, familyId)))
 		.limit(1);
-	const [insertResult, existing] = await db.batch([insertIfUnderCap, readBookmark]);
+	const readFamily = db
+		.select({ id: puzzleFamilies.id })
+		.from(puzzleFamilies)
+		.where(eq(puzzleFamilies.id, familyId))
+		.limit(1);
+	const [insertResult, existing, familyRows] = await db.batch([
+		insertIfUnderCap,
+		readBookmark,
+		readFamily
+	]);
 	if (insertResult.meta.changes > 0) return 'added';
-	return existing.length > 0 ? 'existing' : 'limit_reached';
+	if (existing.length > 0) return 'existing';
+	return familyRows.length === 0 ? 'family_missing' : 'limit_reached';
 }
 
 export async function removePlayerBookmark(
