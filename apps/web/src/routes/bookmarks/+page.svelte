@@ -18,6 +18,16 @@
 <section class="mx-auto max-w-5xl px-4 py-8">
 	<h1 class="font-(--font-display) text-(--text-0)">Bookmarks</h1>
 
+	{#if $bookmarks.error}
+		<p
+			role="alert"
+			data-testid="bookmarks-mutation-error"
+			class="mt-3 border border-(--hot) bg-(--bg-1) px-4 py-2 text-sm text-(--text-1)"
+		>
+			{$bookmarks.error}
+		</p>
+	{/if}
+
 	{#if $playerAuth.status === 'loading'}
 		<p data-testid="bookmarks-auth-loading" role="status" class="mt-3 text-(--text-2)">
 			Checking session…

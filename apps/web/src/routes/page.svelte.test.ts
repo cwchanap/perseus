@@ -1541,6 +1541,33 @@ describe('Gallery Page', () => {
 		await expect.element(secondCard.getByRole('button', { name: 'Add bookmark' })).toBeVisible();
 	});
 
+	it('authenticated gallery shows bookmark errors from the store', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [],
+			ids: [],
+			error: 'bookmark_limit_reached',
+			pendingIds: []
+		});
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect
+			.element(page.getByTestId('gallery-bookmark-error'))
+			.toHaveTextContent('bookmark_limit_reached');
+		await expect
+			.element(page.getByTestId('gallery-bookmark-error'))
+			.toHaveAttribute('role', 'alert');
+	});
+
 	it('anonymous gallery hides bookmark actions and does not request the store load', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
 			families: [makeFamily('p1')],

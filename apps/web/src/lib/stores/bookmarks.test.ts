@@ -132,7 +132,14 @@ describe('createBookmarksStore', () => {
 		expect(bookmarkFamily).toHaveBeenCalledWith('fam-2');
 		expect(unbookmarkFamily).not.toHaveBeenCalled();
 		expect(getPlayerBookmarks).toHaveBeenCalledOnce();
-		expect(get(store)).toMatchObject({ ids: ['fam-1', 'fam-2'], pendingIds: [], error: null });
+		// Newest-first list: the fresh bookmark slots to the front and the
+		// existing order is preserved behind it.
+		expect(get(store)).toMatchObject({
+			families: [familyTwo, familyOne],
+			ids: ['fam-2', 'fam-1'],
+			pendingIds: [],
+			error: null
+		});
 	});
 
 	it('removes a bookmark on toggle of a bookmarked family', async () => {
@@ -208,7 +215,95 @@ describe('createBookmarksStore', () => {
 		secondPending.resolve();
 		await second;
 
-		expect(get(store)).toMatchObject({ ids: ['fam-1', 'fam-2'], pendingIds: [] });
+		expect(get(store)).toMatchObject({ ids: ['fam-2', 'fam-1'], pendingIds: [] });
+	});
+
+	it('starts a toggle mutation only after an in-flight load resolves', async () => {
+		const familyOne = makeFamily('fam-1');
+		const pendingLoad = deferred<PlayerBookmarkListResponse>();
+		vi.mocked(getPlayerBookmarks).mockReturnValueOnce(pendingLoad.promise);
+		vi.mocked(bookmarkFamily).mockResolvedValue(undefined);
+		const store = createBookmarksStore(writable(makeAuth({ id: 'player-1' })));
+
+		const loadPromise = store.load();
+		const togglePromise = store.toggle(makeFamily('fam-2'));
+
+		// The PUT must wait for the GET: issuing it early would let the load
+		// result land later and overwrite the mutation.
+		expect(bookmarkFamily).not.toHaveBeenCalled();
+		pendingLoad.resolve({ families: [familyOne] });
+		await Promise.all([loadPromise, togglePromise]);
+
+		expect(bookmarkFamily).toHaveBeenCalledOnce();
+		expect(get(store)).toMatchObject({ ids: ['fam-2', 'fam-1'], pendingIds: [] });
+	});
+
+	it('discards a GET that resolves after a completed mutation and refetches', async () => {
+		const familyOne = makeFamily('fam-1');
+		const familyTwo = makeFamily('fam-2');
+		const store = createBookmarksStore(writable(makeAuth({ id: 'player-1' })));
+
+		// Initial load fails, leaving the store unloaded so a later load can run.
+		vi.mocked(getPlayerBookmarks).mockRejectedValueOnce(new Error('offline'));
+		await store.load();
+		expect(get(store).status).toBe('error');
+
+		// Toggle starts while no load is in flight; its PUT stays pending.
+		const pendingPut = deferred<void>();
+		vi.mocked(bookmarkFamily).mockReturnValueOnce(pendingPut.promise);
+		const togglePromise = store.toggle(familyTwo);
+		expect(bookmarkFamily).toHaveBeenCalledOnce();
+
+		// A fresh load starts (route mount/retry) and its GET stays pending until
+		// after the PUT completes, so its snapshot cannot include the new bookmark.
+		const staleGet = deferred<PlayerBookmarkListResponse>();
+		vi.mocked(getPlayerBookmarks)
+			.mockReturnValueOnce(staleGet.promise)
+			.mockResolvedValueOnce({ families: [familyOne, familyTwo] });
+		const reloadPromise = store.load();
+
+		pendingPut.resolve();
+		await togglePromise;
+		staleGet.resolve({ families: [familyOne] });
+		await reloadPromise;
+
+		// The stale snapshot was discarded and a second GET reissued; the final
+		// families include the PUT.
+		expect(getPlayerBookmarks).toHaveBeenCalledTimes(3);
+		expect(get(store)).toMatchObject({
+			status: 'loaded',
+			families: [familyOne, familyTwo],
+			ids: ['fam-1', 'fam-2'],
+			error: null
+		});
+	});
+
+	it('keeps pendingIds when a load result lands while a toggle is in flight', async () => {
+		const familyOne = makeFamily('fam-1');
+		const familyTwo = makeFamily('fam-2');
+		const store = createBookmarksStore(writable(makeAuth({ id: 'player-1' })));
+
+		vi.mocked(getPlayerBookmarks).mockRejectedValueOnce(new Error('offline'));
+		await store.load();
+
+		const pendingPut = deferred<void>();
+		vi.mocked(bookmarkFamily).mockReturnValueOnce(pendingPut.promise);
+		const togglePromise = store.toggle(familyTwo);
+		expect(get(store).pendingIds).toEqual(['fam-2']);
+
+		// A load resolves while the PUT is still in flight; it must not wipe the
+		// pending marker or the same family could double-submit.
+		const pendingLoad = deferred<PlayerBookmarkListResponse>();
+		vi.mocked(getPlayerBookmarks).mockReturnValueOnce(pendingLoad.promise);
+		const reloadPromise = store.load();
+		pendingLoad.resolve({ families: [familyOne] });
+		await reloadPromise;
+
+		expect(get(store)).toMatchObject({ families: [familyOne], pendingIds: ['fam-2'] });
+
+		pendingPut.resolve();
+		await togglePromise;
+		expect(get(store)).toMatchObject({ ids: ['fam-2', 'fam-1'], pendingIds: [] });
 	});
 
 	it('clears old state on logout and reloads fresh state after account switch', async () => {

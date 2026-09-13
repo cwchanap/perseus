@@ -123,6 +123,9 @@
 	// Epoch whose validated session last finished a bookmark load; the load is
 	// retried on later validated passes (resume/connectivity) until one succeeds.
 	let bookmarksLoadedEpoch: number | null = null;
+	// In-flight bookmark GET promise; toggles await it so a mutation never
+	// starts against pre-load membership or races a GET that began before it.
+	let bookmarkLoadPromise: Promise<void> | null = null;
 
 	// Application + connectivity listeners run for the app's lifetime and are
 	// removed on teardown; no timer is involved.
@@ -291,30 +294,40 @@
 		const requestEpoch = accountEpoch;
 		const token = session.token;
 		bookmarkState = beginBookmarksLoad(bookmarkState);
-		try {
-			const response = await playerApi.getBookmarks(token);
-			bookmarkState = applyBookmarksLoad(
-				bookmarkState,
-				requestEpoch,
-				accountEpoch,
-				response.families
-			);
-			if (requestEpoch === accountEpoch) bookmarksLoadedEpoch = requestEpoch;
-		} catch (error) {
-			bookmarkState = applyBookmarksLoadFailure(
-				bookmarkState,
-				requestEpoch,
-				accountEpoch,
-				error instanceof Error ? error.message : 'bookmarks_load_failed'
-			);
-		}
+		const request = (async () => {
+			try {
+				const response = await playerApi.getBookmarks(token);
+				bookmarkState = applyBookmarksLoad(
+					bookmarkState,
+					requestEpoch,
+					accountEpoch,
+					response.families
+				);
+				if (requestEpoch === accountEpoch) bookmarksLoadedEpoch = requestEpoch;
+			} catch (error) {
+				bookmarkState = applyBookmarksLoadFailure(
+					bookmarkState,
+					requestEpoch,
+					accountEpoch,
+					error instanceof Error ? error.message : 'bookmarks_load_failed'
+				);
+			} finally {
+				// Identity check: a newer epoch's request may already be published.
+				if (bookmarkLoadPromise === request) bookmarkLoadPromise = null;
+			}
+		})();
+		bookmarkLoadPromise = request;
+		return request;
 	}
 
 	// Toggle a family's bookmark. The optimistic pending marker is per family;
 	// a successful PUT inserts the already-rendered family summary (no detail
 	// refetch), a successful DELETE removes it, and any failure only records
 	// the bookmark error — account, download, and completion state are untouched.
+	// Serialization: an in-flight bookmark GET is awaited first so the mutation
+	// starts against post-load membership and cannot be overwritten by it.
 	async function handleBookmarkToggle(family: PuzzleFamilySummary): Promise<void> {
+		if (bookmarkLoadPromise) await bookmarkLoadPromise;
 		const session = accountSession;
 		if (!session || bookmarkState.pendingIds.includes(family.id)) return;
 		const requestEpoch = accountEpoch;

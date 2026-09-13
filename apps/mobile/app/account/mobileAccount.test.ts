@@ -66,6 +66,15 @@ function fakeApi(handlers: {
 			}),
 		submitCompletion: async () => {
 			throw new Error('unexpected submitCompletion');
+		},
+		getBookmarks: async () => {
+			throw new Error('unexpected getBookmarks');
+		},
+		bookmarkFamily: async () => {
+			throw new Error('unexpected bookmarkFamily');
+		},
+		unbookmarkFamily: async () => {
+			throw new Error('unexpected unbookmarkFamily');
 		}
 	};
 }
