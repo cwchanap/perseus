@@ -23,6 +23,8 @@
 	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
+	import { bookmarks } from '$lib/stores/bookmarks';
+	import { playerAuth } from '$lib/stores/playerAuth';
 
 	const sessionStorageAdapter = createSessionStorageAdapter();
 
@@ -57,6 +59,9 @@
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
 	let resumeImageError = $state(false);
+	// Auth is observed only to decide bookmark presentation; all bookmark
+	// network/mutation logic lives in the store.
+	const authenticated = $derived($playerAuth.status === 'authenticated');
 	const resumeImageUrl = $derived.by(() => {
 		if (!latestProgress) return null;
 		if (latestProgress.source === 'local') {
@@ -76,6 +81,12 @@
 	onMount(() => {
 		quickPuzzles = listQuick();
 		savedProgressCandidateIds = listResumableSessionCandidateIds();
+	});
+
+	// Load bookmarks once the page renders for an authenticated player;
+	// the store dedupes loads so appended catalog rows never refetch.
+	$effect(() => {
+		if ($playerAuth.status === 'authenticated') void bookmarks.load();
 	});
 
 	$effect(() => {
@@ -541,7 +552,13 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 				data-testid="puzzle-grid"
 			>
 				{#each families as family (family.id)}
-					<PuzzleCard {family} progressByVariantId={cardProgressByVariantId} />
+					<PuzzleCard
+						{family}
+						progressByVariantId={cardProgressByVariantId}
+						bookmarked={$bookmarks.ids.includes(family.id)}
+						bookmarkPending={$bookmarks.pendingIds.includes(family.id)}
+						onBookmarkToggle={authenticated ? bookmarks.toggle : undefined}
+					/>
 				{/each}
 			</div>
 
