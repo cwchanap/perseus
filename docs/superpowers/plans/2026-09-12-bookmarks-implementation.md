@@ -2,41 +2,57 @@
 
 ## Objective
 
-Implement account-scoped puzzle-family bookmarks across web and NativeScript mobile using the existing D1 player data, KV family metadata, authenticated player router, web gallery, and mobile Library seams.
+Implement bounded, account-scoped puzzle-family bookmarks across web and NativeScript mobile using the existing D1 player data, KV family metadata, authenticated player router, web gallery, and mobile account/Library seams.
 
-Keep this as one bounded vertical feature. Do not add a generic favorites framework, local bookmark persistence, bookmark pagination, gameplay/session state, or a new mobile navigation system.
+The product remains one feature, but implementation is split into two PRs:
+
+- **PR A:** shared/types/API + web + web E2E
+- **PR B:** mobile, built against PR A’s merged contract
+
+This keeps each implementation review smaller without adding a second architecture or API.
 
 ## Closed contracts before coding
 
-These decisions are fixed for this PR:
-
 - Bookmark identity is `PuzzleFamilySummary.id`, never a difficulty variant ID.
 - D1 stores only `(playerId, familyId, createdAt)`.
-- D1 bookmark index name is `idx_player_bookmarks_player_created`, matching existing `idx_*` schema naming.
-- `listPlayerBookmarks` returns `{ familyId, createdAt }[]` newest-first.
+- D1 index name: `idx_player_bookmarks_player_created`.
+- `MAX_PLAYER_BOOKMARKS = 200` lives in `@perseus/shared`.
+- `listPlayerBookmarks` returns at most 200 `{ familyId, createdAt }` rows newest-first.
+- `addPlayerBookmark` owns both idempotency and cap enforcement and returns `added | existing | limit_reached`.
 - Public `GET /api/puzzle-families` stays unauthenticated and player-agnostic.
 - `GET /api/player/bookmarks` returns `PlayerBookmarkListResponse = { families: PuzzleFamilySummary[] }`.
 - Do not reuse `PuzzleFamilyListResponse`; it requires catalog pagination fields.
 - `PUT /api/player/bookmarks/:familyId`:
-  - malformed `isPuzzleId` → 400 `bad_request`
-  - valid but missing/non-ready family → 404 `not_found`
-  - ready family → idempotent success
+  - malformed ID → 400 `bad_request`
+  - valid missing/non-ready family → 404 `not_found`
+  - existing bookmark → idempotent success even at capacity
+  - new bookmark at capacity → 409 `bookmark_limit_reached`
+- PUT readiness uses direct `getFamily` + `status === 'ready'`; `resolveReadyFamiliesByIds` is GET-only.
 - `DELETE` validates ID format but does not require the family to still exist in KV.
+- Web bookmark load/mutation/account-transition logic has one owner: `apps/web/src/lib/stores/bookmarks.ts`.
 - Bookmark mutations are non-optimistic and pending is tracked per family.
-- `/bookmarks` is a dedicated auth-gated route with `prerender = false`.
-- Mobile bookmark state lives in `App.svelte` beside `accountEpoch`.
-- Playwright uses stateful mocked bookmark routes; D1 persistence is tested in shared/API worker tests.
+- `/bookmarks` is auth-aware and `prerender = false`.
+- Web bookmark control uses the card’s bottom title row; top-left category and top-right progress stay unchanged.
+- Mobile authenticated bookmark I/O stays in `App.svelte` because token/account epoch live there.
+- Mobile state transitions/stale-epoch policy live in mandatory pure `library/bookmarkState.ts`.
+- Playwright uses raw stateful `page.route` mocks and proves browser wiring only.
+- D1 idempotency/isolation/capacity are proven in shared Miniflare tests.
 
-## Task 1 — Add D1 bookmark persistence
+# Implementation PR A — Server + Web
+
+## Task 1 — Add bounded bookmark persistence in `@perseus/shared`
 
 ### Files
 
 - `packages/shared/src/schema.ts`
 - `packages/shared/src/bookmarks.ts` (new)
 - shared export surface
-- `packages/shared/drizzle/0008_player_bookmarks.sql` or the next free migration number at implementation time
-- required Drizzle metadata/snapshot files
-- existing shared/Miniflare repository tests
+- `packages/shared/drizzle/0008_player_bookmarks.sql` or next free migration number
+- `packages/shared/drizzle/meta/_journal.json`
+- next Drizzle snapshot
+- `packages/shared/src/__tests__/bookmarks.d1.test.ts` (new)
+- `packages/shared/src/__tests__/schema.test.ts`
+- reuse `packages/shared/src/__tests__/miniflare-d1.ts`
 
 ### Work
 
@@ -46,43 +62,68 @@ These decisions are fixed for this PR:
    - `createdAt INTEGER NOT NULL`
    - composite PK `(playerId, familyId)`
    - `index('idx_player_bookmarks_player_created').on(playerId, createdAt)`
-2. Add the additive migration.
-3. Add focused helpers:
+2. Add the additive migration + journal/snapshot metadata.
+3. Add:
+
+```ts
+export const MAX_PLAYER_BOOKMARKS = 200;
+export type AddPlayerBookmarkResult = 'added' | 'existing' | 'limit_reached';
+```
+
+4. Add helpers:
    - `addPlayerBookmark(db, playerId, familyId, createdAt?)`
    - `removePlayerBookmark(db, playerId, familyId)`
    - `listPlayerBookmarks(db, playerId)`
-4. `addPlayerBookmark` uses `onConflictDoNothing`, following the repository's existing idempotent-insert style.
-5. `removePlayerBookmark` is a no-op when absent.
-6. `listPlayerBookmarks` returns only `{ familyId, createdAt }[]`, newest-first.
-7. Do not duplicate KV family metadata in D1.
+5. `addPlayerBookmark` must enforce capacity **inside the persistence operation**, not through route-level `count → insert` logic. It must distinguish:
+   - inserted now,
+   - already existed,
+   - new row rejected because capacity is full.
+6. Re-PUT of an existing `(playerId, familyId)` remains successful at the cap.
+7. `listPlayerBookmarks` orders newest-first and applies `.limit(MAX_PLAYER_BOOKMARKS)`.
+8. `removePlayerBookmark` is idempotent.
+9. Store no KV metadata in D1.
 
-### Tests first
+### `bookmarks.d1.test.ts`
 
-Prove:
+Use the existing Miniflare D1 helper and prove:
 
 - add then list,
-- repeated add gives one row,
+- repeated add yields one row/result `existing`,
 - newest-first order,
-- remove,
-- repeated remove harmless,
-- player isolation.
+- remove/repeated remove,
+- player isolation,
+- the 200th distinct bookmark succeeds,
+- the 201st distinct bookmark returns `limit_reached` and is absent,
+- an existing bookmark still returns `existing` when already at 200,
+- list never returns over `MAX_PLAYER_BOOKMARKS`.
+
+### `schema.test.ts`
+
+Update the existing migration test seam to:
+
+- expect the latest journal entry/snapshot to be 0008,
+- verify snapshot chaining from 0007,
+- include `player_bookmarks` in the expected table set,
+- pin columns/composite PK/index,
+- add a migration-0008 additivity assertion that rejects destructive table/index/trigger operations.
 
 ### Gate
 
-Run the focused shared/Miniflare tests and migration/type checks before API work.
+Run focused shared tests before moving to API work.
 
-## Task 2 — Add ready-family resolution reuse and typed response contract
+## Task 2 — Extract ready-family resolution + typed bookmark response
 
 ### Files
 
 - `apps/api/src/services/storage.worker.ts`
-- `packages/types/src/puzzle-family.ts` or the smallest existing player/family contract module
-- `packages/types/src/index.ts`/current export surface as needed
-- focused type/storage tests if the repo has a matching seam
+- relevant storage tests if present/needed
+- `packages/types/src/puzzle-family.ts` or smallest appropriate existing contract module
+- package type export surface
+- type tests if the package has an existing validator test seam
 
 ### Work A — `resolveReadyFamiliesByIds`
 
-Add next to `listFamiliesPage`:
+Factor the existing `listFamiliesPage` family-resolution loop into:
 
 ```ts
 export async function resolveReadyFamiliesByIds(
@@ -91,18 +132,19 @@ export async function resolveReadyFamiliesByIds(
 ): Promise<PuzzleFamilySummary[]>
 ```
 
-Implementation contract:
+Contract:
 
-1. `Promise.all` over the input IDs.
+1. `Promise.all` over input IDs.
 2. `getFamily(kv, id)` for each.
-3. return `null` for missing or non-`ready` families.
+3. return `null` for missing or non-ready families.
 4. `enrichFamilySummary(kv, family)` for survivors.
-5. filter nulls after `Promise.all` so surviving results preserve input order.
-6. do not add per-ID try/catch; corrupt `getFamily` data should reject the request exactly as catalog code does today.
+5. filter nulls after the promise list so surviving input order is preserved.
+6. no per-ID try/catch; corrupt KV metadata rejects as it does today.
+7. refactor `listFamiliesPage` to reuse this helper for its page IDs rather than leaving two copies of the loop.
 
-This is the shared operation bookmark GET needs. Do not reproduce the same loop in `player.worker.ts`.
+This helper is for GET/list resolution only.
 
-### Work B — bookmark list response
+### Work B — `PlayerBookmarkListResponse`
 
 Add:
 
@@ -113,95 +155,104 @@ export interface PlayerBookmarkListResponse {
 
 export function isPlayerBookmarkListResponse(
 	value: unknown
-): value is PlayerBookmarkListResponse
+): value is PlayerBookmarkListResponse;
 ```
 
-The guard reuses `isPuzzleFamilySummary` for every family.
+The guard reuses `isPuzzleFamilySummary`.
 
-Do not reuse `PuzzleFamilyListResponse`; bookmarks intentionally have no `total`, `offset`, `limit`, or cursor fields.
+Do not reuse `PuzzleFamilyListResponse`; bookmarks have no total/offset/limit/cursor contract.
 
-### Tests/gate
+### Tests
 
 Pin:
 
-- resolver skips missing families,
-- resolver skips non-ready families,
-- resolver preserves input order,
-- corrupt family metadata rejects instead of being silently skipped,
-- bookmark response guard accepts `{ families }` and rejects malformed summaries/catalog-shape drift.
+- missing family skipped,
+- non-ready family skipped,
+- input order preserved,
+- corrupt family metadata rejects,
+- bookmark response guard accepts `{ families }`,
+- malformed family entries are rejected.
 
 ## Task 3 — Add authenticated bookmark routes
 
 ### Files
 
 - `apps/api/src/routes/player.worker.ts`
-- existing API worker route tests
+- `apps/api/src/routes/player.worker.test.ts`
+- reuse `apps/api/src/routes/__tests__/helpers/family-fixtures.ts`
 
-### Work
+### Route work
 
-Add to the existing player router:
+Add:
 
 - `GET /api/player/bookmarks`
 - `PUT /api/player/bookmarks/:familyId`
 - `DELETE /api/player/bookmarks/:familyId`
 
-Reuse `requirePlayerAuth` for all three; it already accepts web cookie sessions and mobile bearer tokens.
+All reuse `requirePlayerAuth`, which already accepts web cookie sessions and mobile bearer tokens.
 
 ### GET
 
-1. Read D1 rows via `listPlayerBookmarks`.
-2. Pass row family IDs to `resolveReadyFamiliesByIds`.
-3. Assemble `{ families } satisfies PlayerBookmarkListResponse`.
-4. Validate with `isPlayerBookmarkListResponse`; malformed server output is 500.
-5. Return newest-first survivors.
-
-No route-local get/enrich loop.
+1. `listPlayerBookmarks(db, playerId)`.
+2. `resolveReadyFamiliesByIds(kv, rows.map(row => row.familyId))`.
+3. assemble `{ families } satisfies PlayerBookmarkListResponse`.
+4. validate with `isPlayerBookmarkListResponse`; malformed server output → 500.
 
 ### PUT
 
-1. Read `familyId` from params.
-2. `!isPuzzleId(familyId)` → 400 `bad_request` with the same family-ID semantics as family detail.
-3. Resolve readiness using the shared ready-family resolution path (one ID is fine) or the exact same `getFamily` + `status === 'ready'` predicate if that avoids unnecessary response construction.
-4. Missing/non-ready → 404 `not_found` with the same semantics as `GET /api/puzzle-families/:familyId`.
-5. Insert via `addPlayerBookmark`.
-6. Return success; duplicate PUT stays successful.
+1. `!isPuzzleId(familyId)` → 400.
+2. direct `getFamily(c.env.PUZZLE_METADATA, familyId)`.
+3. missing or `status !== 'ready'` → 404, matching family detail.
+4. call `addPlayerBookmark`.
+5. `added | existing` → success.
+6. `limit_reached` → `409 { error: 'bookmark_limit_reached', message: 'Maximum 200 bookmarks reached' }`.
 
-Do not invent 409/422 or a second status policy.
+Do not call `resolveReadyFamiliesByIds` for PUT.
 
 ### DELETE
 
-1. malformed ID → 400 `bad_request`.
-2. remove D1 row without requiring KV existence/readiness.
-3. duplicate DELETE succeeds.
+1. malformed ID → 400.
+2. call `removePlayerBookmark` without KV lookup.
+3. repeated DELETE succeeds.
 
-### Tests first
+### Test-seam work
+
+`player.worker.test.ts` mocks `@perseus/shared`, so extend that mock with bookmark helpers/results. Do not use this suite to claim real D1 duplicate/cap behavior.
+
+For KV-dependent behavior:
+
+- reuse `makeFamilyMetadata` from `routes/__tests__/helpers/family-fixtures.ts`,
+- add a minimal in-test `KVNamespace` mock that supports the `get(..., 'json')` path used by `getFamily`, following the repository’s existing route-test mock style,
+- include `PUZZLE_METADATA` in the test env for bookmark cases.
+
+### Route tests
 
 Prove:
 
-- unauthenticated GET/PUT/DELETE → 401,
-- malformed PUT/DELETE ID → 400,
-- valid missing/non-ready PUT → 404,
-- ready PUT succeeds,
-- duplicate PUT stays one D1 row,
-- GET returns `PlayerBookmarkListResponse`,
-- GET skip/order behavior goes through shared resolver,
-- corrupt family metadata causes request failure rather than silent omission,
-- DELETE and duplicate DELETE succeed.
+- GET/PUT/DELETE require auth,
+- malformed PUT/DELETE → 400,
+- missing/non-ready PUT → 404,
+- ready PUT calls the repository helper,
+- `existing` also succeeds,
+- mocked `limit_reached` → 409/error code,
+- GET returns typed enriched family summaries,
+- GET skips missing/non-ready KV rows and preserves surviving order,
+- corrupt KV metadata causes 500 rather than silent omission,
+- DELETE/repeated DELETE route semantics succeed.
 
-### Gate
+Real duplicate-row/cap persistence remains Task 1 coverage only.
 
-Run focused API worker tests before client work.
-
-## Task 4 — Extend web API client and `PuzzleCard`
+## Task 4 — Extend the web API client and add one bookmark store
 
 ### Files
 
 - `apps/web/src/lib/services/api.ts`
 - `apps/web/src/lib/services/api.test.ts`
-- `apps/web/src/lib/components/PuzzleCard.svelte`
-- `apps/web/src/lib/components/PuzzleCard.svelte.test.ts`
+- `apps/web/src/lib/stores/bookmarks.ts` (new)
+- `apps/web/src/lib/stores/bookmarks.test.ts` (new)
+- reuse/inject `apps/web/src/lib/stores/playerAuth.ts`
 
-### API client work
+### API client
 
 Add:
 
@@ -211,77 +262,124 @@ Add:
 
 Rules:
 
-- use `credentials: 'include'`,
-- GET validates/parses `PlayerBookmarkListResponse`,
+- `credentials: 'include'`,
 - URL-encode family IDs,
-- do not alter public catalog calls.
+- GET validates `PlayerBookmarkListResponse`,
+- preserve existing `ApiError` behavior including 409.
 
-### Card work
+### Bookmark store
 
-Add presentation-only props equivalent to:
+Follow the factory + singleton pattern from `playerAuth.ts`.
+
+State owns:
+
+- current account/owner identity,
+- resolved `families`,
+- derived `ids`,
+- load status/error,
+- per-family pending IDs,
+- operation/version token for stale async rejection.
+
+Expose the minimal surface:
+
+- `subscribe`
+- `load()`
+- `toggle(family)`
+- `clear()` if useful for tests/internal auth handling
+
+Behavior:
+
+1. Observe/inject `playerAuth` only to detect anonymous/account-switch state and clear old bookmark state.
+2. Do not auto-fetch on every authenticated route.
+3. Gallery and `/bookmarks` call `load()` only when they need data.
+4. Repeated `load()` for an already-loaded same account is a no-op/deduped.
+5. `toggle(family)` owns PUT/DELETE, per-family pending, success update, error isolation.
+6. Add uses the passed `PuzzleFamilySummary`; no detail refetch.
+7. Account switch/logout invalidates in-flight results.
+8. 409 remains state/error feedback; prior membership is unchanged.
+
+### Store tests
+
+Unit-test once:
+
+- authenticated load,
+- load dedupe,
+- anonymous does not fetch,
+- bookmark success,
+- unbookmark success,
+- failed/409 mutation preserves prior membership,
+- same family cannot double-submit while pending,
+- different families can be pending independently,
+- logout/account switch clears old state,
+- stale old-account load/mutation result is ignored.
+
+This replaces duplicated route-level mutation state/tests.
+
+## Task 5 — Extend `PuzzleCard` and wire Gallery presentation
+
+### Files
+
+- `apps/web/src/lib/components/PuzzleCard.svelte`
+- `apps/web/src/lib/components/PuzzleCard.svelte.test.ts`
+- `apps/web/src/routes/+page.svelte`
+- `apps/web/src/routes/page.svelte.test.ts`
+
+### `PuzzleCard`
+
+Add presentation props equivalent to:
 
 - `bookmarked?: boolean`
 - `bookmarkPending?: boolean`
 - `onBookmarkToggle?: (family: PuzzleFamilySummary) => void`
 
-Use the family object rather than only the ID so callers can add the already-rendered summary to transient bookmark state without refetching family detail.
+Fixed layout:
 
-Bookmark UI must:
+- category stays top-left,
+- progress stays top-right,
+- bottom overlay becomes one title/action row,
+- title flexes/truncates on the left,
+- compact bookmark button sits bottom-right.
 
-- be accessible,
-- avoid category/progress badge collisions,
-- not activate difficulty links,
-- disable repeated taps while pending.
+The bookmark button:
 
-### Tests first
+- has an accessible name for add/remove state,
+- does not activate difficulty links,
+- is disabled while pending.
 
-API:
+### Gallery route
 
-- exact paths/methods,
-- credentials,
-- URL encoding,
-- GET response validation.
+Gallery must not own bookmark network/mutation logic.
 
-Card:
+It:
 
-- unbookmarked/bookmarked state,
-- callback receives the family,
-- pending disables interaction,
-- difficulty links remain functional.
+1. observes `playerAuth` only to decide authenticated bookmark presentation,
+2. calls `bookmarks.load()` when authenticated and the page needs bookmark data,
+3. reads `ids/pending` from the bookmark store,
+4. passes `toggle` to `PuzzleCard`,
+5. leaves search/category/cursor/abort/version/progress-discovery logic untouched.
 
-## Task 5 — Wire bookmarks into the web gallery
+Loading more catalog rows uses the same already-loaded bookmark membership set.
 
-### Files
+### Gallery test blast radius
 
-- `apps/web/src/routes/+page.svelte`
-- `apps/web/src/routes/page.svelte.test.ts` and/or the existing gallery route test seam
+`page.svelte.test.ts` currently mocks `$lib/services/api` with an explicit allowlist and does not mock auth. After this change:
 
-### Work
+- keep its API mock focused on catalog functions (`fetchPuzzles`, etc.),
+- add an explicit `$lib/stores/playerAuth` mock following `layout.svelte.test.ts`,
+- add an explicit `$lib/stores/bookmarks` mock,
+- test only Gallery presentation/integration with those stores.
 
-1. When `playerAuth` becomes authenticated, fetch bookmark GET once independently from catalog requests.
-2. Keep the resolved family list only as needed for mutation updates and derive a `Set<string>` for card membership.
-3. Track pending IDs per family.
-4. On bookmark:
-   - call PUT,
-   - after success add the card's existing `PuzzleFamilySummary` to transient bookmark state,
-   - update membership.
-5. On unbookmark:
-   - call DELETE,
-   - after success remove from transient state.
-6. Failed mutation leaves prior state intact.
-7. On account/logout transition, clear old bookmark state.
-8. Do not refactor search/category/cursor/abort/version/progress-discovery code.
-9. Loading more catalog rows reuses the existing bookmark set; no second GET is required.
+Do **not** duplicate bookmark API mutation tests here; `bookmarks.test.ts` owns them.
 
-### Tests first
+### Tests
 
-Cover:
-
-- authenticated bookmark load marks matching visible cards,
-- anonymous view issues no bookmark GET,
-- add/remove success,
-- mutation failure keeps prior state,
-- newly loaded infinite-scroll rows read correct membership without another bookmark GET.
+- card add/remove accessible states,
+- callback receives family,
+- pending disabled,
+- difficulty links unaffected,
+- authenticated Gallery loads/renders store membership,
+- anonymous Gallery hides bookmark actions/does not request store load,
+- newly appended infinite-scroll rows read current membership without a second network contract.
 
 ## Task 6 — Add `/bookmarks` and shell navigation
 
@@ -289,7 +387,7 @@ Cover:
 
 - `apps/web/src/routes/bookmarks/+page.svelte` (new)
 - `apps/web/src/routes/bookmarks/+page.ts` (new)
-- bookmark route unit/browser test file using the repo's normal route-test style
+- focused bookmarks route browser/unit test
 - `apps/web/src/lib/components/ArcadeShell.svelte`
 - `apps/web/src/routes/layout.svelte.test.ts`
 
@@ -298,47 +396,108 @@ Cover:
 Create:
 
 ```ts
-// apps/web/src/routes/bookmarks/+page.ts
 export const prerender = false;
 ```
 
-This is required, matching `/profile`; do not leave `/bookmarks` to static prerendering.
+matching `/profile`.
 
-### Page work
+### Page
 
-Reuse `PuzzleCard` and the player bookmark endpoint. Support:
+The page is presentation over `playerAuth` + the shared bookmark store.
+
+States:
 
 - auth loading,
 - anonymous/sign-in,
 - bookmark loading,
 - empty,
 - populated,
-- request error.
+- error.
 
-Track pending by family. Successful DELETE removes the card only after server success.
+Call `bookmarks.load()` when authenticated. Unbookmark uses the same store `toggle(family)` path as Gallery.
 
-Do not add search/filter/sort/pagination.
+Do not implement a second pending set or second mutation handler.
 
-### Shell work
+### Shell
 
-1. Extend closed `ArcadeRoute` with `/bookmarks`.
-2. Add the Bookmarks nav item to the existing shared `navItems` array.
-3. Update `apps/web/src/routes/layout.svelte.test.ts` to pin the new nav item in the existing desktop/mobile shell seam.
+1. extend closed `ArcadeRoute` with `/bookmarks`,
+2. add Bookmarks to the shared `navItems`,
+3. update `layout.svelte.test.ts` for the nav item/active path.
 
-Current `main` does not have a separate `ArcadeShell.svelte.test.ts`; do not create one just to satisfy this feature.
+There is no `ArcadeShell.svelte.test.ts` on current `main`; do not create one solely for this.
 
-### Tests first
+### Route tests
 
-Cover page states, successful/failed unbookmark, `prerender = false`, and nav visibility/active behavior as appropriate to the current layout tests.
+Mock `playerAuth` and `bookmarks` stores and cover presentation only:
 
-## Task 7 — Extend the mobile player API boundary
+- auth loading,
+- anonymous,
+- loading,
+- empty,
+- populated,
+- store error,
+- shared toggle called for removal,
+- `prerender = false` contract.
+
+## Task 7 — Add raw-route web E2E + accessibility coverage
+
+### Files
+
+- `apps/web/e2e/gallery.spec.ts`
+- reuse `apps/web/e2e/support/accessibility.ts`
+
+### Chosen E2E style
+
+Stay in the existing Gallery raw-route style. Do **not** introduce `createAuthPersona`/`GameplayPage` diagnostics for this non-gameplay flow.
+
+Install `page.route` handlers for:
+
+- `GET /api/auth/session` → authenticated user,
+- gallery catalog response,
+- `GET /api/player/bookmarks`,
+- `PUT /api/player/bookmarks/:familyId`,
+- `DELETE /api/player/bookmarks/:familyId`.
+
+The bookmark routes share an in-memory collection for the test lifetime.
+
+### Scenario
+
+1. open Gallery as authenticated,
+2. bookmark one family,
+3. navigate to `/bookmarks`,
+4. assert the family appears,
+5. reload,
+6. assert mocked GET rehydrates it,
+7. run `assertPageAccessible(..., { label: 'bookmarks' })` on the populated page/nav,
+8. unbookmark,
+9. assert it disappears.
+
+This is browser wiring only. It does not prove D1 persistence.
+
+### PR A final gate
+
+Run the repo’s normal checks for touched packages, including:
+
+- shared Miniflare tests,
+- `schema.test.ts`,
+- types checks/tests,
+- API worker tests,
+- web API/store/card/route/layout browser tests,
+- bookmark Gallery Playwright flow,
+- lint/format/type checks used by CI.
+
+Do not start mobile implementation until this contract is merged or otherwise frozen.
+
+# Implementation PR B — Mobile
+
+## Task 8 — Extend the mobile player API boundary
 
 ### Files
 
 - `apps/mobile/app/api/playerApi.ts`
 - `apps/mobile/app/api/playerApi.test.ts`
-- `apps/mobile/app/api/nativeHttp.ts` only where the request method type requires it
-- `apps/mobile/app/api/nativeHttp.test.ts` only if current tests pin the allowed method surface
+- `apps/mobile/app/api/nativeHttp.ts` only where the method type requires it
+- `apps/mobile/app/api/nativeHttp.test.ts` only if current tests pin method forwarding
 
 ### Work
 
@@ -347,13 +506,12 @@ Cover page states, successful/failed unbookmark, `prerender = false`, and nav vi
    - `getBookmarks(token): Promise<PlayerBookmarkListResponse>`
    - `bookmarkFamily(familyId, token)`
    - `unbookmarkFamily(familyId, token)`
-3. GET runtime-validates with `isPlayerBookmarkListResponse`.
-4. Reuse current bearer Authorization behavior.
-5. Keep `nativePlayerHttpTransport` a dumb `Http.request` pass-through.
+3. GET validates `isPlayerBookmarkListResponse`.
+4. Reuse current bearer `Authorization` behavior.
+5. Keep `nativePlayerHttpTransport` as a dumb `Http.request` pass-through.
+6. Let non-2xx, including 409, follow existing `requireOk` behavior; App-level bookmark error state surfaces it.
 
-### Tests first
-
-Pin:
+### Tests
 
 - GET path/header/response validation,
 - PUT path/method/header,
@@ -361,7 +519,7 @@ Pin:
 - URL encoding,
 - non-2xx behavior.
 
-## Task 8 — Extract one reusable mobile `FamilyCard`
+## Task 9 — Extract one reusable mobile `FamilyCard`
 
 ### Files
 
@@ -371,7 +529,7 @@ Pin:
 
 ### Work
 
-Move only one family's existing rendering into `FamilyCard.svelte`:
+Move only one family’s existing Gallery rendering into `FamilyCard.svelte`:
 
 - thumbnail,
 - family title,
@@ -380,23 +538,64 @@ Move only one family's existing rendering into `FamilyCard.svelte`:
 - active download progress,
 - download/cancel actions.
 
-Add optional bookmark presentation/handler props. The bookmark callback receives the `PuzzleFamilySummary`.
+Add optional bookmark props/handler receiving `PuzzleFamilySummary`.
 
-`Gallery.svelte` remains responsible for iteration, loading/error/empty/load-more state and passes the same family/install/download/progress/cancel inputs through to `FamilyCard`.
+Use a title row with family title on the left and bookmark action on the right.
 
-Do not extract a list framework or move download state ownership.
+`Gallery.svelte` remains responsible for iteration, loading/error/empty/load-more state and passes the same existing family/install/download/progress/cancel inputs through.
 
-### Executable completion gate
+Do not move download state ownership or create a generic list framework.
 
-This extraction is complete only when:
+### Executable extraction gate
 
-1. the `Gallery.svelte` diff shows the existing card logic replaced by `FamilyCard` calls without changing Gallery state ownership or download handler semantics,
-2. `familyGallery.test.ts` still pins difficulty labels and variant-ID selection,
+1. Gallery diff is only card extraction/wiring, not state ownership changes.
+2. `familyGallery.test.ts` still passes difficulty-label and variant-ID tests.
 3. `cd apps/mobile && bun run test:unit` passes.
 
-There is no NativeScript Gallery UI test seam today; do not write a vague “confirm behavior” gate and do not introduce a new native UI framework for this extraction.
+No NativeScript UI test framework is added.
 
-## Task 9 — Add mobile bookmark state and Bookmarks section
+## Task 10 — Add mandatory pure mobile bookmark state
+
+### Files
+
+- `apps/mobile/app/library/bookmarkState.ts` (new)
+- `apps/mobile/app/library/bookmarkState.test.ts` (new)
+
+### Why mandatory
+
+`App.svelte` already uses pure modules for account/session policy and completion scheduling. Bookmark state is also epoch-sensitive and must not become an untested inline branch in the NativeScript component.
+
+### State/transition contract
+
+Keep the module pure: no NativeScript, secure storage, HTTP, or Svelte component imports.
+
+It should model the smallest state needed for:
+
+- current bookmarked families,
+- loading/error,
+- per-family pending IDs,
+- clear/reset,
+- apply load result,
+- apply add result,
+- apply remove result,
+- pending/error transitions,
+- stale epoch rejection.
+
+Every apply function that consumes an async result receives `requestEpoch` and `currentEpoch` (or an equivalent explicit guard) and returns the prior state unchanged when stale.
+
+### Tests
+
+Unconditionally pin:
+
+- stale load ignored,
+- stale add/remove ignored,
+- account clear returns empty state,
+- add inserts once,
+- remove deletes only target family,
+- pending is per-family,
+- failure preserves previous family membership and records bookmark error.
+
+## Task 11 — Wire mobile account I/O + Bookmarks section
 
 ### Files
 
@@ -404,157 +603,65 @@ There is no NativeScript Gallery UI test seam today; do not write a vague “con
 - `apps/mobile/app/library/Library.svelte`
 - `apps/mobile/app/library/Bookmarks.svelte` (new)
 - `apps/mobile/app/app.css`
-- optionally `apps/mobile/app/library/bookmarkState.ts` + test if extracting pure epoch/state transitions keeps `App.svelte` smaller and testable
 
-### Ownership
+### Ownership rationale
 
-`App.svelte` owns:
+`Library.svelte` already owns public Gallery fetch through injected `puzzleApi`, but authenticated bookmark fetch/mutations stay in `App.svelte` because that is where the bearer token, persisted session lifecycle, account identity, and `accountEpoch` already live.
 
-- active token/session,
-- account identity/epoch,
-- bookmark fetch/mutation calls,
-- transient bookmarked families,
-- bookmark loading/error/pending state.
+Do not push secure-session/token ownership down into Library merely to resemble the public gallery fetch.
 
-`Library.svelte` receives presentation state/handlers. It must not read secure session storage itself.
+### `App.svelte`
 
-Suggested props/state:
+1. own transient bookmark state from `bookmarkState.ts`,
+2. load bookmarks only after a validated authenticated session is available,
+3. capture `accountEpoch` at start of every bookmark fetch/mutation,
+4. apply results through pure state transitions using captured/current epoch,
+5. clear bookmark state on sign-out/account switch,
+6. track pending per family,
+7. successful PUT adds the already-rendered family summary; no detail refetch,
+8. successful DELETE removes it,
+9. bookmark failure touches bookmark error only; it must not clear account/download/completion state.
 
-- `bookmarkedFamilies`
-- `bookmarkLoading`
-- `bookmarkError`
-- `bookmarkPendingIds`
-- `onBookmarkToggle(family: PuzzleFamilySummary)`
-- signed-in/auth-ready state
+### `Library.svelte`
 
-### Work
+Receive only presentation state/handlers:
 
-1. Load bookmarks only after a validated authenticated session is available.
-2. Capture `accountEpoch` when starting bookmark work.
-3. Ignore fetch/mutation results when the epoch changed before application.
-4. Clear bookmark state on sign-out/account switch.
-5. Track mutation pending by family ID.
-6. Successful PUT adds the already-present family summary to transient state; no family-detail refetch.
-7. Successful DELETE removes the family.
-8. Bookmark transport/server errors update bookmark-specific error only.
-9. Insert `<Bookmarks>` between Gallery and Downloaded.
-10. Reuse `FamilyCard` so bookmarked families retain normal per-difficulty download/install behavior.
-11. Signed out: hide Gallery bookmark actions and show `Sign in below to use bookmarks.`
-12. Authenticated empty: `No bookmarked puzzles yet.`
-13. No local bookmark file/cache/queue.
+- signed-in/auth-ready state,
+- `bookmarkedFamilies`,
+- bookmark loading/error/pending,
+- `onBookmarkToggle(family)`.
 
-### Tests first
+Insert `Bookmarks.svelte` between Gallery and Downloaded.
 
-If a tiny pure helper is extracted, pin:
+### `Bookmarks.svelte`
 
-- stale epoch result ignored,
-- sign-out/account switch clears bookmark state,
-- add inserts exactly once,
-- remove deletes the right family,
-- bookmark failure does not touch account/download state.
+Reuse `FamilyCard` plus existing download/install state/handlers.
 
-Also keep `playerApi.test.ts` and the full mobile unit suite green.
+States:
 
-## Task 10 — Web E2E and final regression
+- signed out: `Sign in below to use bookmarks.`,
+- loading: activity indicator,
+- empty: `No bookmarked puzzles yet.`,
+- populated: newest-first family cards,
+- bookmark-specific error.
 
-### Files
+No local bookmark file/cache/queue.
 
-- `apps/web/e2e/gallery.spec.ts` or one focused bookmarks E2E file if that is clearer
-- existing auth-persona/fixture support only by reuse; do not create a new OAuth/cookie system
+### PR B final gate
 
-### E2E fixture contract
+Run:
 
-`createAuthPersona('authenticated')` only mocks `GET /api/auth/session`; it does not create a real player cookie/token. Therefore the test must mock bookmark player endpoints too.
+- `playerApi.test.ts`,
+- `bookmarkState.test.ts`,
+- `familyGallery.test.ts`,
+- full `cd apps/mobile && bun run test:unit`,
+- mobile TypeScript/build checks used by CI.
 
-Install a stateful in-memory Playwright route for:
-
-- `GET /api/player/bookmarks`
-- `PUT /api/player/bookmarks/:familyId`
-- `DELETE /api/player/bookmarks/:familyId`
-
-The route keeps an in-memory bookmarked-family collection for the duration of the test/page context and returns the real `PlayerBookmarkListResponse` shape.
-
-Reuse existing mocked catalog family data. Do not call the real player backend from this browser test.
-
-### E2E scenario
-
-1. install authenticated session persona,
-2. install catalog mocks,
-3. install stateful bookmark route mocks,
-4. open Gallery,
-5. bookmark a family,
-6. navigate to `/bookmarks`,
-7. assert it appears,
-8. reload,
-9. assert GET rehydrates it from the route's in-memory state,
-10. unbookmark,
-11. assert it disappears.
-
-This verifies browser client wiring and reload behavior. It does **not** claim to prove D1 persistence; Task 1/3 worker tests own that proof.
-
-### Final verification
-
-Run the repo's normal focused/full checks for touched packages, including at least:
-
-- shared/Miniflare tests,
-- API worker tests,
-- `@perseus/types` tests/type checks,
-- web unit/browser tests,
-- mobile `bun run test:unit`,
-- bookmark Playwright flow,
-- lint/format/type checks used by CI.
-
-## Suggested implementation order
-
-1. D1/shared persistence
-2. ready-family resolver + typed response
-3. player API routes
-4. web API/card
-5. web gallery
-6. `/bookmarks` + prerender/nav
-7. mobile API
-8. mobile `FamilyCard` extraction
-9. mobile bookmark state/section
-10. mocked E2E + regression
-
-Each step should leave a tested seam for the next; do not build both clients against an unpinned server contract.
-
-## Expected touched surface
-
-### Shared/types/backend
-
-- one additive D1 table/migration
-- one narrow bookmark repository module
-- one narrow ready-family resolver in existing storage service
-- one small shared response interface/guard
-- three routes in the existing player router
-- focused worker/repository tests
-
-### Web
-
-- existing API client
-- `PuzzleCard`
-- gallery route
-- new `/bookmarks/+page.svelte`
-- new `/bookmarks/+page.ts`
-- ArcadeShell route/nav update
-- existing `layout.svelte.test.ts`
-- focused route/card/API/E2E coverage
-
-### Mobile
-
-- existing `playerApi`
-- one `FamilyCard` extraction
-- one `Bookmarks` section
-- transient bookmark state in `App.svelte`
-- `Library.svelte` wiring
-- focused pure/API tests
-
-## Deliberate exclusions
+# Deliberate exclusions
 
 Stop and reassess rather than silently expanding scope if implementation appears to require:
 
-- generic favorites/reactions tables or APIs,
+- generic favorites/reactions tables/APIs,
 - anonymous/local bookmarks,
 - offline bookmark queues/caches,
 - bookmark pagination/search/folders/tags,
@@ -562,23 +669,24 @@ Stop and reassess rather than silently expanding scope if implementation appears
 - downloaded-manifest changes,
 - mobile routing/tab architecture,
 - profile-style client N+1 family-detail enrichment for bookmarks,
-- a new OAuth/cookie Playwright subsystem,
+- route-level duplicate web mutation state,
+- optional/untested mobile epoch logic,
+- a new OAuth/cookie E2E subsystem,
 - refactoring web infinite-scroll/search architecture,
 - refactoring mobile account/completion synchronization beyond narrow bookmark integration.
 
-## Definition of done
+# Definition of done
 
-The implementation PR is ready when:
+The feature is complete after both implementation PRs land and:
 
-- D1 bookmark add/remove/list is idempotent and player-isolated,
-- API uses one ready-family resolver and returns typed `PlayerBookmarkListResponse`,
-- PUT semantics are pinned at 400 malformed / 404 missing-or-non-ready,
-- web Gallery can add/remove bookmarks without changing catalog pagination behavior,
-- `/bookmarks` is `prerender = false` and lists the full collection,
-- Bookmarks is present in existing ArcadeShell/layout nav tests,
-- mobile Gallery can add/remove bookmarks while authenticated,
-- mobile Bookmarks reuses `FamilyCard` and normal download behavior,
-- stale mobile account epochs cannot apply old bookmark results,
-- Playwright uses stateful mocked bookmark endpoints rather than pretending to test D1,
-- shared/API/web/mobile/E2E checks pass,
+- bookmark persistence is player-isolated, idempotent, and bounded at 200,
+- new over-cap PUT returns 409 while existing PUT stays idempotent,
+- GET uses one ready-family resolver and a typed `PlayerBookmarkListResponse`,
+- PUT uses direct family readiness semantics: 400 malformed / 404 missing-or-non-ready,
+- web Gallery and `/bookmarks` share one bookmark store/mutation path,
+- `/bookmarks` is `prerender = false` and Bookmarks is in shell navigation,
+- raw-route Playwright proves Gallery → Bookmarks → reload → removal and reuses axe helpers,
+- mobile Gallery and Bookmarks reuse one `FamilyCard`,
+- mobile bookmark async results are guarded by mandatory pure epoch-tested state transitions,
+- signed-out/offline mobile functionality remains usable,
 - no non-goal subsystem was introduced.
