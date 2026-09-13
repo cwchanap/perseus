@@ -1,12 +1,7 @@
 <script lang="ts">
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import { GALLERY_DIFFICULTIES, getDifficultyLabel, selectVariantId } from './familyGallery';
-
-	type DownloadJobView = {
-		puzzleId: string;
-		done: number;
-		total: number;
-	};
+	import type { DownloadJobView } from './familyGallery';
 
 	export let family: PuzzleFamilySummary;
 	export let installedIds: ReadonlySet<string> = new Set();

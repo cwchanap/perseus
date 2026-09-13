@@ -17,12 +17,7 @@
 		InstalledDownload
 	} from './downloadStore';
 	import Gallery from './Gallery.svelte';
-
-	type DownloadJobView = {
-		puzzleId: string;
-		done: number;
-		total: number;
-	};
+	import type { DownloadJobView } from './familyGallery';
 
 	export let puzzleApi: PuzzleApi;
 	export let downloadStore: DownloadStore;

@@ -48,7 +48,8 @@ export function applyBookmarksLoad(
 	families: PuzzleFamilySummary[]
 ): BookmarkState {
 	if (requestEpoch !== currentEpoch) return state;
-	return { ...state, families, loading: false, error: null };
+	// Copy: the caller's array must not be mutated behind the state's back.
+	return { ...state, families: [...families], loading: false, error: null };
 }
 
 export function applyBookmarksLoadFailure(

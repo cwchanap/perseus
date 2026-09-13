@@ -7,12 +7,7 @@
 	} from './downloadedLibrary';
 	import { getDifficultyLabel } from './familyGallery';
 	import type { CorruptDownload } from './downloadStore';
-
-	type DownloadJobView = {
-		puzzleId: string;
-		done: number;
-		total: number;
-	};
+	import type { DownloadJobView } from './familyGallery';
 
 	export let rows: readonly DownloadedPuzzleRow[] = [];
 	export let downloadJob: DownloadJobView | null = null;

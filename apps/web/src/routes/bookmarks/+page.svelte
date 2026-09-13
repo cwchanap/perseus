@@ -18,7 +18,7 @@
 <section class="mx-auto max-w-5xl px-4 py-8">
 	<h1 class="font-(--font-display) text-(--text-0)">Bookmarks</h1>
 
-	{#if $bookmarks.error}
+	{#if $bookmarks.error && $bookmarks.status !== 'error'}
 		<p
 			role="alert"
 			data-testid="bookmarks-mutation-error"
@@ -41,7 +41,7 @@
 			Loading bookmarks…
 		</p>
 	{:else if $bookmarks.status === 'error'}
-		<p data-testid="bookmarks-error" class="mt-3 text-(--text-1)">
+		<p role="alert" data-testid="bookmarks-error" class="mt-3 text-(--text-1)">
 			{$bookmarks.error ?? 'Failed to load bookmarks'}
 		</p>
 		<button

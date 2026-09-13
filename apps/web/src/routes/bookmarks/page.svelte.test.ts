@@ -234,6 +234,9 @@ describe('Bookmarks Page', () => {
 		await expect
 			.element(page.getByTestId('bookmarks-error'))
 			.toHaveTextContent('Failed to load bookmarks');
+		// The load failure renders once: no duplicate mutation-error banner.
+		expect(page.getByTestId('bookmarks-mutation-error').query()).toBeNull();
+		await expect.element(page.getByTestId('bookmarks-error')).toHaveAttribute('role', 'alert');
 		await page.getByTestId('bookmarks-retry').click();
 		expect(mockBookmarks.load).toHaveBeenCalledTimes(2);
 	});

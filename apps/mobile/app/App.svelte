@@ -127,6 +127,13 @@
 	// starts against pre-load membership or races a GET that began before it.
 	let bookmarkLoadPromise: Promise<void> | null = null;
 
+	// Presentation only: between a validated restore and its bookmark load
+	// firing, the state is neither loading nor errored but also not loaded —
+	// report loading so the section doesn't flash the empty state prematurely.
+	$: bookmarkSectionLoading =
+		bookmarkState.loading ||
+		(accountSession !== null && bookmarksLoadedEpoch !== accountEpoch && !bookmarkState.error);
+
 	// Application + connectivity listeners run for the app's lifetime and are
 	// removed on teardown; no timer is involved.
 	onMount(() => {
@@ -468,7 +475,7 @@
 					onLaunch={(launch) => (screen = { kind: 'gameplay', launch })}
 					signedIn={accountSession !== null}
 					bookmarkFamilies={bookmarkState.families}
-					bookmarkLoading={bookmarkState.loading}
+					bookmarkLoading={bookmarkSectionLoading}
 					bookmarkError={bookmarkState.error}
 					bookmarkPendingIds={bookmarkState.pendingIds}
 					onBookmarkToggle={handleBookmarkToggle}

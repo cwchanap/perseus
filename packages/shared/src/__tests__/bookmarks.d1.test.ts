@@ -42,14 +42,12 @@ afterAll(async () => {
 	await mf.dispose();
 });
 
-/** Fills one player's bookmarks up to `count` rows via direct SQL (fast). */
+/** Fills one player's bookmarks up to `count` rows via one batched INSERT set. */
 async function seedBookmarks(playerId: string, count: number) {
-	for (let i = 0; i < count; i++) {
-		await d1
-			.prepare('INSERT INTO player_bookmarks (player_id, family_id, created_at) VALUES (?, ?, ?)')
-			.bind(playerId, `seeded-${i}`, i + 1)
-			.run();
-	}
+	const stmt = 'INSERT INTO player_bookmarks (player_id, family_id, created_at) VALUES (?, ?, ?)';
+	await d1.batch(
+		Array.from({ length: count }, (_, i) => d1.prepare(stmt).bind(playerId, `seeded-${i}`, i + 1))
+	);
 }
 
 describe('player bookmarks (D1)', () => {
@@ -74,6 +72,17 @@ describe('player bookmarks (D1)', () => {
 			{ familyId: 'family-new', createdAt: 30 },
 			{ familyId: 'family-mid', createdAt: 20 },
 			{ familyId: 'family-old', createdAt: 10 }
+		]);
+	});
+
+	it('breaks same-timestamp ties deterministically by family id', async () => {
+		await addPlayerBookmark(db, 'p6b', 'family-b', 100);
+		await addPlayerBookmark(db, 'p6b', 'family-a', 100);
+		await addPlayerBookmark(db, 'p6b', 'family-c', 100);
+		expect(await listPlayerBookmarks(db, 'p6b')).toEqual([
+			{ familyId: 'family-c', createdAt: 100 },
+			{ familyId: 'family-b', createdAt: 100 },
+			{ familyId: 'family-a', createdAt: 100 }
 		]);
 	});
 

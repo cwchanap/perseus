@@ -19,3 +19,9 @@ export function selectVariantId(family: PuzzleFamilySummary, difficulty: PuzzleD
 }
 
 export const GALLERY_DIFFICULTIES = PUZZLE_DIFFICULTIES;
+
+export interface DownloadJobView {
+	puzzleId: string;
+	done: number;
+	total: number;
+}

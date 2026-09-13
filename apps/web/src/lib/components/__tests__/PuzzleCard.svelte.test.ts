@@ -125,18 +125,22 @@ describe('PuzzleCard', () => {
 			bookmarked: false,
 			onBookmarkToggle: () => {}
 		});
-		await expect.element(page.getByRole('button', { name: 'Add bookmark' })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Add bookmark: Test Puzzle' }))
+			.toBeVisible();
 		unmount();
 
 		render(PuzzleCard, { family: mockFamily, bookmarked: true, onBookmarkToggle: () => {} });
-		await expect.element(page.getByRole('button', { name: 'Remove bookmark' })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Remove bookmark: Test Puzzle' }))
+			.toBeVisible();
 	});
 
 	it('passes the family to the toggle callback on click', async () => {
 		const onBookmarkToggle = vi.fn();
 		render(PuzzleCard, { family: mockFamily, onBookmarkToggle });
 
-		await page.getByRole('button', { name: 'Add bookmark' }).click();
+		await page.getByRole('button', { name: 'Add bookmark: Test Puzzle' }).click();
 
 		expect(onBookmarkToggle).toHaveBeenCalledOnce();
 		expect(onBookmarkToggle).toHaveBeenCalledWith(mockFamily);
@@ -149,7 +153,9 @@ describe('PuzzleCard', () => {
 			onBookmarkToggle: () => {}
 		});
 
-		await expect.element(page.getByRole('button', { name: 'Add bookmark' })).toBeDisabled();
+		await expect
+			.element(page.getByRole('button', { name: 'Add bookmark: Test Puzzle' }))
+			.toBeDisabled();
 	});
 
 	it('keeps difficulty links intact and hides the bookmark action without a callback', async () => {
@@ -161,6 +167,7 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByTestId('card-bookmark')).toBeVisible();
 		const actions = page.getByTestId('difficulty-action');
 		await expect.element(actions.nth(0)).toHaveAttribute('href', '/puzzle/var-e');
+		await expect.element(actions.nth(1)).toHaveAttribute('href', '/puzzle/var-n');
 		await expect.element(actions.nth(2)).toHaveAttribute('href', '/puzzle/var-h');
 	});
 });

@@ -162,8 +162,7 @@ describe('Puzzle Family Routes', () => {
 				category: undefined,
 				offset: 0,
 				limit: 20,
-				cursor: undefined,
-				readyOnly: true
+				cursor: undefined
 			});
 		});
 		it.each([
@@ -194,8 +193,7 @@ describe('Puzzle Family Routes', () => {
 					category: undefined,
 					offset,
 					limit,
-					cursor: undefined,
-					readyOnly: true
+					cursor: undefined
 				});
 			}
 		);
