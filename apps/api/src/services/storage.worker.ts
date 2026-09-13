@@ -789,6 +789,26 @@ export async function enrichFamilySummary(
 	};
 }
 
+/**
+ * Resolve family IDs to ready-family summaries for GET/list responses.
+ * Missing and non-ready families are skipped (filtered after the concurrent
+ * fetch so surviving input order is preserved); corrupt KV metadata rejects
+ * as in getFamily.
+ */
+export async function resolveReadyFamiliesByIds(
+	kv: KVNamespace,
+	familyIds: readonly string[]
+): Promise<PuzzleFamilySummary[]> {
+	const resolved = await Promise.all(
+		familyIds.map(async (familyId) => {
+			const family = await getFamily(kv, familyId);
+			if (!family || family.status !== 'ready') return null;
+			return enrichFamilySummary(kv, family);
+		})
+	);
+	return resolved.filter((family): family is PuzzleFamilySummary => family !== null);
+}
+
 export async function listFamiliesPage(
 	kv: KVNamespace,
 	params: {
@@ -839,17 +859,10 @@ export async function listFamiliesPage(
 
 	const page = filtered.slice(0, params.limit);
 
-	// Per-entry getFamily + enrich work is independent; fetch concurrently and
-	// keep the page's original order (nulls filtered below).
-	const families: PuzzleFamilySummary[] = (
-		await Promise.all(
-			page.map(async (entry) => {
-				const family = await getFamily(kv, entry.id);
-				if (!family) return null;
-				return enrichFamilySummary(kv, family);
-			})
-		)
-	).filter((family): family is PuzzleFamilySummary => family !== null);
+	const families = await resolveReadyFamiliesByIds(
+		kv,
+		page.map((entry) => entry.id)
+	);
 
 	const nextCursor =
 		filtered.length > params.limit ? encodeCursor(page[page.length - 1]) : undefined;

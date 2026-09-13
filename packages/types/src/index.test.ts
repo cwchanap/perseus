@@ -37,12 +37,14 @@ import {
 	validatePuzzleFamilyMetadata,
 	isPuzzleFamilySummary,
 	isPuzzleFamilyListResponse,
+	isPlayerBookmarkListResponse,
 	isPuzzleVariantSummary,
 	PUZZLE_DIFFICULTIES,
 	getDifficultyPieceCount,
 	type PuzzleFamilyMetadata,
 	type PuzzleFamilySummary,
 	type PuzzleFamilyListResponse,
+	type PlayerBookmarkListResponse,
 	type PuzzleVariantSummary
 } from './index';
 
@@ -1648,5 +1650,36 @@ describe('puzzle family contracts', () => {
 				limit: 20
 			})
 		).toBe(false);
+	});
+});
+
+describe('player bookmark list response contract', () => {
+	it('accepts a bookmark list response of valid family summaries', () => {
+		const response: PlayerBookmarkListResponse = {
+			families: [makeFamilySummary()]
+		};
+		expect(isPlayerBookmarkListResponse(response)).toBe(true);
+	});
+
+	it('accepts an empty bookmark list response', () => {
+		expect(isPlayerBookmarkListResponse({ families: [] })).toBe(true);
+	});
+
+	it('rejects a bookmark list response with malformed family entries', () => {
+		expect(
+			isPlayerBookmarkListResponse({
+				families: [makeFamilySummary(), { ...makeFamilySummary(), pieceCount: 12 }]
+			})
+		).toBe(false);
+	});
+
+	it('rejects a bookmark list response without a families array', () => {
+		expect(isPlayerBookmarkListResponse({})).toBe(false);
+		expect(isPlayerBookmarkListResponse({ families: makeFamilySummary() })).toBe(false);
+	});
+
+	it('rejects null and non-object values', () => {
+		expect(isPlayerBookmarkListResponse(null)).toBe(false);
+		expect(isPlayerBookmarkListResponse('families')).toBe(false);
 	});
 });
