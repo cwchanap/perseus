@@ -97,6 +97,12 @@ describe('applyBookmarksLoad', () => {
 		expect(loaded.error).toBe(null);
 	});
 
+	it('preserves pending markers for toggles still in flight', () => {
+		const state = setFamilyPending(beginBookmarksLoad(createBookmarkState()), FAMILY_A, true);
+		const loaded = applyBookmarksLoad(state, 1, 1, [familySummary(FAMILY_B)]);
+		expect(loaded.pendingIds).toEqual([FAMILY_A]);
+	});
+
 	it('ignores a stale load result and returns the prior state unchanged', () => {
 		const state = beginBookmarksLoad(createBookmarkState());
 		const stale = applyBookmarksLoad(state, 2, 3, [familySummary(FAMILY_A)]);
@@ -145,6 +151,18 @@ describe('applyBookmarkAdd', () => {
 		expect(state.families).toEqual([familySummary(FAMILY_A)]);
 		expect(state.pendingIds).toEqual([]);
 		expect(state.error).toBe(null);
+	});
+
+	it('prepends a new family ahead of the existing newest-first bookmarks', () => {
+		const state = applyBookmarksLoad(createBookmarkState(), 1, 1, [familySummary(FAMILY_A)]);
+		const added = applyBookmarkAdd(
+			setFamilyPending(state, FAMILY_B, true),
+			1,
+			1,
+			familySummary(FAMILY_B)
+		);
+		expect(added.families.map((entry) => entry.id)).toEqual([FAMILY_B, FAMILY_A]);
+		expect(added.pendingIds).toEqual([]);
 	});
 
 	it('inserts a family only once when it is already bookmarked', () => {

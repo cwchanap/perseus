@@ -98,6 +98,15 @@ function fakeApi(
 		logout: async () => {
 			throw new Error('unexpected logout');
 		},
+		getBookmarks: async () => {
+			throw new Error('unexpected getBookmarks');
+		},
+		bookmarkFamily: async () => {
+			throw new Error('unexpected bookmarkFamily');
+		},
+		unbookmarkFamily: async () => {
+			throw new Error('unexpected unbookmarkFamily');
+		},
 		submitCompletion: async (puzzleId, _request, token) => {
 			calls.push({ puzzleId, token });
 			const index = calls.length - 1;

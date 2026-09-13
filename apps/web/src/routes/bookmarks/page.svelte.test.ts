@@ -194,6 +194,30 @@ describe('Bookmarks Page', () => {
 		await expect.element(page.getByRole('button', { name: 'Remove bookmark' })).toBeVisible();
 	});
 
+	it('shows a mutation error banner even when bookmarks are loaded', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: 'bookmark_limit_reached',
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+
+		// Mutation errors surface independently of load status so a failed
+		// toggle (e.g. the 409 quota response) is still visible.
+		await expect
+			.element(page.getByTestId('bookmarks-mutation-error'))
+			.toHaveTextContent('bookmark_limit_reached');
+		await expect
+			.element(page.getByTestId('bookmarks-mutation-error'))
+			.toHaveAttribute('role', 'alert');
+		await expect.element(page.getByTestId('bookmarks-grid')).toBeVisible();
+	});
+
 	it('shows the store error with a retry that reloads', async () => {
 		mockPlayerAuth.set(authenticatedAuth);
 		mockBookmarks.set({

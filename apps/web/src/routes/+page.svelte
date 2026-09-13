@@ -547,19 +547,26 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 				</button>
 			</div>
 		{:else}
-			<div
-				class="puzzle-grid motion-safe:animate-[slide-up_0.4s_ease-out] motion-reduce:animate-none"
-				data-testid="puzzle-grid"
-			>
-				{#each families as family (family.id)}
-					<PuzzleCard
-						{family}
-						progressByVariantId={cardProgressByVariantId}
-						bookmarked={$bookmarks.ids.includes(family.id)}
-						bookmarkPending={$bookmarks.pendingIds.includes(family.id)}
-						onBookmarkToggle={authenticated ? bookmarks.toggle : undefined}
-					/>
-				{/each}
+			<div class="cards-area">
+				{#if authenticated && $bookmarks.error}
+					<p class="bookmark-error" role="alert" data-testid="gallery-bookmark-error">
+						{$bookmarks.error}
+					</p>
+				{/if}
+				<div
+					class="puzzle-grid motion-safe:animate-[slide-up_0.4s_ease-out] motion-reduce:animate-none"
+					data-testid="puzzle-grid"
+				>
+					{#each families as family (family.id)}
+						<PuzzleCard
+							{family}
+							progressByVariantId={cardProgressByVariantId}
+							bookmarked={$bookmarks.ids.includes(family.id)}
+							bookmarkPending={$bookmarks.pendingIds.includes(family.id)}
+							onBookmarkToggle={authenticated ? bookmarks.toggle : undefined}
+						/>
+					{/each}
+				</div>
 			</div>
 
 			{#if loadingMore}
@@ -868,9 +875,26 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		justify-content: center;
 	}
 
+	.cards-area {
+		display: flex;
+		flex-direction: column;
+		gap: 0.875rem;
+		grid-area: cards;
+	}
+
+	.bookmark-error {
+		margin: 0;
+		padding: 0.55rem 0.9rem;
+		border: 1px solid var(--hot);
+		border-radius: 0.75rem;
+		background: rgba(255, 0, 102, 0.06);
+		color: var(--text-1);
+		font-size: 0.8rem;
+		letter-spacing: 0.03em;
+	}
+
 	.puzzle-grid {
 		display: grid;
-		grid-area: cards;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		align-items: start;
 		gap: 1.125rem;
@@ -1109,8 +1133,11 @@ hover:bg-[rgba(255,0,102,0.08)]"
 			height: 2rem;
 		}
 
-		.puzzle-grid {
+		.cards-area {
 			order: 3;
+		}
+
+		.puzzle-grid {
 			grid-template-columns: minmax(0, 1fr);
 			gap: 1rem;
 		}

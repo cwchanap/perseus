@@ -68,9 +68,10 @@ export function applyBookmarkAdd(
 	family: PuzzleFamilySummary
 ): BookmarkState {
 	if (requestEpoch !== currentEpoch) return state;
+	// GET returns newest-first, so a fresh bookmark slots to the front.
 	const families = state.families.some((existing) => existing.id === family.id)
 		? state.families
-		: [...state.families, family];
+		: [family, ...state.families];
 	return setFamilyPending({ ...state, families, error: null }, family.id, false);
 }
 

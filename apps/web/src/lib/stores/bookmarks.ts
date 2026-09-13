@@ -38,6 +38,9 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 	// Bumped on every identity change/clear; async results captured against it
 	// are dropped when it moves on, so old-account responses never land.
 	let version = 0;
+	// Bumped on every successful mutation; a GET that captured an older value
+	// carries a snapshot older than local state and must not be applied.
+	let mutationRevision = 0;
 
 	subscribe((value) => {
 		state = value;
@@ -68,11 +71,19 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 
 			const at = version;
 			const accountId = currentAccountId;
-			loadPromise = (async () => {
+			const runLoad = async (): Promise<void> => {
 				update((value) => ({ ...value, status: 'loading', error: null }));
 				try {
+					const revisionBefore = mutationRevision;
 					const response = await getPlayerBookmarks();
 					if (stale(at)) return;
+					if (mutationRevision !== revisionBefore) {
+						// A mutation completed while this GET was in flight, so the
+						// snapshot is older than local state: discard it and refetch.
+						// Converges — a retry only runs when a mutation landed mid-GET.
+						await runLoad();
+						return;
+					}
 					loadedAccountId = accountId;
 					set({
 						accountId,
@@ -80,7 +91,9 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 						families: response.families,
 						ids: response.families.map((family) => family.id),
 						error: null,
-						pendingIds: []
+						// Pending markers belong to in-flight toggles; a load apply
+						// must not clear them or the family could double-submit.
+						pendingIds: state.pendingIds
 					});
 				} catch (error) {
 					if (stale(at)) return;
@@ -89,6 +102,11 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 						status: 'error',
 						error: toErrorMessage(error, 'Failed to load bookmarks')
 					}));
+				}
+			};
+			loadPromise = (async () => {
+				try {
+					await runLoad();
 				} finally {
 					if (!stale(at)) loadPromise = null;
 				}
@@ -96,6 +114,9 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 			return loadPromise;
 		},
 		async toggle(family: PuzzleFamilySummary): Promise<void> {
+			// Serialize behind an in-flight load: the mutation must start against
+			// post-load membership and cannot race a GET that began before it.
+			if (loadPromise) await loadPromise;
 			if (!currentAccountId || state.pendingIds.includes(family.id)) return;
 			const wasBookmarked = state.ids.includes(family.id);
 			const at = version;
@@ -112,10 +133,12 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 					await bookmarkFamily(family.id);
 				}
 				if (stale(at)) return;
+				mutationRevision++;
 				update((value) => {
+					// GET returns newest-first, so a fresh bookmark slots to the front.
 					const families = wasBookmarked
 						? value.families.filter((candidate) => candidate.id !== family.id)
-						: [...value.families, family];
+						: [family, ...value.families];
 					return {
 						...value,
 						families,
