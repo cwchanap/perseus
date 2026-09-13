@@ -4,8 +4,22 @@ import { Hono } from 'hono';
 
 // Mock the Worker DB factory so the route never touches a real D1 binding.
 vi.mock('../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => ({})),
+	getWorkerDbContext: vi.fn(() => ({
+		db: {},
+		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
+	}))
 }));
+
+// Wrap the KV resolver in a spy (real behavior by default) so the GET 500
+// defense-in-depth branch can be forced with a malformed payload.
+vi.mock('../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../services/storage.worker')>();
+	return {
+		...actual,
+		resolveReadyFamiliesByIds: vi.fn(actual.resolveReadyFamiliesByIds)
+	};
+});
 
 vi.mock('@perseus/types', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/types')>();
@@ -33,6 +47,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const puzzlesStore = new Map<string, unknown[]>();
 	const familiesStore = new Map<string, unknown[]>();
 	const statsStore = new Map<string, unknown[]>();
+	const bookmarksStore = new Map<string, { familyId: string; createdAt: number }[]>();
 	return {
 		...actual,
 		// Mock validateImageEndMarker so the synthetic PNG_BYTES fixture
@@ -44,6 +59,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		__puzzlesStore: puzzlesStore,
 		__familiesStore: familiesStore,
 		__statsStore: statsStore,
+		__bookmarksStore: bookmarksStore,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
 		// Field-specific upserts mirror the real ON CONFLICT behavior: each
 		// writes only its column, preserving the other.
@@ -116,6 +132,26 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 				}
 				return { rows: statsStore.get(playerId) ?? [] };
 			}
+		),
+		// Bookmark helpers mirror the real store semantics loosely: the route
+		// tests only need added/existing ordering; real D1 duplicate/cap
+		// behavior is covered by the packages/shared D1 suite.
+		addPlayerBookmark: vi.fn(
+			async (_db: unknown, playerId: string, familyId: string, createdAt = Date.now()) => {
+				const rows = bookmarksStore.get(playerId) ?? [];
+				if (rows.some((row) => row.familyId === familyId)) return 'existing';
+				bookmarksStore.set(playerId, [...rows, { familyId, createdAt }]);
+				return 'added';
+			}
+		),
+		removePlayerBookmark: vi.fn(async (_db: unknown, playerId: string, familyId: string) => {
+			bookmarksStore.set(
+				playerId,
+				(bookmarksStore.get(playerId) ?? []).filter((row) => row.familyId !== familyId)
+			);
+		}),
+		listPlayerBookmarks: vi.fn(async (_db: unknown, playerId: string) =>
+			[...(bookmarksStore.get(playerId) ?? [])].sort((a, b) => b.createdAt - a.createdAt)
 		)
 	};
 });
@@ -132,6 +168,8 @@ import type { Env } from '../worker';
 import * as playerAuth from '../services/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 import { validateImageEndMarker } from '@perseus/shared';
+import { isPlayerBookmarkListResponse, type PuzzleFamilyMetadata } from '@perseus/types';
+import { makeFamilyMetadata } from './__tests__/helpers/family-fixtures';
 
 const TEST_PLAYER: PlayerSessionRecord = {
 	user: {
@@ -1720,5 +1758,298 @@ describe('player response validation (Worker)', () => {
 		const res = await buildApp().request('/api/player/stats', { headers: AUTH_COOKIE }, DUMMY_ENV);
 		expect(res.status).toBe(500);
 		expect(((await res.json()) as any).error).toBe('internal_error');
+	});
+});
+
+// Minimal in-memory KVNamespace double supporting the get(..., 'json') path
+// getFamily uses, following the repo's existing route-test mock style.
+function createMockKV() {
+	const store = new Map<string, string>();
+	return {
+		get: async (key: string, type?: string) => {
+			const value = store.get(key);
+			if (value === undefined) return null;
+			if (type === 'json') return JSON.parse(value);
+			return value;
+		},
+		put: async (key: string, value: string) => {
+			store.set(key, value);
+		},
+		delete: async (key: string) => {
+			store.delete(key);
+		},
+		_store: store
+	};
+}
+
+describe('player bookmarks (Worker)', () => {
+	const FAMILY_ID = '550e8400-e29b-41d4-a716-446655440000';
+	const FAMILY_ID_B = '550e8400-e29b-41d4-a716-446655440001';
+	const FAMILY_ID_C = '550e8400-e29b-41d4-a716-446655440002';
+	const FAMILY_ID_D = '550e8400-e29b-41d4-a716-446655440003';
+
+	function bookmarkEnv(kv: ReturnType<typeof createMockKV>): Env {
+		return { PUZZLE_METADATA: kv } as unknown as Env;
+	}
+
+	// Variant ids must be valid puzzle UUIDs for validatePuzzleFamilyMetadata;
+	// derive them from the family id by replacing the last two hex digits.
+	function variantId(familyId: string, suffix: string) {
+		return familyId.slice(0, -2) + suffix;
+	}
+
+	async function seedFamily(
+		kv: ReturnType<typeof createMockKV>,
+		id: string,
+		status: PuzzleFamilyMetadata['status'] = 'ready'
+	) {
+		const metadata = makeFamilyMetadata(id, status, {
+			variants: {
+				easy: variantId(id, '11'),
+				normal: variantId(id, '22'),
+				hard: variantId(id, '33')
+			}
+		});
+		await kv.put(`family:${id}`, JSON.stringify(metadata));
+	}
+
+	beforeEach(async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__bookmarksStore.clear();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+	});
+
+	it('GET /bookmarks requires authentication', async () => {
+		const res = await buildApp().request('/api/player/bookmarks', {}, DUMMY_ENV);
+		expect(res.status).toBe(401);
+	});
+
+	it('PUT /bookmarks/:familyId requires authentication', async () => {
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT' },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(401);
+	});
+
+	it('DELETE /bookmarks/:familyId requires authentication', async () => {
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'DELETE' },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(401);
+	});
+
+	it('PUT rejects a malformed family id with 400', async () => {
+		const res = await buildApp().request(
+			'/api/player/bookmarks/not-a-uuid',
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).error).toBe('bad_request');
+	});
+
+	it('DELETE rejects a malformed family id with 400', async () => {
+		const res = await buildApp().request(
+			'/api/player/bookmarks/not-a-uuid',
+			{ method: 'DELETE', headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).error).toBe('bad_request');
+	});
+
+	it('PUT returns 404 when the family is missing from KV', async () => {
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			bookmarkEnv(createMockKV())
+		);
+		expect(res.status).toBe(404);
+		expect(((await res.json()) as any).error).toBe('not_found');
+	});
+
+	it('PUT returns 404 when the family is not ready', async () => {
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID, 'processing');
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(404);
+		expect(((await res.json()) as any).error).toBe('not_found');
+	});
+
+	it('PUT with a ready family calls the repository helper and succeeds', async () => {
+		const shared = await import('@perseus/shared');
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID);
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(shared.addPlayerBookmark).toHaveBeenCalledWith({}, 'p1', FAMILY_ID);
+	});
+
+	it('PUT succeeds when the bookmark already exists', async () => {
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.addPlayerBookmark).mockResolvedValueOnce('existing');
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID);
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+	});
+
+	it('PUT returns 409 with bookmark_limit_reached when the cap is hit', async () => {
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.addPlayerBookmark).mockResolvedValueOnce('limit_reached');
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID);
+		const res = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'PUT', headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({
+			error: 'bookmark_limit_reached',
+			message: 'Maximum 200 bookmarks reached'
+		});
+	});
+
+	it('GET returns typed enriched family summaries in bookmark order', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__bookmarksStore.set('p1', [{ familyId: FAMILY_ID, createdAt: 100 }]);
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID);
+		const res = await buildApp().request(
+			'/api/player/bookmarks',
+			{ headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body).toEqual({
+			families: [
+				{
+					id: FAMILY_ID,
+					name: `Family ${FAMILY_ID}`,
+					aspectRatio: '1:1',
+					status: 'ready',
+					createdAt: 1700000000000,
+					variants: {
+						easy: {
+							id: variantId(FAMILY_ID, '11'),
+							difficulty: 'easy',
+							pieceCount: 16,
+							status: 'ready'
+						},
+						normal: {
+							id: variantId(FAMILY_ID, '22'),
+							difficulty: 'normal',
+							pieceCount: 49,
+							status: 'ready'
+						},
+						hard: {
+							id: variantId(FAMILY_ID, '33'),
+							difficulty: 'hard',
+							pieceCount: 100,
+							status: 'ready'
+						}
+					}
+				}
+			]
+		});
+		expect(isPlayerBookmarkListResponse(body)).toBe(true);
+		expect(shared.listPlayerBookmarks).toHaveBeenCalledWith({}, 'p1');
+	});
+
+	it('GET skips missing and non-ready KV rows and preserves surviving order', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__bookmarksStore.set('p1', [
+			{ familyId: FAMILY_ID, createdAt: 400 },
+			{ familyId: FAMILY_ID_B, createdAt: 300 },
+			{ familyId: FAMILY_ID_C, createdAt: 200 },
+			{ familyId: FAMILY_ID_D, createdAt: 100 }
+		]);
+		const kv = createMockKV();
+		await seedFamily(kv, FAMILY_ID);
+		// FAMILY_ID_B has no KV row (deleted family) and FAMILY_ID_C is not ready.
+		await seedFamily(kv, FAMILY_ID_C, 'failed');
+		await seedFamily(kv, FAMILY_ID_D);
+		const res = await buildApp().request(
+			'/api/player/bookmarks',
+			{ headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.families.map((f: { id: string }) => f.id)).toEqual([FAMILY_ID, FAMILY_ID_D]);
+	});
+
+	it('GET returns 500 when KV metadata is corrupt rather than omitting the row', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__bookmarksStore.set('p1', [{ familyId: FAMILY_ID, createdAt: 100 }]);
+		const kv = createMockKV();
+		await kv.put(`family:${FAMILY_ID}`, JSON.stringify({}));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const res = await buildApp().request(
+			'/api/player/bookmarks',
+			{ headers: AUTH_COOKIE },
+			bookmarkEnv(kv)
+		);
+		expect(res.status).toBe(500);
+		// Hono's default error handler answers the unhandled rejection with a
+		// plain-text 500 — the corrupt row must never be silently omitted.
+		consoleSpy.mockRestore();
+	});
+
+	it('GET returns 500 when the assembled bookmark list fails validation', async () => {
+		const shared = await import('@perseus/shared');
+		const storage = await import('../services/storage.worker');
+		(shared as any).__bookmarksStore.set('p1', [{ familyId: FAMILY_ID, createdAt: 100 }]);
+		vi.mocked(storage.resolveReadyFamiliesByIds).mockResolvedValueOnce([{ id: FAMILY_ID } as any]);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const res = await buildApp().request(
+			'/api/player/bookmarks',
+			{ headers: AUTH_COOKIE },
+			bookmarkEnv(createMockKV())
+		);
+		expect(res.status).toBe(500);
+		expect(((await res.json()) as any).error).toBe('internal_error');
+		consoleSpy.mockRestore();
+	});
+
+	it('DELETE removes the bookmark and repeated DELETE succeeds', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__bookmarksStore.set('p1', [{ familyId: FAMILY_ID, createdAt: 100 }]);
+		const first = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'DELETE', headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toEqual({ ok: true });
+		expect((shared as any).__bookmarksStore.get('p1')).toEqual([]);
+
+		const second = await buildApp().request(
+			`/api/player/bookmarks/${FAMILY_ID}`,
+			{ method: 'DELETE', headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(second.status).toBe(200);
+		expect(shared.removePlayerBookmark).toHaveBeenCalledTimes(2);
 	});
 });
