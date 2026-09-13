@@ -26,6 +26,10 @@ export async function ensureWorkerPuzzleDeletionFence(
 
 export async function completeWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
 	const { db, completionWrites } = getWorkerDbContext(env);
+	// Ownership row first: addPlayerBookmark's insert is gated on the
+	// puzzle_families row existing, so removing it here closes the fence —
+	// any in-flight PUT that passed the KV readiness check can no longer
+	// insert, and the bookmark sweep then clears rows that landed earlier.
 	await deletePuzzleFamilyOwnership(db, record.familyId);
 	await deletePlayerBookmarksByFamily(db, record.familyId);
 	for (const difficulty of PUZZLE_DIFFICULTIES) {

@@ -514,7 +514,15 @@ player.put('/bookmarks/:familyId', requirePlayerAuth, async (c) => {
 		return c.json({ error: 'not_found', message: 'Puzzle family not found' }, 404);
 	}
 	const db = getWorkerDbContext(c.env).db;
+	// The insert is fenced on the family's puzzle_families row inside the same
+	// D1 batch: KV readiness above can race with family deletion (stale KV or
+	// a check that ran before deletion started), so the D1 ownership row is
+	// the authoritative live-family marker. 'family_missing' means deletion
+	// already ran — surface the same 404 as the KV check.
 	const result = await addPlayerBookmark(db, c.get('playerSession').user.id, familyId);
+	if (result === 'family_missing') {
+		return c.json({ error: 'not_found', message: 'Puzzle family not found' }, 404);
+	}
 	if (result === 'limit_reached') {
 		return c.json(
 			{ error: 'bookmark_limit_reached', message: 'Maximum 200 bookmarks reached' },
