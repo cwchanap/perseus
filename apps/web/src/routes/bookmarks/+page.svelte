@@ -59,3 +59,7 @@
 		</div>
 	{/if}
 </section>
+
+<svelte:head>
+	<title>Bookmarks | Perseus</title>
+</svelte:head>
