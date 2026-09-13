@@ -12,6 +12,7 @@ import {
 	listFamiliesPage,
 	listFamilies,
 	enrichFamilySummary,
+	resolveReadyFamiliesByIds,
 	puzzleExists,
 	getOriginalKey,
 	getThumbnailKey,
@@ -1563,5 +1564,63 @@ describe('buildFamilyMetadata', () => {
 		});
 
 		expect('idempotencyKey' in family).toBe(false);
+	});
+});
+
+describe('resolveReadyFamiliesByIds', () => {
+	it('skips missing families', async () => {
+		const kv = createMockKV();
+		const family = storeFamily(kv, { id: pageFamilyId(1), name: 'Alpha', createdAt: 2000 });
+
+		const result = await resolveReadyFamiliesByIds(kv as unknown as KVNamespace, [
+			family.id,
+			pageFamilyId(2)
+		]);
+
+		expect(result.map((f) => f.id)).toEqual([family.id]);
+	});
+
+	it('skips non-ready families', async () => {
+		const kv = createMockKV();
+		const ready = storeFamily(kv, { id: pageFamilyId(1), name: 'Alpha', createdAt: 2000 });
+		const processing = storeFamily(kv, {
+			id: pageFamilyId(2),
+			name: 'Beta',
+			createdAt: 1000,
+			status: 'processing'
+		});
+
+		const result = await resolveReadyFamiliesByIds(kv as unknown as KVNamespace, [
+			ready.id,
+			processing.id
+		]);
+
+		expect(result.map((f) => f.id)).toEqual([ready.id]);
+	});
+
+	it('preserves input order of surviving families', async () => {
+		const kv = createMockKV();
+		const a = storeFamily(kv, { id: pageFamilyId(1), name: 'Alpha', createdAt: 3000 });
+		const b = storeFamily(kv, { id: pageFamilyId(2), name: 'Beta', createdAt: 2000 });
+		const c = storeFamily(kv, { id: pageFamilyId(3), name: 'Gamma', createdAt: 1000 });
+
+		const result = await resolveReadyFamiliesByIds(kv as unknown as KVNamespace, [
+			c.id,
+			pageFamilyId(9),
+			a.id,
+			b.id
+		]);
+
+		expect(result.map((f) => f.id)).toEqual([c.id, a.id, b.id]);
+	});
+
+	it('rejects when family metadata is corrupt', async () => {
+		const kv = createMockKV();
+		const corruptId = pageFamilyId(4);
+		kv._store.set(`family:${corruptId}`, JSON.stringify({ id: corruptId, name: 'Broken' }));
+
+		await expect(
+			resolveReadyFamiliesByIds(kv as unknown as KVNamespace, [corruptId])
+		).rejects.toThrow('Corrupt family metadata');
 	});
 });

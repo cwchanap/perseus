@@ -128,6 +128,22 @@ export function isPuzzleFamilySummary(value: unknown): value is PuzzleFamilySumm
 	});
 }
 
+/**
+ * Bookmark list payload for a player's saved puzzle families. Unlike
+ * PuzzleFamilyListResponse there is no pagination contract (total/offset/
+ * limit/cursor) — the full bookmark set is returned at once.
+ */
+export interface PlayerBookmarkListResponse {
+	families: PuzzleFamilySummary[];
+}
+
+export function isPlayerBookmarkListResponse(value: unknown): value is PlayerBookmarkListResponse {
+	if (typeof value !== 'object' || value === null) return false;
+	const response = value as Record<string, unknown>;
+	if (!Array.isArray(response.families)) return false;
+	return response.families.every(isPuzzleFamilySummary);
+}
+
 export function isPuzzleFamilyListResponse(value: unknown): value is PuzzleFamilyListResponse {
 	if (typeof value !== 'object' || value === null) return false;
 	const response = value as Record<string, unknown>;
