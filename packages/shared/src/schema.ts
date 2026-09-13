@@ -167,6 +167,19 @@ export const playerCompletionUsage = sqliteTable(
 	})
 );
 
+export const playerBookmarks = sqliteTable(
+	'player_bookmarks',
+	{
+		playerId: text('player_id').notNull(),
+		familyId: text('family_id').notNull(),
+		createdAt: integer('created_at').notNull()
+	},
+	(t) => ({
+		pk: primaryKey({ columns: [t.playerId, t.familyId] }),
+		playerCreatedIdx: index('idx_player_bookmarks_player_created').on(t.playerId, t.createdAt)
+	})
+);
+
 export const puzzleFamilies = sqliteTable(
 	'puzzle_families',
 	{

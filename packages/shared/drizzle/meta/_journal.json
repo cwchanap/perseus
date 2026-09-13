@@ -57,6 +57,13 @@
 			"when": 1787900100000,
 			"tag": "0007_puzzle_leaderboard_index",
 			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "6",
+			"when": 1789273652883,
+			"tag": "0008_player_bookmarks",
+			"breakpoints": true
 		}
 	]
 }

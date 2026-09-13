@@ -1,4 +1,5 @@
 export * from './schema';
+export * from './bookmarks';
 export * from './types';
 export * from './repositories';
 export * from './image';

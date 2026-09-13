@@ -36,9 +36,9 @@ describe('schema tables', () => {
 			expect(existsSync(snapshotPath)).toBe(true);
 		}
 		const latest = journal.entries[journal.entries.length - 1];
-		expect(latest.tag).toBe('0007_puzzle_leaderboard_index');
+		expect(latest.tag).toBe('0008_player_bookmarks');
 		const latestSnapshot = JSON.parse(
-			readFileSync('./drizzle/meta/0007_snapshot.json', 'utf8')
+			readFileSync('./drizzle/meta/0008_snapshot.json', 'utf8')
 		) as {
 			prevId: string;
 			tables: {
@@ -47,14 +47,32 @@ describe('schema tables', () => {
 					indexes: Record<string, { columns: string[] }>;
 				};
 				puzzle_completion_runs: { checkConstraints: Record<string, { value: string }> };
+				player_bookmarks: {
+					columns: Record<string, { type: string; notNull: boolean }>;
+					indexes: Record<string, { columns: string[] }>;
+					compositePrimaryKeys: Record<string, { columns: string[] }>;
+				};
 			};
 		};
 		const previousSnapshot = JSON.parse(
-			readFileSync('./drizzle/meta/0006_snapshot.json', 'utf8')
+			readFileSync('./drizzle/meta/0007_snapshot.json', 'utf8')
 		) as {
 			id: string;
 		};
 		expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
+		expect(latestSnapshot.tables.player_bookmarks.columns).toMatchObject({
+			player_id: { type: 'text', notNull: true },
+			family_id: { type: 'text', notNull: true },
+			created_at: { type: 'integer', notNull: true }
+		});
+		expect(latestSnapshot.tables.player_bookmarks.compositePrimaryKeys).toMatchObject({
+			player_bookmarks_player_id_family_id_pk: { columns: ['player_id', 'family_id'] }
+		});
+		expect(
+			latestSnapshot.tables.player_bookmarks.indexes.idx_player_bookmarks_player_created
+		).toMatchObject({
+			columns: ['player_id', 'created_at']
+		});
 		expect(
 			latestSnapshot.tables.puzzle_best_times.checkConstraints.pbt_best_time_seconds_check.value
 		).toBe('"puzzle_best_times"."best_time_seconds" BETWEEN 1 AND 86400');
@@ -117,6 +135,7 @@ describe('schema tables', () => {
 			.all() as { name: string }[];
 		expect(tableNames.map((table) => table.name)).toEqual(
 			expect.arrayContaining([
+				'player_bookmarks',
 				'player_achievements',
 				'player_completion_usage',
 				'player_difficulty_completions',
@@ -465,6 +484,18 @@ describe('schema tables', () => {
 		expect(migrationSql).toMatch(/DROP TABLE `completion_usage_backfill_guard`/);
 		expect(statements).toHaveLength(15);
 		expect(triggers).toHaveLength(9);
+	});
+
+	it('keeps migration 0008 additive', () => {
+		const migrationSql = readFileSync('./drizzle/0008_player_bookmarks.sql', 'utf8');
+		expect(migrationSql).toContain('CREATE TABLE `player_bookmarks`');
+		expect(migrationSql).toContain('PRIMARY KEY(`player_id`, `family_id`)');
+		expect(migrationSql).toContain(
+			'CREATE INDEX `idx_player_bookmarks_player_created` ON `player_bookmarks` (`player_id`,`created_at`)'
+		);
+		const destructiveMatches =
+			migrationSql.match(/\b(?:ALTER|DROP|RENAME)\s+(?:TABLE|INDEX|TRIGGER)\b/gi) ?? [];
+		expect(destructiveMatches).toEqual([]);
 	});
 
 	it('keeps migration 0005 additive and pins puzzle_families ownership schema', () => {
