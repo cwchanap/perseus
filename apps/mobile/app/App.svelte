@@ -6,7 +6,7 @@
 		type SealedCompletion,
 		type SessionStorageAdapter
 	} from '@perseus/game-core';
-	import type { PlayerSessionResponse } from '@perseus/types';
+	import type { PlayerSessionResponse, PuzzleFamilySummary } from '@perseus/types';
 	import { createPlayerApi } from './api/playerApi';
 	import { createPuzzleApi } from './api/puzzleApi';
 	import { nativePuzzleJsonRequest, nativePlayerHttpTransport } from './api/nativeHttp';
@@ -34,6 +34,19 @@
 		type DownloadCancellation,
 		type DownloadStore
 	} from './library/downloadStore';
+	import {
+		applyBookmarkAdd,
+		applyBookmarkAddFailure,
+		applyBookmarkRemove,
+		applyBookmarkRemoveFailure,
+		applyBookmarksLoad,
+		applyBookmarksLoadFailure,
+		beginBookmarksLoad,
+		clearBookmarks,
+		createBookmarkState,
+		setFamilyPending,
+		type BookmarkState
+	} from './library/bookmarkState';
 	import { downloadNativeAsset, createNativeDownloadFileOps } from './library/nativeDownloadFiles';
 	import type { GameplayLaunch } from './library/downloadedLibrary';
 
@@ -103,6 +116,13 @@
 	// of applied, so a stale account can never rewrite state or secure storage
 	// after a logout or account switch.
 	let accountEpoch = 0;
+	// Transient bookmark state for the signed-in account. Every fetch/mutation
+	// captures the epoch at its start; results apply only while it is current.
+	// Sign-out/account switch clears it (see clearAccountSession/handleSignOut).
+	let bookmarkState: BookmarkState = createBookmarkState();
+	// Epoch whose validated session last finished a bookmark load; the load is
+	// retried on later validated passes (resume/connectivity) until one succeeds.
+	let bookmarksLoadedEpoch: number | null = null;
 
 	// Application + connectivity listeners run for the app's lifetime and are
 	// removed on teardown; no timer is involved.
@@ -157,6 +177,7 @@
 			} else {
 				accountSession = decision.session;
 				nativeMobileSessionStore.write(JSON.stringify(decision.session));
+				if (decision.kind === 'authenticated') void loadBookmarks();
 				if (shouldDrainAfterRestore(decision)) {
 					accountStatus = 'idle';
 					// Cold launch while already online: resume/connectivity triggers
@@ -193,6 +214,7 @@
 		nativeMobileSessionStore.clear();
 		accountSession = null;
 		accountStatus = 'idle';
+		bookmarkState = clearBookmarks();
 	}
 
 	function persistAccountSession(session: PersistedMobileSession): void {
@@ -239,6 +261,9 @@
 		const decision = applySessionProbe(session, response);
 		applyProbeDecision(epoch, decision);
 		if (decision.kind !== 'authenticated') return;
+		// Validated session: pick up bookmarks if not loaded for this epoch yet
+		// (covers offline restores that only validate on a later resume).
+		void loadBookmarks();
 
 		const disposition = await drainPendingCompletions({
 			activeSession: decision.session,
@@ -252,6 +277,64 @@
 		// the same two-strike probe policy once. The bearer is never deleted on
 		// a single 401 — only a second consecutive unauthenticated result clears.
 		applyProbeDecision(epoch, applySessionProbe(decision.session, { authenticated: false }));
+	}
+
+	// --- Bookmarks ------------------------------------------------------------------
+
+	// One bookmark GET per session epoch. Guarded by the in-flight loading flag
+	// and the loaded epoch so the validated-drain trigger stays a no-op once a
+	// load has succeeded. Failures leave the epoch unmarked, so the next
+	// validated pass retries; errors surface in the bookmark section only.
+	async function loadBookmarks(): Promise<void> {
+		const session = accountSession;
+		if (!session || bookmarkState.loading || bookmarksLoadedEpoch === accountEpoch) return;
+		const requestEpoch = accountEpoch;
+		const token = session.token;
+		bookmarkState = beginBookmarksLoad(bookmarkState);
+		try {
+			const response = await playerApi.getBookmarks(token);
+			bookmarkState = applyBookmarksLoad(
+				bookmarkState,
+				requestEpoch,
+				accountEpoch,
+				response.families
+			);
+			if (requestEpoch === accountEpoch) bookmarksLoadedEpoch = requestEpoch;
+		} catch (error) {
+			bookmarkState = applyBookmarksLoadFailure(
+				bookmarkState,
+				requestEpoch,
+				accountEpoch,
+				error instanceof Error ? error.message : 'bookmarks_load_failed'
+			);
+		}
+	}
+
+	// Toggle a family's bookmark. The optimistic pending marker is per family;
+	// a successful PUT inserts the already-rendered family summary (no detail
+	// refetch), a successful DELETE removes it, and any failure only records
+	// the bookmark error — account, download, and completion state are untouched.
+	async function handleBookmarkToggle(family: PuzzleFamilySummary): Promise<void> {
+		const session = accountSession;
+		if (!session || bookmarkState.pendingIds.includes(family.id)) return;
+		const requestEpoch = accountEpoch;
+		const token = session.token;
+		const wasBookmarked = bookmarkState.families.some((existing) => existing.id === family.id);
+		bookmarkState = setFamilyPending(bookmarkState, family.id, true);
+		try {
+			if (wasBookmarked) {
+				await playerApi.unbookmarkFamily(family.id, token);
+				bookmarkState = applyBookmarkRemove(bookmarkState, requestEpoch, accountEpoch, family.id);
+			} else {
+				await playerApi.bookmarkFamily(family.id, token);
+				bookmarkState = applyBookmarkAdd(bookmarkState, requestEpoch, accountEpoch, family);
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'bookmark_update_failed';
+			bookmarkState = wasBookmarked
+				? applyBookmarkRemoveFailure(bookmarkState, requestEpoch, accountEpoch, family.id, message)
+				: applyBookmarkAddFailure(bookmarkState, requestEpoch, accountEpoch, family.id, message);
+		}
 	}
 
 	function onGameplayCompletion(puzzleId: string, seal: SealedCompletion): void {
@@ -284,6 +367,7 @@
 			accountStatus = 'idle';
 			// Freshly validated credential: drain anything signed in earlier.
 			void validateAndDrainGuarded();
+			void loadBookmarks();
 		} catch (error) {
 			accountError = error instanceof Error ? error.message : 'google_sign_in_failed';
 		} finally {
@@ -302,6 +386,7 @@
 		accountEpoch += 1;
 		accountSession = null;
 		accountStatus = 'idle';
+		bookmarkState = clearBookmarks();
 		try {
 			await signOutMobileAccount({
 				provider: nativeGoogleIdTokenProvider,
@@ -368,6 +453,12 @@
 					onDownload={startDownload}
 					onCancelDownload={cancelDownload}
 					onLaunch={(launch) => (screen = { kind: 'gameplay', launch })}
+					signedIn={accountSession !== null}
+					bookmarkFamilies={bookmarkState.families}
+					bookmarkLoading={bookmarkState.loading}
+					bookmarkError={bookmarkState.error}
+					bookmarkPendingIds={bookmarkState.pendingIds}
+					onBookmarkToggle={handleBookmarkToggle}
 				/>
 				<AccountBar
 					row={1}
