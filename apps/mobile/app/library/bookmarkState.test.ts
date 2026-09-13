@@ -72,7 +72,6 @@ describe('clearBookmarks', () => {
 			[familySummary(FAMILY_A)]
 		);
 		expect(clearBookmarks()).toEqual(createBookmarkState());
-		expect(clearBookmarks().families).toEqual([]);
 	});
 });
 

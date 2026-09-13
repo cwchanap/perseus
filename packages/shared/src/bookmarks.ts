@@ -57,11 +57,17 @@ export async function removePlayerBookmark(
 		.run();
 }
 
-export async function listPlayerBookmarks(db: D1AppDb, playerId: string) {
-	return db
-		.select({ familyId: playerBookmarks.familyId, createdAt: playerBookmarks.createdAt })
-		.from(playerBookmarks)
-		.where(eq(playerBookmarks.playerId, playerId))
-		.orderBy(desc(playerBookmarks.createdAt))
-		.limit(MAX_PLAYER_BOOKMARKS);
+export async function listPlayerBookmarks(
+	db: D1AppDb,
+	playerId: string
+): Promise<Array<{ familyId: string; createdAt: number }>> {
+	return (
+		db
+			.select({ familyId: playerBookmarks.familyId, createdAt: playerBookmarks.createdAt })
+			.from(playerBookmarks)
+			.where(eq(playerBookmarks.playerId, playerId))
+			// familyId tiebreak keeps same-millisecond bookmarks deterministic.
+			.orderBy(desc(playerBookmarks.createdAt), desc(playerBookmarks.familyId))
+			.limit(MAX_PLAYER_BOOKMARKS)
+	);
 }

@@ -49,6 +49,9 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 	// Auth is only observed to detect login/logout/account switches and clear
 	// stale bookmark state; fetching stays explicit via load().
 	auth.subscribe((authState) => {
+		// A refresh emits {status:'loading', user:null} mid-flight; that is not
+		// a logout, so keep existing state while an account is still tracked.
+		if (authState.status === 'loading' && observedAccountId) return;
 		currentAccountId = authState.user?.id ?? null;
 		if (observedAccountId !== undefined && observedAccountId === currentAccountId) return;
 		observedAccountId = currentAccountId;

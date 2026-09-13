@@ -94,8 +94,7 @@ puzzleFamilies.get('/', async (c) => {
 			category,
 			offset,
 			limit,
-			cursor,
-			readyOnly: true
+			cursor
 		});
 		return c.json(result);
 	} catch (error) {

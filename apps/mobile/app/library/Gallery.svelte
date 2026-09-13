@@ -1,12 +1,7 @@
 <script lang="ts">
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import FamilyCard from './FamilyCard.svelte';
-
-	type DownloadJobView = {
-		puzzleId: string;
-		done: number;
-		total: number;
-	};
+	import type { DownloadJobView } from './familyGallery';
 
 	export let families: readonly PuzzleFamilySummary[] = [];
 	export let installedIds: ReadonlySet<string> = new Set();

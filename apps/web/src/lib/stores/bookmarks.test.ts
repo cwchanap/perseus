@@ -185,13 +185,20 @@ describe('createBookmarksStore', () => {
 		const family = makeFamily('fam-1');
 
 		const first = store.toggle(family);
-		await store.toggle(family);
+		const second = store.toggle(family);
 
 		expect(bookmarkFamily).toHaveBeenCalledOnce();
 
 		pendingBookmark.resolve();
-		await first;
-		expect(get(store).pendingIds).toEqual([]);
+		await Promise.all([first, second]);
+
+		expect(bookmarkFamily).toHaveBeenCalledOnce();
+		expect(get(store)).toMatchObject({
+			ids: ['fam-1'],
+			families: [family],
+			pendingIds: [],
+			error: null
+		});
 	});
 
 	it('keeps independent families pending concurrently', async () => {
@@ -304,6 +311,25 @@ describe('createBookmarksStore', () => {
 		pendingPut.resolve();
 		await togglePromise;
 		expect(get(store)).toMatchObject({ ids: ['fam-2', 'fam-1'], pendingIds: [] });
+	});
+
+	it('keeps loaded bookmarks through a transient auth refresh for the same account', async () => {
+		const family = makeFamily('fam-1');
+		vi.mocked(getPlayerBookmarks).mockResolvedValue({ families: [family] });
+		const auth = writable(makeAuth({ id: 'player-1' }));
+		const store = createBookmarksStore(auth);
+		await store.load();
+
+		// playerAuth.refresh() emits {status:'loading', user:null} mid-refresh;
+		// that must not be treated as a logout for the tracked account.
+		auth.set({ status: 'loading', user: null, error: null });
+		expect(get(store)).toMatchObject({ accountId: 'player-1', status: 'loaded', ids: ['fam-1'] });
+
+		auth.set(makeAuth({ id: 'player-1' }));
+		expect(get(store)).toMatchObject({ accountId: 'player-1', status: 'loaded', ids: ['fam-1'] });
+
+		await store.load();
+		expect(getPlayerBookmarks).toHaveBeenCalledOnce();
 	});
 
 	it('clears old state on logout and reloads fresh state after account switch', async () => {

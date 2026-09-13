@@ -112,11 +112,13 @@
 					bg-[rgba(10,6,32,0.72)] backdrop-blur-[6px] transition-colors duration-150
 					{bookmarked ? 'text-(--accent)' : 'text-(--text-1)'}
 					hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-60"
-					aria-label={bookmarked ? 'Remove bookmark' : 'Add bookmark'}
+					aria-label={bookmarked
+						? `Remove bookmark: ${family.name}`
+						: `Add bookmark: ${family.name}`}
 					aria-pressed={bookmarked}
 					disabled={bookmarkPending}
 					data-testid="card-bookmark"
-					onclick={() => onBookmarkToggle?.(family)}
+					onclick={() => onBookmarkToggle(family)}
 				>
 					<svg
 						viewBox="0 0 24 24"

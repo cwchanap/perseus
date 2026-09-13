@@ -817,7 +817,6 @@ export async function listFamiliesPage(
 		offset: number;
 		limit: number;
 		cursor?: string;
-		readyOnly?: boolean;
 	}
 ): Promise<{
 	families: PuzzleFamilySummary[];
@@ -828,7 +827,7 @@ export async function listFamiliesPage(
 }> {
 	const entries = await getGalleryIndex(kv);
 
-	let filtered = params.readyOnly === false ? entries : entries.filter((p) => p.status === 'ready');
+	let filtered = entries.filter((p) => p.status === 'ready');
 
 	if (params.category) {
 		filtered = filtered.filter((p) => p.category === params.category);
@@ -893,7 +892,7 @@ export async function listPuzzlesPage(
 	limit: number;
 	nextCursor?: string;
 }> {
-	const result = await listFamiliesPage(kv, { ...params, readyOnly: true });
+	const result = await listFamiliesPage(kv, { ...params });
 	return {
 		puzzles: result.families.map((family) => ({
 			id: family.id,

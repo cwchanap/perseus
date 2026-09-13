@@ -180,7 +180,12 @@ test.describe('Bookmarks', () => {
 		await page.route(/\/api\/player\/bookmarks\/[^/]+$/, async (route) => {
 			const requestUrl = new URL(route.request().url());
 			const familyId = decodeURIComponent(requestUrl.pathname.split('/').pop()!);
-			if (route.request().method() === 'PUT') {
+			const method = route.request().method();
+			if (method !== 'PUT' && method !== 'DELETE') {
+				await route.fulfill({ status: 405, json: { error: 'method_not_allowed' } });
+				return;
+			}
+			if (method === 'PUT') {
 				bookmarkedFamilies.set(familyId, family);
 			} else {
 				bookmarkedFamilies.delete(familyId);
