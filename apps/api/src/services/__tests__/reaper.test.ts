@@ -67,6 +67,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...actual,
 		deletePuzzleFamilyOwnership: vi.fn(async () => undefined),
+		deletePlayerBookmarksByFamily: vi.fn(async () => undefined),
 		getAvatarTokensByPlayerIds: vi.fn(async () => new Map())
 	};
 });

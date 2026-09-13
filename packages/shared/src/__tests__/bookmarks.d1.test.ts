@@ -8,6 +8,7 @@ import { createD1Db, type D1AppDb } from '../drivers/d1';
 import {
 	MAX_PLAYER_BOOKMARKS,
 	addPlayerBookmark,
+	deletePlayerBookmarksByFamily,
 	listPlayerBookmarks,
 	removePlayerBookmark
 } from '../bookmarks';
@@ -115,6 +116,30 @@ describe('player bookmarks (D1)', () => {
 		await seedBookmarks('cap-2', MAX_PLAYER_BOOKMARKS);
 		expect(await addPlayerBookmark(db, 'cap-2', 'seeded-0')).toBe('existing');
 		expect(await listPlayerBookmarks(db, 'cap-2')).toHaveLength(MAX_PLAYER_BOOKMARKS);
+	});
+
+	it('deletes every player row for a family and leaves other families intact', async () => {
+		await addPlayerBookmark(db, 'df-1', 'family-gone', 1);
+		await addPlayerBookmark(db, 'df-2', 'family-gone', 2);
+		await addPlayerBookmark(db, 'df-1', 'family-kept', 3);
+
+		await deletePlayerBookmarksByFamily(db, 'family-gone');
+
+		expect(await listPlayerBookmarks(db, 'df-1')).toEqual([
+			{ familyId: 'family-kept', createdAt: 3 }
+		]);
+		expect(await listPlayerBookmarks(db, 'df-2')).toEqual([]);
+		// Idempotent: the fenced deletion path retries this on partial failure.
+		await expect(deletePlayerBookmarksByFamily(db, 'family-gone')).resolves.toBeUndefined();
+	});
+
+	it('frees cap slots held by bookmarks for a deleted family', async () => {
+		await seedBookmarks('cap-deleted', MAX_PLAYER_BOOKMARKS);
+		expect(await addPlayerBookmark(db, 'cap-deleted', 'family-new')).toBe('limit_reached');
+
+		await deletePlayerBookmarksByFamily(db, 'seeded-0');
+
+		expect(await addPlayerBookmark(db, 'cap-deleted', 'family-new')).toBe('added');
 	});
 
 	it('never lists more than MAX_PLAYER_BOOKMARKS rows', async () => {

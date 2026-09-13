@@ -57,6 +57,15 @@ export async function removePlayerBookmark(
 		.run();
 }
 
+/**
+ * Removes every bookmark row pointing at a family. Called from the fenced
+ * family-deletion path so a deleted family cannot leave orphaned rows that
+ * invisibly count toward the per-player cap.
+ */
+export async function deletePlayerBookmarksByFamily(db: D1AppDb, familyId: string): Promise<void> {
+	await db.delete(playerBookmarks).where(eq(playerBookmarks.familyId, familyId)).run();
+}
+
 export async function listPlayerBookmarks(
 	db: D1AppDb,
 	playerId: string

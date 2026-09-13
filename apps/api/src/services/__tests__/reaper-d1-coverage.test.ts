@@ -45,7 +45,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
-		deletePuzzleFamilyOwnership: vi.fn()
+		deletePuzzleFamilyOwnership: vi.fn(),
+		deletePlayerBookmarksByFamily: vi.fn(async () => undefined)
 	};
 });
 

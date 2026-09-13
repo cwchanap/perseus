@@ -357,6 +357,25 @@ describe('createBookmarksStore', () => {
 		expect(get(store)).toMatchObject({ accountId: 'player-2', ids: ['fam-1'] });
 	});
 
+	it('drops a toggle issued under an account that changes during an in-flight load', async () => {
+		const auth = writable(makeAuth({ id: 'player-1' }));
+		const pendingLoad = deferred<PlayerBookmarkListResponse>();
+		vi.mocked(getPlayerBookmarks).mockReturnValue(pendingLoad.promise);
+		const store = createBookmarksStore(auth);
+
+		const loadPromise = store.load();
+		const togglePromise = store.toggle(makeFamily('fam-1'));
+		// The account switches while the GET the toggle is serialized behind
+		// is still in flight; the queued mutation must never reach the API.
+		auth.set(makeAuth({ id: 'player-2' }));
+		pendingLoad.resolve({ families: [] });
+		await Promise.all([loadPromise, togglePromise]);
+
+		expect(bookmarkFamily).not.toHaveBeenCalled();
+		expect(unbookmarkFamily).not.toHaveBeenCalled();
+		expect(get(store)).toMatchObject({ accountId: 'player-2', pendingIds: [], ids: [] });
+	});
+
 	it('ignores a stale load result resolved after an account switch', async () => {
 		const auth = writable(makeAuth({ id: 'player-1' }));
 		const pendingLoad = deferred<PlayerBookmarkListResponse>();

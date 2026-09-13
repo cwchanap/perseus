@@ -119,10 +119,14 @@ export function createBookmarksStore(auth: Readable<PlayerAuthState> = playerAut
 		async toggle(family: PuzzleFamilySummary): Promise<void> {
 			// Serialize behind an in-flight load: the mutation must start against
 			// post-load membership and cannot race a GET that began before it.
+			const at = version;
 			if (loadPromise) await loadPromise;
+			// The account may have changed while the load was in flight; a
+			// toggle issued under the old account must not fire against the new
+			// one (wasBookmarked below reads the new account's membership).
+			if (stale(at)) return;
 			if (!currentAccountId || state.pendingIds.includes(family.id)) return;
 			const wasBookmarked = state.ids.includes(family.id);
-			const at = version;
 			update((value) => ({
 				...value,
 				pendingIds: [...value.pendingIds, family.id],

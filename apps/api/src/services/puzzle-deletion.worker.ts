@@ -1,4 +1,4 @@
-import { deletePuzzleFamilyOwnership } from '@perseus/shared';
+import { deletePlayerBookmarksByFamily, deletePuzzleFamilyOwnership } from '@perseus/shared';
 import { PUZZLE_DIFFICULTIES } from '@perseus/types';
 import { getWorkerDbContext } from '../db.worker';
 import type { Env } from '../worker';
@@ -27,6 +27,7 @@ export async function ensureWorkerPuzzleDeletionFence(
 export async function completeWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
 	const { db, completionWrites } = getWorkerDbContext(env);
 	await deletePuzzleFamilyOwnership(db, record.familyId);
+	await deletePlayerBookmarksByFamily(db, record.familyId);
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		await completionWrites.finishPuzzleDeletion(record.variantIds[difficulty]);
 	}
