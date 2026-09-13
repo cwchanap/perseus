@@ -123,6 +123,17 @@ describe('Root Layout', () => {
 		});
 	});
 
+	it('shows the bookmarks nav item and marks it active on /bookmarks', async () => {
+		setPathname('/bookmarks');
+
+		render(RootLayout, { children: makeChildren() });
+
+		await page.getByTestId('arcade-mobile-menu-toggle').click();
+		const link = page.getByTestId('bookmarks-link');
+		await expect.element(link).toBeVisible();
+		await expect.element(link).toHaveAttribute('aria-current', 'page');
+	});
+
 	it('does not show SIGN IN while auth status is loading', async () => {
 		mockPlayerAuth.set({
 			status: 'loading',
