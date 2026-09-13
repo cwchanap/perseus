@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PuzzleFamilySummary } from '@perseus/types';
-	import { GALLERY_DIFFICULTIES, getDifficultyLabel, selectVariantId } from './familyGallery';
+	import FamilyCard from './FamilyCard.svelte';
 
 	type DownloadJobView = {
 		puzzleId: string;
@@ -18,16 +18,6 @@
 	export let loading = false;
 	export let hasMore = false;
 	export let error: string | null = null;
-
-	function progressText(): string {
-		return downloadJob && downloadJob.total > 0
-			? `DOWNLOADING ${downloadJob.done}/${downloadJob.total}`
-			: 'DOWNLOADING…';
-	}
-
-	function variantActive(variantId: string): boolean {
-		return downloadJob?.puzzleId === variantId;
-	}
 </script>
 
 <stackLayout class="library-section">
@@ -44,53 +34,14 @@
 	{/if}
 
 	{#each families as family (family.id)}
-		<gridLayout columns="112,*" class="library-card">
-			<image
-				col="0"
-				src={familyThumbnailUrl(family.id)}
-				width="104"
-				height="104"
-				stretch="aspectFill"
-				class="library-thumbnail"
-			/>
-			<stackLayout col="1" class="library-card-copy">
-				<label text={family.name} class="library-card-title" textWrap="true" />
-				{#each GALLERY_DIFFICULTIES as difficulty (difficulty)}
-					{@const variant = family.variants[difficulty]}
-					{@const variantId = selectVariantId(family, difficulty)}
-					{@const active = variantActive(variantId)}
-					<gridLayout columns="*,auto" class="library-difficulty-row">
-						<stackLayout col="0">
-							<label
-								text={`${getDifficultyLabel(difficulty)} · ${variant.pieceCount} PIECES`}
-								class="library-card-detail"
-							/>
-							{#if active}
-								<label text={progressText()} class="library-progress" />
-							{:else if installedIds.has(variantId)}
-								<label text="DOWNLOADED" class="library-card-detail" />
-							{/if}
-						</stackLayout>
-						<stackLayout col="1" class="library-card-actions">
-							{#if active}
-								<button text="CANCEL" class="library-button" on:tap={onCancelDownload} />
-							{:else if installedIds.has(variantId)}
-								<label text="INSTALLED" class="library-card-detail" textAlignment="center" />
-							{:else if variant.status === 'ready'}
-								<button
-									text="DOWNLOAD"
-									class="library-button"
-									isEnabled={downloadJob === null}
-									on:tap={() => onDownload(variantId)}
-								/>
-							{:else}
-								<label text="UNAVAILABLE" class="library-card-detail" textAlignment="center" />
-							{/if}
-						</stackLayout>
-					</gridLayout>
-				{/each}
-			</stackLayout>
-		</gridLayout>
+		<FamilyCard
+			{family}
+			{installedIds}
+			{downloadJob}
+			{familyThumbnailUrl}
+			{onDownload}
+			{onCancelDownload}
+		/>
 	{/each}
 
 	{#if hasMore}
