@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import type { D1AppDb } from './drivers/d1';
+import type { D1AppDb } from './types';
 import { playerBookmarks } from './schema';
 
 export const MAX_PLAYER_BOOKMARKS = 200;

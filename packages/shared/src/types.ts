@@ -1,4 +1,5 @@
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
+import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import type * as schema from './schema';
 
 export type PlayerProfileRow = typeof schema.playerProfiles.$inferSelect;
@@ -31,5 +32,14 @@ export interface LegacyPuzzleOwnershipRow {
  * async (D1) distinction is handled at runtime.
  */
 export type AppDb = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof schema>;
+
+/**
+ * D1-bound client. Unlike {@link AppDb}, this preserves the D1-specific
+ * `batch()` surface that bookmark and completion writes rely on. Aliased here
+ * (rather than in `drivers/d1`) so barrel consumers can reference the type
+ * without pulling the driver — and its ambient `D1Database` workers type —
+ * into their compile graph.
+ */
+export type D1AppDb = DrizzleD1Database<typeof schema>;
 
 export type { schema };

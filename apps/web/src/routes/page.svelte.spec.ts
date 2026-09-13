@@ -29,6 +29,36 @@ vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn().mockReturnValue(null)
 }));
 
+vi.mock('$lib/stores/playerAuth', () => ({
+	playerAuth: {
+		subscribe: (run: (value: unknown) => void) => {
+			run({ status: 'anonymous', user: null, error: null });
+			return () => {};
+		},
+		refresh: vi.fn().mockResolvedValue(undefined),
+		logout: vi.fn().mockResolvedValue(undefined)
+	}
+}));
+
+vi.mock('$lib/stores/bookmarks', () => ({
+	bookmarks: {
+		subscribe: (run: (value: unknown) => void) => {
+			run({
+				accountId: null,
+				status: 'idle',
+				families: [],
+				ids: [],
+				error: null,
+				pendingIds: []
+			});
+			return () => {};
+		},
+		load: vi.fn().mockResolvedValue(undefined),
+		toggle: vi.fn().mockResolvedValue(undefined),
+		clear: vi.fn()
+	}
+}));
+
 function makeFamily(id: string, name: string, category?: string): PuzzleFamilySummary {
 	return {
 		id,

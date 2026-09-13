@@ -1,6 +1,7 @@
 import { and, eq, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
-import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
+import { drizzle } from 'drizzle-orm/d1';
 import type { ResultClass } from '@perseus/types';
+import type { D1AppDb } from '../types';
 import * as schema from '../schema';
 import {
 	playerCompletionUsage,
@@ -22,7 +23,7 @@ interface D1Env {
 	DB: D1Database;
 }
 
-export type D1AppDb = DrizzleD1Database<typeof schema>;
+export type { D1AppDb };
 
 export function createD1Db(env: D1Env): D1AppDb {
 	// Migrations live in packages/shared/drizzle and are applied by:
