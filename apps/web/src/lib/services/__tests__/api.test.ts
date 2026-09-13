@@ -23,6 +23,9 @@ import {
 	recordCompletion,
 	getAvatarUrl,
 	resolveAssetUrl,
+	getPlayerBookmarks,
+	bookmarkFamily,
+	unbookmarkFamily,
 	ApiError
 } from '../api';
 import type { PuzzleCategory } from '$lib/types/puzzle';
@@ -1101,5 +1104,133 @@ describe('player profile service functions', () => {
 		);
 		const profile = await getPlayerProfile();
 		expect(profile.picture).toBe(abs);
+	});
+});
+
+describe('API Service - player bookmarks', () => {
+	const UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+
+	function bookmarkListResponse() {
+		return {
+			families: [
+				{
+					id: UUID,
+					name: 'Puzzle 1',
+					aspectRatio: '4:3',
+					status: 'ready',
+					createdAt: 1000,
+					variants: {
+						easy: {
+							id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e',
+							difficulty: 'easy',
+							pieceCount: 12,
+							status: 'ready'
+						},
+						normal: {
+							id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5f',
+							difficulty: 'normal',
+							pieceCount: 48,
+							status: 'ready'
+						},
+						hard: {
+							id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c60',
+							difficulty: 'hard',
+							pieceCount: 108,
+							status: 'ready'
+						}
+					}
+				}
+			]
+		};
+	}
+
+	it('getPlayerBookmarks returns the validated bookmark list', async () => {
+		const responseBody = bookmarkListResponse();
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify(responseBody), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		const result = await getPlayerBookmarks();
+
+		expect(result).toEqual(responseBody);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/player\/bookmarks$/), {
+			credentials: 'include',
+			signal: undefined
+		});
+	});
+
+	it('getPlayerBookmarks rejects a response that fails the contract guard', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ families: [{ id: 'nope' }] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		await expect(getPlayerBookmarks()).rejects.toThrow('Unexpected response format');
+	});
+
+	it('bookmarkFamily PUTs the URL-encoded family id', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		await bookmarkFamily('fam/1');
+
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/bookmarks\/fam%2F1$/), {
+			method: 'PUT',
+			credentials: 'include'
+		});
+	});
+
+	it('bookmarkFamily surfaces a 409 limit error as ApiError', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ error: 'bookmark_limit_reached' }), {
+					status: 409,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		const error = await bookmarkFamily(UUID).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(ApiError);
+		expect(error).toMatchObject({ status: 409, error: 'bookmark_limit_reached' });
+	});
+
+	it('unbookmarkFamily DELETEs the URL-encoded family id', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		await unbookmarkFamily('fam/1');
+
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/bookmarks\/fam%2F1$/), {
+			method: 'DELETE',
+			credentials: 'include'
+		});
 	});
 });

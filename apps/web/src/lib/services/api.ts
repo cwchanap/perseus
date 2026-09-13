@@ -23,6 +23,7 @@ import type {
 	CompletionAwards,
 	RecordPuzzleCompletionResponse
 } from '@perseus/types';
+import { isPlayerBookmarkListResponse, type PlayerBookmarkListResponse } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
@@ -509,4 +510,35 @@ export async function recordCompletion(
 	request: RecordPuzzleCompletionV2
 ): Promise<CompletionAwards | undefined> {
 	return postCompletion(puzzleId, request);
+}
+
+// Player bookmark endpoints
+export async function getPlayerBookmarks(
+	signal?: AbortSignal
+): Promise<PlayerBookmarkListResponse> {
+	const response = await fetch(`${API_BASE}/api/player/bookmarks`, {
+		credentials: 'include',
+		signal
+	});
+	const data = await handleResponse<PlayerBookmarkListResponse>(response);
+	if (!isPlayerBookmarkListResponse(data)) {
+		throw new Error(`Unexpected response format (${response.status} ${response.statusText})`);
+	}
+	return data;
+}
+
+export async function bookmarkFamily(familyId: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/player/bookmarks/${encodeURIComponent(familyId)}`, {
+		method: 'PUT',
+		credentials: 'include'
+	});
+	await handleVoidResponse(response);
+}
+
+export async function unbookmarkFamily(familyId: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/player/bookmarks/${encodeURIComponent(familyId)}`, {
+		method: 'DELETE',
+		credentials: 'include'
+	});
+	await handleVoidResponse(response);
 }
