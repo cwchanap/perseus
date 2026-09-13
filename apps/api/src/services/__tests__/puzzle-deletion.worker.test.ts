@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	finishPuzzleDeletion: vi.fn(),
 	finishFamilyFirstClears: vi.fn(),
 	deletePuzzleFamilyOwnership: vi.fn(),
+	deletePlayerBookmarksByFamily: vi.fn(),
 	deleteMetadataDO: vi.fn(),
 	deleteFamilyCleanupAssets: vi.fn(),
 	deleteFamilyMetadata: vi.fn(),
@@ -36,7 +37,8 @@ vi.mock('../../db.worker', () => ({
 }));
 
 vi.mock('@perseus/shared', () => ({
-	deletePuzzleFamilyOwnership: mocks.deletePuzzleFamilyOwnership
+	deletePuzzleFamilyOwnership: mocks.deletePuzzleFamilyOwnership,
+	deletePlayerBookmarksByFamily: mocks.deletePlayerBookmarksByFamily
 }));
 
 import {
@@ -78,6 +80,7 @@ describe('Worker puzzle deletion lifecycle', () => {
 		mocks.finishPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.finishFamilyFirstClears.mockResolvedValue(undefined);
 		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
+		mocks.deletePlayerBookmarksByFamily.mockResolvedValue(undefined);
 		mocks.deleteMetadataDO.mockResolvedValue(undefined);
 		mocks.deleteFamilyCleanupAssets.mockResolvedValue({ success: true, failedKeys: [] });
 		mocks.deleteFamilyMetadata.mockResolvedValue({ success: true });
@@ -132,6 +135,7 @@ describe('Worker puzzle deletion lifecycle', () => {
 		await finishWorkerPuzzleDeletion(env, record);
 
 		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledWith(mocks.db, 'family-1');
+		expect(mocks.deletePlayerBookmarksByFamily).toHaveBeenCalledWith(mocks.db, 'family-1');
 		for (const difficulty of PUZZLE_DIFFICULTIES) {
 			expect(mocks.finishPuzzleDeletion).toHaveBeenCalledWith(record.variantIds[difficulty]);
 		}
@@ -188,6 +192,7 @@ describe('executeFamilySourceDeletion reservation release order', () => {
 		mocks.finishPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.finishFamilyFirstClears.mockResolvedValue(undefined);
 		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
+		mocks.deletePlayerBookmarksByFamily.mockResolvedValue(undefined);
 		mocks.deleteMetadataDO.mockResolvedValue(undefined);
 		mocks.deleteFamilyCleanupAssets.mockResolvedValue({ success: true, failedKeys: [] });
 		mocks.deleteFamilyMetadata.mockResolvedValue({ success: true });

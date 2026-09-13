@@ -332,12 +332,16 @@
 	// refetch), a successful DELETE removes it, and any failure only records
 	// the bookmark error — account, download, and completion state are untouched.
 	// Serialization: an in-flight bookmark GET is awaited first so the mutation
-	// starts against post-load membership and cannot be overwritten by it.
+	// starts against post-load membership and cannot be overwritten by it. The
+	// epoch is captured before that wait: if the account changed while the GET
+	// was in flight, the toggle is dropped rather than fired under the new
+	// account's session.
 	async function handleBookmarkToggle(family: PuzzleFamilySummary): Promise<void> {
+		const requestEpoch = accountEpoch;
 		if (bookmarkLoadPromise) await bookmarkLoadPromise;
+		if (requestEpoch !== accountEpoch) return;
 		const session = accountSession;
 		if (!session || bookmarkState.pendingIds.includes(family.id)) return;
-		const requestEpoch = accountEpoch;
 		const token = session.token;
 		const wasBookmarked = bookmarkState.families.some((existing) => existing.id === family.id);
 		bookmarkState = setFamilyPending(bookmarkState, family.id, true);
