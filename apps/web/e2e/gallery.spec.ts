@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/test';
+import { assertPageAccessible } from './support/accessibility';
 import type { PuzzleFamilySummary } from '@perseus/types';
 import {
 	buildGameplayConfig,
@@ -110,6 +111,112 @@ async function plantGameplayConfig(page: Page, fixtureId: GameplayFixtureId): Pr
 		{ configJson, configGlobal: '__PERSEUS_E2E_GAMEPLAY_V1__' }
 	);
 }
+
+test.describe('Bookmarks', () => {
+	test('gallery bookmark round-trip: bookmark, /bookmarks, reload rehydrate, a11y, unbookmark', async ({
+		page
+	}) => {
+		// UUID ids everywhere: the bookmark GET response passes the client-side
+		// contract guard (isPuzzleFamilySummary), which requires UUID-shaped ids.
+		const family = makeFamily('00000000-0000-4000-8000-000000000c01', {
+			name: 'Bookmark Fixture',
+			variants: {
+				easy: {
+					id: STANDARD_EASY_VARIANT,
+					difficulty: 'easy',
+					pieceCount: 16,
+					status: 'ready'
+				},
+				normal: {
+					id: STANDARD_NORMAL_VARIANT,
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: STANDARD_HARD_VARIANT,
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
+		await mockFamilyList(page, [family]);
+		await page.route(/\/api\/auth\/session(?:\?.*)?$/, (route) =>
+			route.fulfill({
+				json: {
+					authenticated: true,
+					user: {
+						id: 'e2e-bookmark-player',
+						email: 'e2e-bookmarks@example.test',
+						name: 'E2E Bookmark Player',
+						createdAt: 1710000000000,
+						lastLoginAt: 1710000001000
+					}
+				}
+			})
+		);
+		await page.route(/\/api\/player\/progression(?:\?.*)?$/, (route) =>
+			route.fulfill({
+				json: {
+					score: 0,
+					rank: 0,
+					easyClears: 0,
+					normalClears: 0,
+					hardClears: 0,
+					achievementsUnlocked: 0,
+					achievementsTotal: 9,
+					masteryEarned: 0
+				}
+			})
+		);
+
+		// In-memory bookmark collection shared by GET/PUT/DELETE for the test
+		// lifetime; mirrors the API contract without touching D1.
+		const bookmarkedFamilies = new Map<string, PuzzleFamilySummary>();
+		await page.route(/\/api\/player\/bookmarks$/, async (route) =>
+			route.fulfill({ json: { families: [...bookmarkedFamilies.values()] } })
+		);
+		await page.route(/\/api\/player\/bookmarks\/[^/]+$/, async (route) => {
+			const requestUrl = new URL(route.request().url());
+			const familyId = decodeURIComponent(requestUrl.pathname.split('/').pop()!);
+			if (route.request().method() === 'PUT') {
+				bookmarkedFamilies.set(familyId, family);
+			} else {
+				bookmarkedFamilies.delete(familyId);
+			}
+			await route.fulfill({ json: { ok: true } });
+		});
+
+		// Bookmark the family from the gallery card.
+		await page.goto('/');
+		await expect(page.getByTestId('loading-state')).toBeHidden();
+		const card = page.getByTestId('puzzle-card');
+		await expect(card).toHaveCount(1);
+		const bookmarkButton = card.getByTestId('card-bookmark');
+		await bookmarkButton.click();
+		await expect(bookmarkButton).toHaveAttribute('aria-pressed', 'true');
+
+		// Navigate to /bookmarks via the shell sidebar; the family appears.
+		await page.getByTestId('sidebar-bookmarks-link').click();
+		await expect(page).toHaveURL(/\/bookmarks$/);
+		await expect(page.getByTestId('bookmarks-grid').getByTestId('puzzle-card')).toHaveCount(1);
+		await expect(page.getByTestId('puzzle-card-title')).toHaveText(family.name);
+
+		// Reload; the mocked GET rehydrates the bookmark.
+		await page.reload();
+		await expect(page.getByTestId('bookmarks-grid').getByTestId('puzzle-card')).toHaveCount(1);
+		await expect(page.getByTestId('puzzle-card-title')).toHaveText(family.name);
+
+		// The populated bookmarks page and shell nav pass the axe scan.
+		await assertPageAccessible(page, { label: 'bookmarks' });
+
+		// Unbookmark from the bookmarks page; the family disappears.
+		await page.getByTestId('card-bookmark').click();
+		await expect(page.getByTestId('bookmarks-empty')).toBeVisible();
+		await expect(page.getByTestId('puzzle-card')).toHaveCount(0);
+	});
+});
 
 test.describe('Main Gallery Page', () => {
 	test('should display the gallery page', async ({ page }) => {
