@@ -48,6 +48,82 @@ vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn().mockReturnValue(null)
 }));
 
+const mockPlayerAuth = vi.hoisted(() => {
+	const subscribers = new Set<(value: unknown) => void>();
+	let value: unknown = {
+		status: 'anonymous',
+		user: null,
+		error: null
+	};
+
+	return {
+		subscribe(fn: (value: unknown) => void) {
+			fn(value);
+			subscribers.add(fn);
+			return () => {
+				subscribers.delete(fn);
+			};
+		},
+		set(nextValue: unknown) {
+			value = nextValue;
+			subscribers.forEach((fn) => fn(value));
+		},
+		refresh: vi.fn().mockResolvedValue(undefined),
+		logout: vi.fn().mockResolvedValue(undefined)
+	};
+});
+
+const mockBookmarks = vi.hoisted(() => {
+	const subscribers = new Set<(value: unknown) => void>();
+	const initial = {
+		accountId: null,
+		status: 'idle',
+		families: [] as unknown[],
+		ids: [] as string[],
+		error: null,
+		pendingIds: [] as string[]
+	};
+	let value: unknown = initial;
+
+	return {
+		subscribe(fn: (value: unknown) => void) {
+			fn(value);
+			subscribers.add(fn);
+			return () => {
+				subscribers.delete(fn);
+			};
+		},
+		set(nextValue: unknown) {
+			value = nextValue;
+			subscribers.forEach((fn) => fn(value));
+		},
+		initial,
+		load: vi.fn().mockResolvedValue(undefined),
+		toggle: vi.fn().mockResolvedValue(undefined),
+		clear: vi.fn()
+	};
+});
+
+vi.mock('$lib/stores/playerAuth', () => ({
+	playerAuth: mockPlayerAuth
+}));
+
+vi.mock('$lib/stores/bookmarks', () => ({
+	bookmarks: mockBookmarks
+}));
+
+const authenticatedAuth = {
+	status: 'authenticated' as const,
+	user: {
+		id: 'player-1',
+		email: 'player-1@example.com',
+		name: 'Player One',
+		createdAt: 1716500000000,
+		lastLoginAt: 1716500000000
+	},
+	error: null
+};
+
 vi.mock('$lib/services/quickPuzzle', () => ({
 	listQuick: vi.fn().mockReturnValue([])
 }));
@@ -162,6 +238,12 @@ describe('Gallery Page', () => {
 		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		sessionStorageSpies.listCandidates.mockReturnValue([]);
+		mockPlayerAuth.set({
+			status: 'anonymous',
+			user: null,
+			error: null
+		});
+		mockBookmarks.set(mockBookmarks.initial);
 	});
 
 	afterEach(() => {
@@ -1430,5 +1512,95 @@ describe('Gallery Page', () => {
 		const newCalls = mockedFetchPuzzles.mock.calls.slice(callsAfterRealSearch);
 		const hasWhitespaceQuery = newCalls.some(([params]) => params?.q === '   ');
 		expect(hasWhitespaceQuery).toBe(false);
+	});
+
+	it('authenticated gallery loads bookmarks and renders store membership', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [],
+			ids: ['p1'],
+			error: null,
+			pendingIds: []
+		});
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1'), makeFamily('p2')],
+			total: 2,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByTestId('puzzle-card').nth(0)).toBeVisible();
+		await vi.waitFor(() => expect(mockBookmarks.load).toHaveBeenCalledOnce());
+		const firstCard = page.getByTestId('puzzle-card').nth(0);
+		const secondCard = page.getByTestId('puzzle-card').nth(1);
+		await expect.element(firstCard.getByRole('button', { name: 'Remove bookmark' })).toBeVisible();
+		await expect.element(secondCard.getByRole('button', { name: 'Add bookmark' })).toBeVisible();
+	});
+
+	it('anonymous gallery hides bookmark actions and does not request the store load', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
+		expect(mockBookmarks.load).not.toHaveBeenCalled();
+		expect(page.getByTestId('card-bookmark').query()).toBeNull();
+	});
+
+	it('appended infinite-scroll rows read current membership without reloading bookmarks', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [],
+			ids: ['p1'],
+			error: null,
+			pendingIds: []
+		});
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			if (params?.cursor === 'cursor-page2') {
+				return {
+					families: [makeFamily('p2')],
+					total: 2,
+					offset: 1,
+					limit: 20
+				};
+			}
+			return {
+				families: [makeFamily('p1')],
+				total: 2,
+				offset: 0,
+				limit: 20,
+				nextCursor: 'cursor-page2'
+			};
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
+		await vi.waitFor(() => expect(mockBookmarks.load).toHaveBeenCalledOnce());
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await expect.element(page.getByText('Puzzle p2')).toBeVisible();
+
+		const appendedCard = page.getByTestId('puzzle-card').nth(1);
+		await expect.element(appendedCard.getByRole('button', { name: 'Add bookmark' })).toBeVisible();
+		await expect
+			.element(
+				page.getByTestId('puzzle-card').nth(0).getByRole('button', { name: 'Remove bookmark' })
+			)
+			.toBeVisible();
+		expect(mockBookmarks.load).toHaveBeenCalledTimes(1);
 	});
 });

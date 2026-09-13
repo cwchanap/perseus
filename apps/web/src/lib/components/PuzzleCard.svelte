@@ -13,9 +13,19 @@
 		family: PuzzleFamilySummary;
 		progressByVariantId?: ReadonlyMap<string, VariantProgress>;
 		playableLinks?: boolean;
+		bookmarked?: boolean;
+		bookmarkPending?: boolean;
+		onBookmarkToggle?: (family: PuzzleFamilySummary) => void;
 	}
 
-	let { family, progressByVariantId, playableLinks = true }: Props = $props();
+	let {
+		family,
+		progressByVariantId,
+		playableLinks = true,
+		bookmarked = false,
+		bookmarkPending = false,
+		onBookmarkToggle
+	}: Props = $props();
 
 	let thumbnailError = $state(false);
 
@@ -87,14 +97,43 @@
 			</div>
 		{/if}
 
-		<div class="absolute right-3 bottom-3 left-3 min-w-0">
+		<div class="absolute right-3 bottom-3 left-3 flex min-w-0 items-center gap-2">
 			<h3
-				class="truncate text-[1.05rem] font-(--font-display) font-black tracking-[0.03em] text-(--text-0)
-				[text-shadow:0_2px_10px_rgba(0,0,0,0.7)]"
+				class="min-w-0 flex-1 truncate text-[1.05rem] font-(--font-display) font-black tracking-[0.03em]
+				text-(--text-0) [text-shadow:0_2px_10px_rgba(0,0,0,0.7)]"
 				data-testid="puzzle-card-title"
 			>
 				{family.name}
 			</h3>
+			{#if onBookmarkToggle}
+				<button
+					type="button"
+					class="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-xl
+					bg-[rgba(10,6,32,0.72)] backdrop-blur-[6px] transition-colors duration-150
+					{bookmarked ? 'text-(--accent)' : 'text-(--text-1)'}
+					hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-60"
+					aria-label={bookmarked ? 'Remove bookmark' : 'Add bookmark'}
+					aria-pressed={bookmarked}
+					disabled={bookmarkPending}
+					data-testid="card-bookmark"
+					onclick={() => onBookmarkToggle?.(family)}
+				>
+					<svg
+						viewBox="0 0 24 24"
+						fill={bookmarked ? 'currentColor' : 'none'}
+						stroke="currentColor"
+						stroke-width="2"
+						class="h-4 w-4"
+						aria-hidden="true"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z"
+						/>
+					</svg>
+				</button>
+			{/if}
 		</div>
 	</div>
 

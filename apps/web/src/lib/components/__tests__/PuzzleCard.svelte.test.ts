@@ -118,4 +118,49 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
 		await expect.element(page.getByText('FAILED')).toBeVisible();
 	});
+
+	it('exposes add and remove accessible states on the bookmark button', async () => {
+		const { unmount } = render(PuzzleCard, {
+			family: mockFamily,
+			bookmarked: false,
+			onBookmarkToggle: () => {}
+		});
+		await expect.element(page.getByRole('button', { name: 'Add bookmark' })).toBeVisible();
+		unmount();
+
+		render(PuzzleCard, { family: mockFamily, bookmarked: true, onBookmarkToggle: () => {} });
+		await expect.element(page.getByRole('button', { name: 'Remove bookmark' })).toBeVisible();
+	});
+
+	it('passes the family to the toggle callback on click', async () => {
+		const onBookmarkToggle = vi.fn();
+		render(PuzzleCard, { family: mockFamily, onBookmarkToggle });
+
+		await page.getByRole('button', { name: 'Add bookmark' }).click();
+
+		expect(onBookmarkToggle).toHaveBeenCalledOnce();
+		expect(onBookmarkToggle).toHaveBeenCalledWith(mockFamily);
+	});
+
+	it('disables the bookmark button while pending', async () => {
+		render(PuzzleCard, {
+			family: mockFamily,
+			bookmarkPending: true,
+			onBookmarkToggle: () => {}
+		});
+
+		await expect.element(page.getByRole('button', { name: 'Add bookmark' })).toBeDisabled();
+	});
+
+	it('keeps difficulty links intact and hides the bookmark action without a callback', async () => {
+		const { unmount } = render(PuzzleCard, { family: mockFamily, bookmarked: true });
+		expect(page.getByTestId('card-bookmark').query()).toBeNull();
+		unmount();
+
+		render(PuzzleCard, { family: mockFamily, onBookmarkToggle: () => {} });
+		await expect.element(page.getByTestId('card-bookmark')).toBeVisible();
+		const actions = page.getByTestId('difficulty-action');
+		await expect.element(actions.nth(0)).toHaveAttribute('href', '/puzzle/var-e');
+		await expect.element(actions.nth(2)).toHaveAttribute('href', '/puzzle/var-h');
+	});
 });
