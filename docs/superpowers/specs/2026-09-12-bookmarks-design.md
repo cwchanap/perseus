@@ -23,7 +23,7 @@ D1 is the durable bookmark source of truth. KV remains authoritative for puzzle-
 - Public bookmark counts, sharing, feeds, recommendations, or reactions.
 - Quick-puzzle or gameplay-screen bookmarks.
 - Offline bookmark mutation queues or a local bookmark database/cache.
-- Automatic cross-store cleanup/cascades when a family disappears from KV.
+- Reactive cross-store cleanup that watches for a family disappearing from KV outside the deletion pipeline; the authoritative family-deletion path itself owns the bookmark sweep and tombstone (see Data design).
 - Changes to `@perseus/game-core`, session codecs, or downloaded-puzzle manifests.
 - A new mobile navigation/tab framework.
 - A new OAuth/cookie E2E subsystem.
@@ -66,7 +66,7 @@ Clients surface the mutation error through their existing bookmark-specific erro
 
 ## Data design
 
-Add an additive D1 table using the next migration number available at implementation time; `0008_player_bookmarks.sql` is the current expected slot.
+Two additive D1 migrations ship this feature's data model: `0008_player_bookmarks` and `0009_family_deletion_tombstones`.
 
 ```sql
 CREATE TABLE player_bookmarks (
@@ -78,9 +78,26 @@ CREATE TABLE player_bookmarks (
 
 CREATE INDEX idx_player_bookmarks_player_created
 	ON player_bookmarks (player_id, created_at DESC);
+
+CREATE TABLE family_deletion_tombstones (
+	family_id TEXT PRIMARY KEY NOT NULL,
+	deleted_at INTEGER NOT NULL
+);
 ```
 
-The table stores only ownership and family identity. Do not copy name, category, status, variants, piece counts, or asset URLs from KV.
+`player_bookmarks` stores only ownership and family identity. Do not copy name, category, status, variants, piece counts, or asset URLs from KV.
+
+### Family deletion tombstone
+
+`family_deletion_tombstones` is the durable positive marker that deletion was fenced for a family. It exists because the `puzzle_families` ownership row is only a best-effort mirror on some publish paths: its absence cannot distinguish "family deleted" from "mirror write failed", while a tombstone's presence always proves deletion was decided.
+
+Lifecycle:
+
+1. `ensureWorkerPuzzleDeletionFence` writes the tombstone via `insertFamilyDeletionTombstone` at deletion-fence time, before the per-variant `puzzle_deletion_tombstones` and any KV/R2 teardown, so bookmark PUTs are refused for the entire deletion window.
+2. `completeWorkerPuzzleDeletion` calls `completeFamilyDeletionCleanup`, which in one D1 batch re-writes the tombstone, deletes the `puzzle_families` ownership row, and deletes every `player_bookmarks` row for the family. This also covers deletion paths that never ran the fence, and the batch is idempotent under reaper retries.
+3. The tombstone is permanent — nothing removes it, symmetric with the per-variant `puzzle_deletion_tombstones` — so a family ID can never regain bookmarks after deletion.
+
+A racing `addPlayerBookmark` therefore either commits before the cleanup batch and is swept, or lands after and is refused by the tombstone. There is no window where the sweep ran but inserts still succeed, and no window where an insert after a KV-only deletion check resurrects a swept bookmark.
 
 ### Shared repository boundary
 
@@ -91,10 +108,10 @@ Required surface:
 ```ts
 export const MAX_PLAYER_BOOKMARKS = 200;
 
-export type AddPlayerBookmarkResult = 'added' | 'existing' | 'limit_reached';
+export type AddPlayerBookmarkResult = 'added' | 'existing' | 'limit_reached' | 'family_missing';
 
 addPlayerBookmark(
-	db: AppDb,
+	db: D1AppDb,
 	playerId: string,
 	familyId: string,
 	createdAt?: number
@@ -108,9 +125,18 @@ listPlayerBookmarks(
 ): Promise<Array<{ familyId: string; createdAt: number }>>;
 ```
 
-`addPlayerBookmark` owns both idempotency and capacity enforcement. Do not implement capacity as a route-level `count → insert` preflight that can race. The persistence operation must distinguish `existing` from `limit_reached` while preventing a new row once the player is at the cap.
+`addPlayerBookmark` owns idempotency, capacity enforcement, and the deletion fence inside one D1 batch (transactional in D1): the INSERT only selects a row while the player is under the cap AND no `family_deletion_tombstones` row exists for the family. The batch then reads back bookmark and tombstone existence so the result ordering is `added` → `existing` (preferred over `family_missing` for a persisted row) → `family_missing` (preferred over `limit_reached` for a tombstoned family at the cap). Do not implement capacity or deletion checks as a route-level `count → insert` preflight that can race.
 
-`listPlayerBookmarks` is newest-first and applies `.limit(MAX_PLAYER_BOOKMARKS)` as defense in depth. `removePlayerBookmark` is a successful no-op when the row is absent.
+`listPlayerBookmarks` is newest-first (with a `familyId` tiebreak for same-millisecond determinism) and applies `.limit(MAX_PLAYER_BOOKMARKS)` as defense in depth. `removePlayerBookmark` is a successful no-op when the row is absent.
+
+The tombstone helpers live next to the other family-deletion repository functions in `repositories.ts`, not in `bookmarks.ts`:
+
+```ts
+insertFamilyDeletionTombstone(db: AppDb, familyId: string, deletedAt: number): Promise<void>;
+completeFamilyDeletionCleanup(db: D1AppDb, familyId: string, deletedAt?: number): Promise<void>;
+```
+
+Both are idempotent — the tombstone write uses `onConflictDoNothing` on its primary key.
 
 No D1 foreign key to KV metadata is introduced.
 
@@ -152,9 +178,7 @@ export interface PlayerBookmarkListResponse {
 	families: PuzzleFamilySummary[];
 }
 
-export function isPlayerBookmarkListResponse(
-	value: unknown
-): value is PlayerBookmarkListResponse;
+export function isPlayerBookmarkListResponse(value: unknown): value is PlayerBookmarkListResponse;
 ```
 
 The guard reuses `isPuzzleFamilySummary` for every entry.
@@ -182,6 +206,7 @@ Closed contract:
 
 - malformed `familyId` by `isPuzzleId` → `400 { error: 'bad_request', ... }`,
 - valid but missing/non-ready family → `404 { error: 'not_found', ... }`,
+- family already deletion-fenced → `404 { error: 'not_found', ... }` (the `family_missing` repository result, surfaced identically to a KV miss),
 - ready family + capacity available → idempotent success,
 - existing bookmark at capacity → idempotent success,
 - new bookmark at capacity → `409 { error: 'bookmark_limit_reached', ... }`.
@@ -194,6 +219,8 @@ if (!family || family.status !== 'ready') return 404;
 ```
 
 Do not call `resolveReadyFamiliesByIds` for PUT merely to answer a boolean.
+
+The KV readiness check is necessary but not sufficient: family deletion removes the KV record before D1 cleanup runs, so a PUT that passed the check — or read stale KV — could otherwise insert after the bookmark sweep. The tombstone fence inside `addPlayerBookmark`'s D1 batch is the authoritative deleted marker; a `family_missing` result maps to the same 404 as the KV check.
 
 ### `DELETE /api/player/bookmarks/:familyId`
 
@@ -387,13 +414,18 @@ Extend `apps/mobile/app/api/playerApi.ts`:
 - player isolation,
 - max-capacity enforcement,
 - existing bookmark still succeeds at capacity,
-- list never returns more than `MAX_PLAYER_BOOKMARKS`.
+- list never returns more than `MAX_PLAYER_BOOKMARKS`,
+- a deletion tombstone refuses new inserts with `family_missing`,
+- a persisted bookmark prefers `existing` over `family_missing`,
+- `family_missing` is preferred over `limit_reached` for a tombstoned family at the cap,
+- `completeFamilyDeletionCleanup` deletes the family's bookmark rows across players, deletes the ownership row, frees cap slots, and is idempotent under retry,
+- a bookmark racing deletion either commits before the cleanup batch (and is swept) or lands after the tombstone and is refused.
 
 `packages/shared/src/__tests__/schema.test.ts` is updated to:
 
-- pin the new journal/snapshot entry,
-- pin `player_bookmarks` columns/PK/index,
-- assert migration `0008` is additive/non-destructive.
+- pin the new journal/snapshot entries (latest is `0009_family_deletion_tombstones`),
+- pin `player_bookmarks` and `family_deletion_tombstones` columns/PK/index,
+- assert migrations `0008` and `0009` are additive/non-destructive.
 
 ### API worker
 
@@ -402,6 +434,7 @@ Extend `apps/mobile/app/api/playerApi.ts`:
 - auth required,
 - malformed ID → 400,
 - missing/non-ready PUT → 404,
+- repository `family_missing` → the same 404,
 - ready PUT calls the repository,
 - repository `limit_reached` → 409,
 - typed GET response,
@@ -410,6 +443,8 @@ Extend `apps/mobile/app/api/playerApi.ts`:
 - DELETE behavior.
 
 The route test mocks the D1 repository helpers, so it must **not** claim to prove duplicate-row persistence. That belongs in the Miniflare test above.
+
+Deletion-pipeline tests (`puzzle-deletion.worker.test.ts`, reaper/admin suites) prove the family tombstone is written at fence time before variant tombstones, and that every deletion completion path runs `completeFamilyDeletionCleanup` — a throw surfaces as `step: 'finish'` so the reaper retries.
 
 For KV-dependent route coverage, reuse `makeFamilyMetadata` from `apps/api/src/routes/__tests__/helpers/family-fixtures.ts` plus a minimal in-test `KVNamespace` mock modeled on existing route tests.
 
@@ -440,7 +475,7 @@ Implement in two PRs against the same frozen contract.
 
 Contains:
 
-1. D1 schema/migration/bookmark repository + bounds,
+1. D1 schema/migrations + bookmark repository + bounds + family-deletion tombstone,
 2. ready-family resolver + shared response type,
 3. authenticated player endpoints,
 4. web API client + bookmark store,
@@ -471,7 +506,8 @@ There is no requirement to temporarily ship both clients together; separating th
 - Signed-in mobile users see the same account collection and can add/remove bookmarks.
 - Mobile stale epoch results cannot apply to a different account and this is covered by pure unit tests.
 - Mobile bookmarked families retain existing per-difficulty download controls.
-- PUT uses direct `getFamily` readiness semantics: 400 malformed, 404 missing/non-ready, 409 capacity reached.
+- PUT uses direct `getFamily` readiness semantics: 400 malformed, 404 missing/non-ready/deletion-fenced, 409 capacity reached.
+- Family deletion writes a permanent `family_deletion_tombstones` row at fence time and sweeps the family's bookmark rows plus the ownership mirror atomically in `completeFamilyDeletionCleanup`, so a bookmark PUT cannot land once deletion is fenced.
 - GET returns typed `PlayerBookmarkListResponse` and preserves D1 order while skipping missing/non-ready families.
 - Shared/API tests, not Playwright, prove D1 idempotency/isolation/capacity.
 - No session schema, download manifest, generic favorites framework, pagination, or offline bookmark cache is introduced.
