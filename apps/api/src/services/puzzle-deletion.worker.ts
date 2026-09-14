@@ -1,4 +1,4 @@
-import { deletePlayerBookmarksByFamily, deletePuzzleFamilyOwnership } from '@perseus/shared';
+import { completeFamilyDeletionCleanup, insertFamilyDeletionTombstone } from '@perseus/shared';
 import { PUZZLE_DIFFICULTIES } from '@perseus/types';
 import { getWorkerDbContext } from '../db.worker';
 import type { Env } from '../worker';
@@ -18,7 +18,11 @@ export async function ensureWorkerPuzzleDeletionFence(
 	deletedAt = Date.now()
 ): Promise<void> {
 	await writeCleanupRecord(env.PUZZLE_METADATA, record);
-	const { completionWrites } = getWorkerDbContext(env);
+	const { db, completionWrites } = getWorkerDbContext(env);
+	// Family tombstone first: bookmark PUTs fence on it, so writes are blocked
+	// for the whole deletion window, not only after the final sweep —
+	// symmetric with the per-variant completion tombstones below.
+	await insertFamilyDeletionTombstone(db, record.familyId, deletedAt);
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		await completionWrites.beginPuzzleDeletion(record.variantIds[difficulty], deletedAt);
 	}
@@ -26,12 +30,11 @@ export async function ensureWorkerPuzzleDeletionFence(
 
 export async function completeWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
 	const { db, completionWrites } = getWorkerDbContext(env);
-	// Ownership row first: addPlayerBookmark's insert is gated on the
-	// puzzle_families row existing, so removing it here closes the fence —
-	// any in-flight PUT that passed the KV readiness check can no longer
-	// insert, and the bookmark sweep then clears rows that landed earlier.
-	await deletePuzzleFamilyOwnership(db, record.familyId);
-	await deletePlayerBookmarksByFamily(db, record.familyId);
+	// One atomic batch — family tombstone, ownership row, and bookmark rows —
+	// so a racing bookmark PUT either commits first and is swept, or commits
+	// after and is refused by the tombstone. Covers deletion paths that never
+	// ran ensureWorkerPuzzleDeletionFence (idempotent for those that did).
+	await completeFamilyDeletionCleanup(db, record.familyId);
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		await completionWrites.finishPuzzleDeletion(record.variantIds[difficulty]);
 	}

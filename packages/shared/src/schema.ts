@@ -156,6 +156,11 @@ export const puzzleDeletionTombstones = sqliteTable('puzzle_deletion_tombstones'
 	deletedAt: integer('deleted_at').notNull()
 });
 
+export const familyDeletionTombstones = sqliteTable('family_deletion_tombstones', {
+	familyId: text('family_id').primaryKey(),
+	deletedAt: integer('deleted_at').notNull()
+});
+
 export const playerCompletionUsage = sqliteTable(
 	'player_completion_usage',
 	{

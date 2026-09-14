@@ -1,7 +1,13 @@
 import { eq, lt, desc, asc, count, sql, and, inArray, type SQL } from 'drizzle-orm';
 import type { PuzzleDifficulty, RecordPuzzleCompletionV2, ResultClass } from '@perseus/types';
-import type { AppDb, NewPuzzleFamilyRow, PlayerProfileRow } from './types';
-import { puzzleFamilies, playerProfiles, playerAchievements } from './schema';
+import type { AppDb, D1AppDb, NewPuzzleFamilyRow, PlayerProfileRow } from './types';
+import {
+	familyDeletionTombstones,
+	playerBookmarks,
+	puzzleFamilies,
+	playerProfiles,
+	playerAchievements
+} from './schema';
 import {
 	interpretVersionedCompletionWrite,
 	type CompletionMutationFacts,
@@ -291,6 +297,49 @@ export async function ensurePuzzleFamilyOwnership(
 
 export async function deletePuzzleFamilyOwnership(db: AppDb, id: string): Promise<void> {
 	await db.delete(puzzleFamilies).where(eq(puzzleFamilies.id, id)).run();
+}
+
+/**
+ * Writes the family's deletion tombstone — the durable positive marker that
+ * deletion was fenced for this family. addPlayerBookmark's insert gates on
+ * this row rather than on the puzzle_families ownership row: that mirror is
+ * only best-effort on some publish paths, so its absence cannot prove the
+ * family is gone, while a tombstone's presence always proves deletion was
+ * decided. Idempotent so every deletion path and retry can write it.
+ */
+export async function insertFamilyDeletionTombstone(
+	db: AppDb,
+	familyId: string,
+	deletedAt: number
+): Promise<void> {
+	await db
+		.insert(familyDeletionTombstones)
+		.values({ familyId, deletedAt })
+		.onConflictDoNothing({ target: familyDeletionTombstones.familyId })
+		.run();
+}
+
+/**
+ * Atomically writes the family tombstone and removes the family's D1 mirror
+ * rows — the puzzle_families ownership row and every player_bookmarks row —
+ * in one batch. A racing addPlayerBookmark either commits first and is
+ * swept, or commits after and is refused by the tombstone; there is no
+ * window where the sweep ran but inserts still succeed. Called by every
+ * family-deletion completion path; idempotent under reaper retries.
+ */
+export async function completeFamilyDeletionCleanup(
+	db: D1AppDb,
+	familyId: string,
+	deletedAt = Date.now()
+): Promise<void> {
+	await db.batch([
+		db
+			.insert(familyDeletionTombstones)
+			.values({ familyId, deletedAt })
+			.onConflictDoNothing({ target: familyDeletionTombstones.familyId }),
+		db.delete(puzzleFamilies).where(eq(puzzleFamilies.id, familyId)),
+		db.delete(playerBookmarks).where(eq(playerBookmarks.familyId, familyId))
+	]);
 }
 
 export async function setPuzzleFamilyStatus(db: AppDb, id: string, status: string): Promise<void> {

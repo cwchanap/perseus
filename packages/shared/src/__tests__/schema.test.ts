@@ -36,12 +36,16 @@ describe('schema tables', () => {
 			expect(existsSync(snapshotPath)).toBe(true);
 		}
 		const latest = journal.entries[journal.entries.length - 1];
-		expect(latest.tag).toBe('0008_player_bookmarks');
+		expect(latest.tag).toBe('0009_family_deletion_tombstones');
 		const latestSnapshot = JSON.parse(
-			readFileSync('./drizzle/meta/0008_snapshot.json', 'utf8')
+			readFileSync('./drizzle/meta/0009_snapshot.json', 'utf8')
 		) as {
 			prevId: string;
 			tables: {
+				family_deletion_tombstones: {
+					columns: Record<string, { type: string; notNull: boolean }>;
+					primaryKeys?: Record<string, { columns: string[] }>;
+				};
 				puzzle_best_times: {
 					checkConstraints: Record<string, { value: string }>;
 					indexes: Record<string, { columns: string[] }>;
@@ -55,11 +59,15 @@ describe('schema tables', () => {
 			};
 		};
 		const previousSnapshot = JSON.parse(
-			readFileSync('./drizzle/meta/0007_snapshot.json', 'utf8')
+			readFileSync('./drizzle/meta/0008_snapshot.json', 'utf8')
 		) as {
 			id: string;
 		};
 		expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
+		expect(latestSnapshot.tables.family_deletion_tombstones.columns).toMatchObject({
+			family_id: { type: 'text', notNull: true },
+			deleted_at: { type: 'integer', notNull: true }
+		});
 		expect(latestSnapshot.tables.player_bookmarks.columns).toMatchObject({
 			player_id: { type: 'text', notNull: true },
 			family_id: { type: 'text', notNull: true },
@@ -135,6 +143,7 @@ describe('schema tables', () => {
 			.all() as { name: string }[];
 		expect(tableNames.map((table) => table.name)).toEqual(
 			expect.arrayContaining([
+				'family_deletion_tombstones',
 				'player_bookmarks',
 				'player_achievements',
 				'player_completion_usage',
@@ -364,7 +373,11 @@ describe('schema tables', () => {
 				.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all() as { name: string }[];
 			expect(tableNames.map((table) => table.name)).toEqual(
-				expect.arrayContaining(['player_completion_usage', 'puzzle_deletion_tombstones'])
+				expect.arrayContaining([
+					'family_deletion_tombstones',
+					'player_completion_usage',
+					'puzzle_deletion_tombstones'
+				])
 			);
 			expect(tableNames.map((table) => table.name)).not.toContain('puzzles');
 			expect(tableNames.map((table) => table.name)).not.toContain('puzzle_stats');

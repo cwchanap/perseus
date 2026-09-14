@@ -1930,8 +1930,8 @@ describe('player bookmarks (Worker)', () => {
 	});
 
 	it('PUT returns 404 when the family was deleted behind a stale KV read', async () => {
-		// The KV readiness check passed (or served a stale read) but the D1
-		// ownership row is already gone — the fenced insert refuses to
+		// The KV readiness check passed (or served a stale read) but the family
+		// deletion tombstone is already written — the fenced insert refuses to
 		// resurrect a bookmark and the route reports the same not_found as the
 		// KV check.
 		const shared = await import('@perseus/shared');

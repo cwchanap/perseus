@@ -7,8 +7,8 @@ const mocks = vi.hoisted(() => ({
 	beginPuzzleDeletion: vi.fn(),
 	finishPuzzleDeletion: vi.fn(),
 	finishFamilyFirstClears: vi.fn(),
-	deletePuzzleFamilyOwnership: vi.fn(),
-	deletePlayerBookmarksByFamily: vi.fn(),
+	insertFamilyDeletionTombstone: vi.fn(),
+	completeFamilyDeletionCleanup: vi.fn(),
 	deleteMetadataDO: vi.fn(),
 	deleteFamilyCleanupAssets: vi.fn(),
 	deleteFamilyMetadata: vi.fn(),
@@ -37,8 +37,8 @@ vi.mock('../../db.worker', () => ({
 }));
 
 vi.mock('@perseus/shared', () => ({
-	deletePuzzleFamilyOwnership: mocks.deletePuzzleFamilyOwnership,
-	deletePlayerBookmarksByFamily: mocks.deletePlayerBookmarksByFamily
+	insertFamilyDeletionTombstone: mocks.insertFamilyDeletionTombstone,
+	completeFamilyDeletionCleanup: mocks.completeFamilyDeletionCleanup
 }));
 
 import {
@@ -79,8 +79,8 @@ describe('Worker puzzle deletion lifecycle', () => {
 		mocks.beginPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.finishPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.finishFamilyFirstClears.mockResolvedValue(undefined);
-		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
-		mocks.deletePlayerBookmarksByFamily.mockResolvedValue(undefined);
+		mocks.insertFamilyDeletionTombstone.mockResolvedValue(undefined);
+		mocks.completeFamilyDeletionCleanup.mockResolvedValue(undefined);
 		mocks.deleteMetadataDO.mockResolvedValue(undefined);
 		mocks.deleteFamilyCleanupAssets.mockResolvedValue({ success: true, failedKeys: [] });
 		mocks.deleteFamilyMetadata.mockResolvedValue({ success: true });
@@ -91,6 +91,11 @@ describe('Worker puzzle deletion lifecycle', () => {
 		await ensureWorkerPuzzleDeletionFence(env, record, 1_700_000_000_123);
 
 		expect(mocks.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, record);
+		expect(mocks.insertFamilyDeletionTombstone).toHaveBeenCalledWith(
+			mocks.db,
+			'family-1',
+			1_700_000_000_123
+		);
 		for (const difficulty of PUZZLE_DIFFICULTIES) {
 			expect(mocks.beginPuzzleDeletion).toHaveBeenCalledWith(
 				record.variantIds[difficulty],
@@ -109,6 +114,7 @@ describe('Worker puzzle deletion lifecycle', () => {
 			'KV unavailable'
 		);
 
+		expect(mocks.insertFamilyDeletionTombstone).not.toHaveBeenCalled();
 		expect(mocks.beginPuzzleDeletion).not.toHaveBeenCalled();
 	});
 
@@ -128,20 +134,20 @@ describe('Worker puzzle deletion lifecycle', () => {
 		await ensureWorkerPuzzleDeletionFence(env, record, 1_700_000_000_123);
 
 		expect(mocks.writeCleanupRecord).toHaveBeenCalledTimes(2);
+		expect(mocks.insertFamilyDeletionTombstone).toHaveBeenCalledTimes(2);
 		expect(mocks.beginPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length * 2);
 	});
 
-	it('deletes family ownership, finishes all variant fences, then the cleanup record', async () => {
+	it('runs the family D1 cleanup, finishes all variant fences, then the cleanup record', async () => {
 		await finishWorkerPuzzleDeletion(env, record);
 
-		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledWith(mocks.db, 'family-1');
-		expect(mocks.deletePlayerBookmarksByFamily).toHaveBeenCalledWith(mocks.db, 'family-1');
+		expect(mocks.completeFamilyDeletionCleanup).toHaveBeenCalledWith(mocks.db, 'family-1');
 		for (const difficulty of PUZZLE_DIFFICULTIES) {
 			expect(mocks.finishPuzzleDeletion).toHaveBeenCalledWith(record.variantIds[difficulty]);
 		}
 		expect(mocks.finishFamilyFirstClears).toHaveBeenCalledWith('family-1');
 		expect(mocks.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'family-1');
-		expect(mocks.deletePuzzleFamilyOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+		expect(mocks.completeFamilyDeletionCleanup.mock.invocationCallOrder[0]).toBeLessThan(
 			mocks.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 		expect(
@@ -152,23 +158,21 @@ describe('Worker puzzle deletion lifecycle', () => {
 		);
 	});
 
-	it('does not delete the record when variant completion cleanup fails after ownership', async () => {
+	it('does not delete the record when variant completion cleanup fails after the family cleanup', async () => {
 		mocks.finishPuzzleDeletion.mockRejectedValueOnce(new Error('completion cleanup failed'));
 
 		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow(
 			'completion cleanup failed'
 		);
 
-		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledOnce();
+		expect(mocks.completeFamilyDeletionCleanup).toHaveBeenCalledOnce();
 		expect(mocks.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
-	it('does not delete the record when ownership cleanup fails', async () => {
-		mocks.deletePuzzleFamilyOwnership.mockRejectedValueOnce(new Error('ownership cleanup failed'));
+	it('does not delete the record when the family D1 cleanup fails', async () => {
+		mocks.completeFamilyDeletionCleanup.mockRejectedValueOnce(new Error('family cleanup failed'));
 
-		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow(
-			'ownership cleanup failed'
-		);
+		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow('family cleanup failed');
 
 		expect(mocks.finishPuzzleDeletion).not.toHaveBeenCalled();
 		expect(mocks.finishFamilyFirstClears).not.toHaveBeenCalled();
@@ -180,7 +184,7 @@ describe('Worker puzzle deletion lifecycle', () => {
 
 		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow('record delete failed');
 
-		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledOnce();
+		expect(mocks.completeFamilyDeletionCleanup).toHaveBeenCalledOnce();
 		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length);
 	});
 });
@@ -191,8 +195,7 @@ describe('executeFamilySourceDeletion reservation release order', () => {
 		mocks.deleteCleanupRecord.mockResolvedValue(undefined);
 		mocks.finishPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.finishFamilyFirstClears.mockResolvedValue(undefined);
-		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
-		mocks.deletePlayerBookmarksByFamily.mockResolvedValue(undefined);
+		mocks.completeFamilyDeletionCleanup.mockResolvedValue(undefined);
 		mocks.deleteMetadataDO.mockResolvedValue(undefined);
 		mocks.deleteFamilyCleanupAssets.mockResolvedValue({ success: true, failedKeys: [] });
 		mocks.deleteFamilyMetadata.mockResolvedValue({ success: true });
