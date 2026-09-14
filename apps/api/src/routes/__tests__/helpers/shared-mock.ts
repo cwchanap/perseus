@@ -18,7 +18,8 @@ import { vi } from 'vitest';
 export const sharedMockOverrides = {
 	insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePlayerBookmarksByFamily: vi.fn().mockResolvedValue(undefined),
+	insertFamilyDeletionTombstone: vi.fn().mockResolvedValue(undefined),
+	completeFamilyDeletionCleanup: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 	SYSTEM_OWNER_ID: 'system',
 	// Mock validateImageEndMarker so minimal test PNG/JPEG headers (which

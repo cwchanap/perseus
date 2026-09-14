@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * Coverage test for required ownership cleanup in admin.worker.ts
+ * Coverage test for required family deletion cleanup in admin.worker.ts
  * DELETE /puzzles/:id.
  *
- * Ownership cleanup is required after source deletion. A failure returns a
- * retriable 500 and retains the cleanup record and D1 tombstone.
+ * Family deletion cleanup (tombstone, ownership row, bookmark rows) is
+ * required after source deletion. A failure returns a retriable 500 and
+ * retains the cleanup record and D1 tombstone.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -52,14 +53,15 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...actual,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined)
+		insertFamilyDeletionTombstone: vi.fn().mockResolvedValue(undefined),
+		completeFamilyDeletionCleanup: vi.fn().mockResolvedValue(undefined)
 	};
 });
 
 import { makeFamilyMetadata } from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
-import { deletePuzzleFamilyOwnership } from '@perseus/shared';
+import { completeFamilyDeletionCleanup } from '@perseus/shared';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 const baseEnv = {
@@ -71,7 +73,7 @@ const baseEnv = {
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440001';
 
-describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => {
+describe('Admin Worker - DELETE /puzzles/:id required family deletion cleanup', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		__resetRateLimitStore();
@@ -80,14 +82,14 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 		vi.restoreAllMocks();
 	});
 
-	it('returns retriable 500 and retains the cleanup record when ownership rejects', async () => {
+	it('returns retriable 500 and retains the cleanup record when family cleanup rejects', async () => {
 		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
 		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
-		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 unavailable'));
+		vi.mocked(completeFamilyDeletionCleanup).mockRejectedValueOnce(new Error('D1 unavailable'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -107,7 +109,7 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 			);
 		}
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledTimes(1);
+		expect(completeFamilyDeletionCleanup).toHaveBeenCalledTimes(1);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			`Failed to finish fenced cleanup for ${VALID_UUID}:`,
 			expect.any(Error)

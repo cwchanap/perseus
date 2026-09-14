@@ -45,8 +45,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
-		deletePuzzleFamilyOwnership: vi.fn(),
-		deletePlayerBookmarksByFamily: vi.fn(async () => undefined)
+		insertFamilyDeletionTombstone: vi.fn(async () => undefined),
+		completeFamilyDeletionCleanup: vi.fn()
 	};
 });
 
@@ -63,7 +63,7 @@ import {
 	listFamilies,
 	releaseIdempotencyKey
 } from '../storage.worker';
-import { deletePuzzleFamilyOwnership } from '@perseus/shared';
+import { completeFamilyDeletionCleanup } from '@perseus/shared';
 
 void releaseIdempotencyKey;
 
@@ -120,8 +120,8 @@ describe('reaper D1 cleanup coverage', () => {
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 	});
 
-	it('retains the deletion fence when required D1 ownership deletion rejects', async () => {
-		(deletePuzzleFamilyOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
+	it('retains the deletion fence when required D1 family cleanup rejects', async () => {
+		(completeFamilyDeletionCleanup as any).mockRejectedValue(new Error('D1 delete failed'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv();
 
@@ -138,7 +138,7 @@ describe('reaper D1 cleanup coverage', () => {
 			expect.any(Number)
 		);
 		expect(deleteFamilyCleanupAssets).toHaveBeenCalled();
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-puzzle');
+		expect(completeFamilyDeletionCleanup).toHaveBeenCalledWith(dbContextMock.db, 'stuck-puzzle');
 		expect(deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'stuck-puzzle', action: 'd1-finish-failed' })

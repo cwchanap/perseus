@@ -69,7 +69,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 import { makeFamilyMetadata } from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
-import { deletePuzzleFamilyOwnership } from '@perseus/shared';
+import { completeFamilyDeletionCleanup, deletePuzzleFamilyOwnership } from '@perseus/shared';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
@@ -281,7 +281,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			expect.stringContaining(`Failed to finish fenced cleanup for ${VALID_UUID}`),
 			expect.any(Error)
 		);
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, VALID_UUID);
+		expect(completeFamilyDeletionCleanup).toHaveBeenCalledWith(dbContextMock.db, VALID_UUID);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });

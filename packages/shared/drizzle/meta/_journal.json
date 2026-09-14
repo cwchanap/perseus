@@ -64,6 +64,13 @@
 			"when": 1789273652883,
 			"tag": "0008_player_bookmarks",
 			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "6",
+			"when": 1789343630586,
+			"tag": "0009_family_deletion_tombstones",
+			"breakpoints": true
 		}
 	]
 }

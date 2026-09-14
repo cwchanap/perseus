@@ -89,6 +89,7 @@ import * as playerAuth from '../../services/player-auth.worker';
 import {
 	insertPuzzleFamilyOwnership,
 	deletePuzzleFamilyOwnership,
+	completeFamilyDeletionCleanup,
 	SYSTEM_OWNER_ID,
 	validateImageEndMarker
 } from '@perseus/shared';
@@ -1994,7 +1995,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			).toBeLessThan(
 				(storage.deleteCleanupRecord as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 			);
-			expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'losing-uuid');
+			expect(completeFamilyDeletionCleanup).toHaveBeenCalledWith(dbContextMock.db, 'losing-uuid');
 		});
 	});
 });
@@ -2134,7 +2135,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(res.status).toBe(204);
 		const { getWorkerDbContext } = await import('../../db.worker');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(mockEnv);
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, familyId);
+		expect(completeFamilyDeletionCleanup).toHaveBeenCalledWith(dbContextMock.db, familyId);
 		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
 			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
 				`${familyId}-${difficulty}`
@@ -2182,7 +2183,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 
 		expect(res.status).toBe(500);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, familyId);
+		expect(completeFamilyDeletionCleanup).toHaveBeenCalledWith(dbContextMock.db, familyId);
 		expect(
 			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
@@ -2219,12 +2220,12 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		consoleSpy.mockRestore();
 	});
 
-	it('returns retriable 500 and retains the record when ownership cleanup fails', async () => {
+	it('returns retriable 500 and retains the record when the family D1 cleanup fails', async () => {
 		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
 			makeFamilyMetadata(familyId, 'ready')
 		);
-		(deletePuzzleFamilyOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-			new Error('ownership cleanup failed')
+		(completeFamilyDeletionCleanup as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error('family cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const mockEnv = {
@@ -2243,7 +2244,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(res.status).toBe(500);
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledTimes(1);
+		expect(completeFamilyDeletionCleanup).toHaveBeenCalledTimes(1);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			`Failed to finish fenced cleanup for ${familyId}:`,
 			expect.any(Error)

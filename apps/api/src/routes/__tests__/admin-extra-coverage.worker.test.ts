@@ -55,6 +55,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		insertFamilyDeletionTombstone: vi.fn().mockResolvedValue(undefined),
+		completeFamilyDeletionCleanup: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
