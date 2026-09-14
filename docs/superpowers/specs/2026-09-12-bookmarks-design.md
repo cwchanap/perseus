@@ -469,9 +469,9 @@ Do not introduce a NativeScript UI E2E framework solely for bookmarks.
 
 ## Delivery shape
 
-Implement in two PRs against the same frozen contract.
+Deliver in one implementation PR. Inside it, work is ordered in two phases against the same frozen contract — the server contract lands first, then both clients build against it on the same branch.
 
-### Implementation PR A — server + web
+### Phase A — server contract + web
 
 Contains:
 
@@ -483,9 +483,9 @@ Contains:
 6. `/bookmarks` + `prerender = false` + shell nav,
 7. shared/API/web unit tests + raw-route Playwright + accessibility scan.
 
-### Implementation PR B — mobile
+### Phase B — mobile
 
-Depends on PR A’s merged server contract and contains:
+Follows Phase A’s server contract on the same branch and contains:
 
 1. mobile player API methods,
 2. `FamilyCard` extraction,
@@ -494,7 +494,7 @@ Depends on PR A’s merged server contract and contains:
 5. Library `BOOKMARKS` section,
 6. focused mobile unit/regression tests.
 
-There is no requirement to temporarily ship both clients together; separating them keeps each implementation review smaller while preserving one product design and one server contract.
+Phase boundaries are ordering checkpoints inside the single PR; both clients ship together under one product design and one server contract.
 
 ## Acceptance criteria
 

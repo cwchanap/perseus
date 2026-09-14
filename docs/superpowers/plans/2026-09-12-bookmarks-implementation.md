@@ -4,12 +4,12 @@
 
 Implement bounded, account-scoped puzzle-family bookmarks across web and NativeScript mobile using the existing D1 player data, KV family metadata, authenticated player router, web gallery, and mobile account/Library seams.
 
-The product remains one feature, but implementation is split into two PRs:
+The product remains one feature delivered in one implementation PR. Tasks are ordered as phases inside that PR — the server contract lands first, then web and mobile build against it on the same branch:
 
-- **PR A:** shared/types/API + web + web E2E
-- **PR B:** mobile, built against PR A’s merged contract
+- **Phase A:** shared/types/API + web + web E2E
+- **Phase B:** mobile, built against the Phase A contract
 
-This keeps each implementation review smaller without adding a second architecture or API.
+Phase boundaries are internal review checkpoints, not separate PRs; nothing waits on a merge.
 
 ## Closed contracts before coding
 
@@ -42,7 +42,7 @@ This keeps each implementation review smaller without adding a second architectu
 - Playwright uses raw stateful `page.route` mocks and proves browser wiring only.
 - D1 idempotency/isolation/capacity are proven in shared Miniflare tests.
 
-# Implementation PR A — Server + Web
+# Phase A — Server Contract + Web
 
 ## Task 1 — Add bounded bookmark persistence in `@perseus/shared`
 
@@ -501,7 +501,7 @@ The bookmark routes share an in-memory collection for the test lifetime.
 
 This is browser wiring only. It does not prove D1 persistence.
 
-### PR A final gate
+### Phase A gate
 
 Run the repo’s normal checks for touched packages, including:
 
@@ -513,9 +513,9 @@ Run the repo’s normal checks for touched packages, including:
 - bookmark Gallery Playwright flow,
 - lint/format/type checks used by CI.
 
-Do not start mobile implementation until this contract is merged or otherwise frozen.
+Mobile tasks (8–11) build against this server contract on the same branch; start them once the contract is settled here — no merge gate is required.
 
-# Implementation PR B — Mobile
+# Phase B — Mobile
 
 ## Task 8 — Extend the mobile player API boundary
 
@@ -674,7 +674,7 @@ States:
 
 No local bookmark file/cache/queue.
 
-### PR B final gate
+### Phase B gate
 
 Run:
 
@@ -704,7 +704,7 @@ Stop and reassess rather than silently expanding scope if implementation appears
 
 # Definition of done
 
-The feature is complete after both implementation PRs land and:
+The feature is complete when this PR lands and:
 
 - bookmark persistence is player-isolated, idempotent, and bounded at 200,
 - new over-cap PUT returns 409 while existing PUT stays idempotent,
