@@ -130,6 +130,7 @@ app.route('/api/puzzles', puzzles);
 app.route('/api/puzzle-families', puzzleFamilies);
 app.route('/api/leaderboard', leaderboard);
 app.route('/api/admin', admin);
+app.route('/api/admin/cli', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);
 
