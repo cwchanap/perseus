@@ -444,10 +444,6 @@ describe('importPuzzleFamilies', () => {
 	});
 
 	it('does not coalesce distinct legacy puzzles that share name + aspectRatio', async () => {
-		// Two legacy entries with identical name + aspectRatio but different
-		// legacyIds. The legacy catalog does not enforce unique names, so this
-		// is a legitimate input. The import must create two distinct families
-		// (distinct Idempotency-Key headers), not reuse one replacement.
 		const manifest = makeManifest(dir, 1);
 		manifest.puzzles.push({
 			legacyId: PUZZLE_B,
@@ -506,7 +502,6 @@ describe('importPuzzleFamilies', () => {
 			sleepFn: async () => {}
 		});
 
-		// Distinct legacyIds produced distinct idempotency keys → no coalescing.
 		expect(postedKeys).toHaveLength(2);
 		expect(postedKeys[0]).not.toBe(postedKeys[1]);
 		expect(results.map((r) => r.familyId).sort()).toEqual([FAMILY_A, FAMILY_B].sort());
@@ -563,7 +558,6 @@ describe('importPuzzleFamilies', () => {
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
-				// Polling blows up while the family is still processing.
 				throw new Error('poll network failure');
 			}
 			throw new Error(`unexpected fetch ${url} ${init?.method ?? 'GET'}`);
@@ -586,8 +580,6 @@ describe('importPuzzleFamilies', () => {
 			})
 		).rejects.toThrow('poll network failure');
 
-		// The durable artifact written BEFORE polling survives the failure and
-		// lists the created family as still processing.
 		const results = JSON.parse(
 			readFileSync(join(dir, 'import-results.json'), 'utf8')
 		) as ImportResults;
@@ -712,7 +704,6 @@ describe('assertHttpsCredentialServer', () => {
 		expect(() => assertHttpsCredentialServer('http://localhost:4690')).not.toThrow();
 		expect(() => assertHttpsCredentialServer('http://127.0.0.1:8787')).not.toThrow();
 		expect(() => assertHttpsCredentialServer('http://evil.example.com')).toThrow(/non-HTTPS/);
-		// Scheme-less values cannot be verified as local — rejected.
 		expect(() => assertHttpsCredentialServer('perseus.cwchanap.dev')).toThrow(/non-HTTPS/);
 	});
 });
