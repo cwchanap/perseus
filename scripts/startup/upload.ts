@@ -19,6 +19,7 @@ import {
 	FETCH_TIMEOUT_MS,
 	UPLOAD_TIMEOUT_MS,
 	MAX_FILE_SIZE,
+	accessAppFor,
 	type Options,
 	type AccessCredentials,
 	type CatalogEntry,
@@ -113,7 +114,7 @@ export async function fetchExistingKeys(
 	baseHeaders: Record<string, string>,
 	requireReady = false
 ): Promise<Set<string>> {
-	const res = await fetch(`${server}/api/admin/puzzle-families`, {
+	const res = await fetch(accessAppFor(server), {
 		method: 'GET',
 		headers: baseHeaders,
 		redirect: 'manual',
@@ -166,7 +167,7 @@ export const retryConfig = {
 	maxAttempts: MAX_RETRY_ATTEMPTS,
 	baseDelayMs: RETRY_BASE_DELAY_MS,
 	// Poll count / base delay for post-failure existence checks. Production
-	// GET /api/admin/puzzle-families reads eventually consistent KV; a single GET can
+	// GET /api/admin/cli/puzzle-families reads eventually consistent KV; a single GET can
 	// omit a just-created puzzle and cause a duplicate re-POST.
 	verifyPollAttempts: 4,
 	verifyPollBaseDelayMs: 250,
@@ -174,7 +175,7 @@ export const retryConfig = {
 };
 
 /**
- * Poll GET /api/admin/puzzle-families until `dedupKey` appears or the attempt budget
+ * Poll GET /api/admin/cli/puzzle-families until `dedupKey` appears or the attempt budget
  * is exhausted. Used after a transient POST failure (and after final-attempt
  * failure) so KV lag does not cause a duplicate re-POST or a false FAIL.
  *
@@ -235,7 +236,7 @@ export async function uploadWithRetry(
 	const idempotencyHeader = idempotencyKeyHeader(dedupKey);
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
-			const response = await fetch(`${server}/api/admin/puzzle-families`, {
+			const response = await fetch(accessAppFor(server), {
 				method: 'POST',
 				headers: {
 					...baseHeaders,
@@ -370,7 +371,7 @@ Or add those two keys to apps/api/.env, then:
 	}
 
 	// Live smoke check for the service-token path (the primary CI method).
-	// Mirrors the JWT probe above: hit GET /api/admin/puzzle-families with the service
+	// Mirrors the JWT probe above: hit GET /api/admin/cli/puzzle-families with the service
 	// token headers and fail fast if Access rejects them (401/302/403). Without
 	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
 	// an opaque login failure after the upload has already started.
