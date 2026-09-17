@@ -318,16 +318,16 @@ describe('aspectRatiosMatch', () => {
 
 describe('accessAppFor', () => {
 	it('derives CLI Access app URL from server', () => {
-		// Must target /api/admin/puzzle-families (Perseus Admin CLI), not /api/admin
-		// (broad Perseus Admin app) — different Access audiences.
+		// Must target the dedicated Perseus Admin CLI alias, not the browser
+		// admin API path — the two flows intentionally use different Access apps.
 		expect(accessAppFor('https://example.com')).toBe(
-			'https://example.com/api/admin/puzzle-families'
+			'https://example.com/api/admin/cli/puzzle-families'
 		);
 	});
 
 	it('strips trailing slashes', () => {
 		expect(accessAppFor('https://example.com/')).toBe(
-			'https://example.com/api/admin/puzzle-families'
+			'https://example.com/api/admin/cli/puzzle-families'
 		);
 	});
 });
@@ -714,13 +714,13 @@ describe('cmdUpload', () => {
 		// cannot verify and must record a failure (FatalError).
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ families: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				throw new Error('ECONNRESET');
 			}
 			return new Response('not found', { status: 404 });
@@ -750,13 +750,13 @@ describe('cmdUpload', () => {
 		let postCalled = false;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ families: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				postCalled = true;
 				return new Response('ok', { status: 201 });
 			}
@@ -795,13 +795,13 @@ describe('cmdUpload', () => {
 		let postCalled = false;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ families: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				postCalled = true;
 				return new Response('ok', { status: 201 });
 			}
@@ -837,14 +837,14 @@ describe('cmdUpload', () => {
 		let postBody: FormData | undefined;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				// Initial fetch returns Alpha as existing; Beta is not yet there.
 				return new Response(JSON.stringify({ families: [{ name: 'Alpha', aspectRatio: '1:1' }] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				postCalled = true;
 				postBody = init?.body as FormData;
 				return new Response(JSON.stringify({ id: 'new-id', status: 'created' }), {
@@ -921,13 +921,13 @@ describe('cmdUpload', () => {
 			const headers = init?.headers as Record<string, string>;
 			if (headers) capturedHeaders.push({ ...headers });
 
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ families: [] }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				});
 			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ id: 'new-id', status: 'created' }), {
 					status: 201,
 					headers: { 'Content-Type': 'application/json' }
