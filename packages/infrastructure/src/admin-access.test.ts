@@ -151,10 +151,10 @@ describe('buildAdminAccessDestinations', () => {
 });
 
 describe('buildCliAccessDestinations', () => {
-	it('builds only the exact puzzle family list/create path needed by the CLI', () => {
-		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/puzzle-families']);
+	it('builds only the dedicated puzzle family list/create alias needed by the CLI', () => {
+		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/cli/puzzle-families']);
 		expect(buildCliAccessDestinations('perseus.cwchanap.dev')).toEqual([
-			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzle-families' }
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/cli/puzzle-families' }
 		]);
 	});
 
@@ -352,7 +352,7 @@ describe('buildAdminAccessApplicationArgs', () => {
 });
 
 describe('buildCliAccessApplicationArgs', () => {
-	it('builds a narrow app scoped to CLI paths with both policies', () => {
+	it('builds a narrow app scoped to the dedicated CLI alias with both policies', () => {
 		const args = buildCliAccessApplicationArgs({
 			accountId: 'account-id',
 			hostname: 'https://perseus.cwchanap.dev',
@@ -362,13 +362,13 @@ describe('buildCliAccessApplicationArgs', () => {
 		});
 
 		expect(args.name).toBe('Perseus Admin CLI');
-		expect(args.domain).toBe('perseus.cwchanap.dev/api/admin/puzzle-families');
+		expect(args.domain).toBe('perseus.cwchanap.dev/api/admin/cli/puzzle-families');
 		expect(args.destinations).toEqual([
-			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzle-families' }
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/cli/puzzle-families' }
 		]);
 		expect(args.sameSiteCookieAttribute).toBe('lax');
 		expect(args.policies).toHaveLength(2);
-		// Policy 1: email + posture (browser admin still works on these paths)
+		// Policy 1: email + posture for operator JWT/bootstrap access to the CLI alias.
 		expect(args.policies?.[0]).toEqual(
 			expect.objectContaining({
 				decision: 'allow',
