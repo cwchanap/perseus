@@ -17,17 +17,15 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  *   example.com/eng and example.com/eng/exec, the more specific rule for
  *   /eng/exec wins, and NO rule is inherited from /eng.
  *
- * PATH SCOPING (resolved): CLI_ACCESS_PATHS includes the exact path
- * '/api/admin/puzzle-families' (for POST = create + GET = list). The per-id delete
- * route lives at POST /api/admin/puzzle-family-delete/:familyId — a SIBLING of (not a
- * sub-path of) '/api/admin/puzzle-families' — so it does NOT inherit the CLI app's
- * policies. It inherits only the broad admin app's email+posture policy,
- * which has no Service Auth policy, so a service-token holder cannot reach the
- * delete endpoint. Cloudflare Access is path-based, not method-based, which is
- * why the delete route was moved off the inherited sub-path rather than scoped
- * by HTTP method.
+ * PATH SCOPING (resolved): CLI_ACCESS_PATHS uses a dedicated exact alias,
+ * '/api/admin/cli/puzzle-families', for automated POST=create and GET=list.
+ * Browser admin continues to use '/api/admin/puzzle-families', which is covered
+ * only by the broad admin app, so an authenticated admin page does not cross
+ * into a second Access application during fetch(). The per-id delete route
+ * remains POST /api/admin/puzzle-family-delete/:familyId, outside the CLI alias,
+ * so a service-token holder cannot reach it at the Access gate.
  */
-export const CLI_ACCESS_PATHS = ['/api/admin/puzzle-families'] as const;
+export const CLI_ACCESS_PATHS = ['/api/admin/cli/puzzle-families'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 /** Default lifetime for the non-interactive CLI service token (90 days). */
 export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h';
@@ -263,8 +261,8 @@ export function buildAdminAccessApplicationArgs(
 
 /**
  * Args for the narrow CLI Access application. Includes both the email+posture
- * policy (so browser admin still works on these paths) and the Service Auth
- * policy (for the CLI service token).
+ * policy (for the operator JWT/bootstrap flow) and the Service Auth policy
+ * (for the CLI service token).
  */
 export interface BuildCliAccessApplicationArgs {
 	accountId: pulumi.Input<string>;
@@ -288,7 +286,7 @@ export function buildCliAccessApplicationArgs(
 		accountId: args.accountId,
 		name: CLI_ACCESS_APPLICATION_NAME,
 		type: 'self_hosted',
-		domain: `${hostname}/api/admin/puzzle-families`,
+		domain: `${hostname}/api/admin/cli/puzzle-families`,
 		destinations: buildCliAccessDestinations(hostname),
 		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 		...ADMIN_ACCESS_APP_FLAGS,
@@ -360,10 +358,10 @@ export function createAdminAccessResources(
 		{ dependsOn: [devicePostureRule] }
 	);
 
-	// Narrow app: protects the exact puzzle list/create path with both
-	// email+posture (browser admin still works) and Service Auth (CLI token).
-	// More specific Access paths take precedence over the broad admin app, so
-	// keep this restricted to the one exact endpoint above.
+	// Narrow app: protects only the dedicated CLI list/create alias with
+	// email+posture (operator JWT/bootstrap) and Service Auth (CLI token).
+	// Browser admin list/create stays on /api/admin/puzzle-families and therefore
+	// uses only the broad app instead of crossing Access applications mid-fetch.
 	const cliApplication = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-cli-application',
 		buildCliAccessApplicationArgs({
