@@ -393,13 +393,13 @@ describe('importPuzzleFamilies', () => {
 
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				const body = init.body as FormData;
 				posts.push(String(body.get('name')));
 				const id = posts.length === 1 ? FAMILY_A : FAMILY_B;
 				return new Response(JSON.stringify({ id, status: 'processing' }), { status: 201 });
 			}
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				pollCount++;
 				const ready = pollCount >= 2;
 				return new Response(
@@ -468,7 +468,7 @@ describe('importPuzzleFamilies', () => {
 		let created = 0;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				const headerKey = (init.headers as Record<string, string>)['Idempotency-Key'];
 				postedKeys.push(headerKey);
 				created += 1;
@@ -477,7 +477,7 @@ describe('importPuzzleFamilies', () => {
 					{ status: 201 }
 				);
 			}
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(
 					JSON.stringify({
 						families: [
@@ -520,12 +520,12 @@ describe('importPuzzleFamilies', () => {
 
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				const body = init.body as FormData;
 				expect(body.has('category')).toBe(false);
 				return new Response(JSON.stringify({ id: FAMILY_A, status: 'ready' }), { status: 201 });
 			}
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(
 					JSON.stringify({
 						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
@@ -557,12 +557,12 @@ describe('importPuzzleFamilies', () => {
 
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ id: FAMILY_A, status: 'processing' }), {
 					status: 201
 				});
 			}
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'GET' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				// Polling blows up while the family is still processing.
 				throw new Error('poll network failure');
 			}
@@ -603,7 +603,7 @@ describe('importPuzzleFamilies', () => {
 
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+			if (init?.method === 'POST' && url.endsWith('/api/admin/cli/puzzle-families')) {
 				return new Response(JSON.stringify({ id: FAMILY_A, status: 'processing' }), {
 					status: 201
 				});
