@@ -225,8 +225,8 @@ async function promptLine(question: string): Promise<string> {
 }
 
 export async function promptTokenInteractive(server: string): Promise<string> {
-	// Open the CLI Access app path (not /admin): JWT audience must match
-	// `Perseus Admin CLI`, which protects /api/admin/puzzle-families.
+	// Open the dedicated CLI Access app path (not /admin): JWT audience must
+	// match `Perseus Admin CLI`.
 	const accessApp = accessAppFor(server);
 	console.log(`
 ────────────────────────────────────────────────────────────
@@ -253,7 +253,7 @@ export async function promptTokenInteractive(server: string): Promise<string> {
 }
 
 /**
- * Probe whether Access accepts this JWT by hitting GET /api/admin/puzzle-families.
+ * Probe whether Access accepts this JWT through the dedicated CLI alias.
  * 401/302/403 = Access blocked; 200 = passed Access.
  *
  * 5xx is treated as 'unhealthy' (not 'ok') because while it confirms Access
@@ -266,7 +266,8 @@ export async function probeAccessToken(
 	token: string
 ): Promise<'ok' | 'blocked' | 'unhealthy' | 'error'> {
 	try {
-		const res = await fetch(`${server}/api/admin/puzzle-families`, {
+		const accessUrl = accessAppFor(server);
+		const res = await fetch(accessUrl, {
 			method: 'GET',
 			headers: {
 				'cf-access-token': token,
@@ -283,7 +284,7 @@ export async function probeAccessToken(
 		// fail for reasons unrelated to Access.
 		if (res.status >= 500) {
 			console.warn(
-				`probeAccessToken: ${server}/api/admin/puzzle-families returned ${res.status} — ` +
+				`probeAccessToken: ${accessUrl} returned ${res.status} — ` +
 					`Access accepted the token, but the backend is unhealthy. ` +
 					`Upload will fail until the backend recovers.`
 			);
@@ -297,7 +298,7 @@ export async function probeAccessToken(
 
 /**
  * Probe whether Cloudflare Access accepts a service token (CF-Access-Client-Id
- * / CF-Access-Client-Secret) by hitting GET /api/admin/puzzle-families. Mirrors
+ * / CF-Access-Client-Secret) through the dedicated CLI alias. Mirrors
  * probeAccessToken so the service-token path gets the same live smoke check.
  * 401/302/403 = Access blocked; 200 = reached the worker; 5xx = Access accepted
  * the service token but the backend is unhealthy.
@@ -308,7 +309,8 @@ export async function probeServiceToken(
 	cfClientSecret: string
 ): Promise<'ok' | 'blocked' | 'unhealthy' | 'error'> {
 	try {
-		const res = await fetch(`${server}/api/admin/puzzle-families`, {
+		const accessUrl = accessAppFor(server);
+		const res = await fetch(accessUrl, {
 			method: 'GET',
 			headers: {
 				'CF-Access-Client-Id': cfClientId,
@@ -324,7 +326,7 @@ export async function probeServiceToken(
 		// is broken and uploads will fail until it recovers.
 		if (res.status >= 500) {
 			console.warn(
-				`probeServiceToken: ${server}/api/admin/puzzle-families returned ${res.status} — ` +
+				`probeServiceToken: ${accessUrl} returned ${res.status} — ` +
 					`Access accepted the service token, but the backend is unhealthy. ` +
 					`Upload will fail until the backend recovers.`
 			);
