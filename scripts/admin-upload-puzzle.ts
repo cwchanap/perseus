@@ -11,6 +11,7 @@ import {
 } from './startup/token';
 import {
 	FatalError,
+	accessAppFor,
 	applyDotenvOverrides,
 	isLocalServer,
 	type AccessCredentials
@@ -191,7 +192,7 @@ async function main() {
 	if (options.category) formData.append('category', options.category);
 	formData.append('image', image, basename(options.imagePath));
 
-	const uploadResponse = await fetch(`${options.server}/api/admin/puzzle-families`, {
+	const uploadResponse = await fetch(accessAppFor(options.server), {
 		method: 'POST',
 		headers: baseHeaders,
 		body: formData,
