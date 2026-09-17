@@ -13,7 +13,7 @@ import { MAX_FILE_SIZE, type PuzzleAspectRatio } from '@perseus/types';
 //   CF_ACCESS_AUD   — Cloudflare Access CLI application AUD (deployment-specific)
 //
 // CF_ACCESS_AUD must be the AUD of the narrow CLI Access app
-// (`admin-access-cli-application`, protecting /api/admin/puzzle-families), NOT the
+// (`admin-access-cli-application`, protecting /api/admin/cli/puzzle-families), NOT the
 // broad admin app. Retrieve it from the Pulumi stack output:
 //   pulumi stack output adminCliAccessAud -C packages/infrastructure
 // Without it, cloudflaredTokenPath/cloudflaredLockPath cannot resolve the
@@ -98,15 +98,16 @@ export class FatalError extends Error {
 }
 
 /**
- * Derive the Cloudflare Access app URL for the CLI Access application.
+ * Derive the Cloudflare Access app URL for the dedicated CLI endpoint.
  *
- * Must target the path matched by `Perseus Admin CLI` (`/api/admin/puzzle-families`),
- * not the broad `Perseus Admin` app root (`/api/admin`). Those apps have
- * different audiences; a JWT issued for the broad app is rejected by the
- * CLI path the uploader actually hits (probe + upload).
+ * Must target the path matched by `Perseus Admin CLI`
+ * (`/api/admin/cli/puzzle-families`), not the browser admin endpoint
+ * (`/api/admin/puzzle-families`). Keeping the two paths separate prevents
+ * browser fetches from crossing into the CLI Access application while still
+ * giving service-token automation a narrowly scoped route.
  */
 export function accessAppFor(server: string): string {
-	return `${server.replace(/\/+$/, '')}/api/admin/puzzle-families`;
+	return `${server.replace(/\/+$/, '')}/api/admin/cli/puzzle-families`;
 }
 
 /** Derive the admin UI URL from the server (browser admin UI, broad Access app). */
