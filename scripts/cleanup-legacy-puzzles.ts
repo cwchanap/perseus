@@ -3,6 +3,7 @@
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import {
+	accessAppFor,
 	applyDotenvOverrides,
 	assertHttpsCredentialServer,
 	FatalError,
@@ -134,7 +135,7 @@ async function fetchAdminPuzzleFamilies(
 	headers: Record<string, string>,
 	fetchFn: typeof fetch
 ): Promise<AdminPuzzleFamily[]> {
-	const response = await fetchFn(`${server.replace(/\/+$/, '')}/api/admin/puzzle-families`, {
+	const response = await fetchFn(accessAppFor(server), {
 		method: 'GET',
 		headers,
 		redirect: 'manual',
