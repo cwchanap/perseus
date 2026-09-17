@@ -12,6 +12,7 @@ import {
 } from './startup/upload';
 import { resolveAccessToken, probeAccessToken, probeServiceToken } from './startup/token';
 import {
+	accessAppFor,
 	applyDotenvOverrides,
 	assertHttpsCredentialServer,
 	FatalError,
@@ -129,7 +130,7 @@ async function fetchAdminFamilies(
 	headers: Record<string, string>,
 	fetchFn: typeof fetch
 ): Promise<PuzzleFamilyListResponse['families']> {
-	const response = await fetchFn(`${server.replace(/\/+$/, '')}/api/admin/puzzle-families`, {
+	const response = await fetchFn(accessAppFor(server), {
 		method: 'GET',
 		headers,
 		redirect: 'manual',
@@ -280,7 +281,7 @@ async function parseCliOptions(): Promise<ImportOptions> {
 		console.log(`Usage:
   bun scripts/import-puzzle-families.ts [--server <url>] [--migration-dir <dir>]
 
-Imports exported legacy puzzles into /api/admin/puzzle-families and restores owner_id.
+Imports exported legacy puzzles into /api/admin/cli/puzzle-families and restores owner_id.
 `);
 		process.exit(0);
 	}
