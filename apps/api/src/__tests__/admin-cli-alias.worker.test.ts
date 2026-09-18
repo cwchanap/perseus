@@ -14,6 +14,7 @@ vi.mock('../routes/player.worker', () => ({ default: emptyApp() }));
 vi.mock('../routes/admin.worker', () => {
 	const app = new Hono();
 	app.get('/puzzle-families', (c) => c.json({ families: [], source: 'admin' }));
+	app.post('/puzzle-families', (c) => c.json({ created: true, source: 'admin' }));
 	return { default: app };
 });
 vi.mock('../services/reaper', () => ({
@@ -58,13 +59,22 @@ describe('admin CLI route alias', () => {
 	});
 
 	it('mounts the same admin handlers under the dedicated CLI alias', async () => {
-		const response = await worker.fetch(
+		const getResponse = await worker.fetch(
 			new Request('http://localhost/api/admin/cli/puzzle-families'),
 			createEnv() as any,
 			createMockCtx()
 		);
 
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ families: [], source: 'admin' });
+		expect(getResponse.status).toBe(200);
+		expect(await getResponse.json()).toEqual({ families: [], source: 'admin' });
+
+		const postResponse = await worker.fetch(
+			new Request('http://localhost/api/admin/cli/puzzle-families', { method: 'POST' }),
+			createEnv() as any,
+			createMockCtx()
+		);
+
+		expect(postResponse.status).toBe(200);
+		expect(await postResponse.json()).toEqual({ created: true, source: 'admin' });
 	});
 });
