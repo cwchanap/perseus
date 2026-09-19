@@ -294,20 +294,19 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	});
 
 	const grid = page.locator('.pieces-grid');
-	const firstPieceId = gameplayPage.fixture!.initialTrayOrder[0]!;
-	const piece = gameplayPage.pieceSource(firstPieceId).getByTestId('puzzle-piece');
-	const pieceBox = await piece.boundingBox();
 	const gridBox = await grid.boundingBox();
-	expect(pieceBox).not.toBeNull();
 	expect(gridBox).not.toBeNull();
 
 	const panel = page.getByTestId('puzzle-inventory-panel');
 	const viewport = page.viewportSize();
 	const panelBox = await panel.boundingBox();
-	const firstSlotBox = await page.locator('[data-testid^="piece-slot-"]').first().boundingBox();
+	// HPA-466: capture the unselected baseline BEFORE selection — the selected
+	// slot's 2x2 span reflows grid auto-placement, so no slot index is
+	// guaranteed to stay a normal-size reference afterwards.
+	const baselineSlotBox = await page.locator('[data-testid^="piece-slot-"]').first().boundingBox();
 	expect(viewport).toEqual({ width: 390, height: 844 });
 	expect(panelBox).not.toBeNull();
-	expect(firstSlotBox).not.toBeNull();
+	expect(baselineSlotBox).not.toBeNull();
 	// HPA-220 fence: the large-inventory drawer must still fit the 390x844 fold
 	// (panel bottom ≤ viewport bottom) AND retain two complete piece rows of
 	// grid content under the mobile slot size, proving the tools row did not
@@ -327,10 +326,31 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	});
 
 	expect(gridBudget.contentHeight).toBeGreaterThanOrEqual(
-		firstSlotBox!.height * 2 + gridBudget.rowGap
+		baselineSlotBox!.height * 2 + gridBudget.rowGap
 	);
 
+	// HPA-466: selecting a piece expands its tray slot to a 2x2 grid area for
+	// inspection. The expanded slot must be materially larger than the
+	// unselected baseline without pushing the drawer past the 390x844 fold.
+	const firstPieceId = gameplayPage.fixture!.initialTrayOrder[0]!;
+	const firstPiece = gameplayPage.pieceSource(firstPieceId).getByTestId('puzzle-piece');
+	await gameplayPage.tapPiece(firstPieceId);
+	await expect(firstPiece).toHaveAttribute('data-selected', 'true');
+	await expect(gameplayPage.pieceSource(firstPieceId)).toHaveClass(/selected-expanded/);
+	await expect(page.locator('.piece-slot.selected-expanded')).toHaveCount(1);
+	const expandedSlotBox = await page.locator('.piece-slot.selected-expanded').boundingBox();
+	expect(expandedSlotBox).not.toBeNull();
+	expect(expandedSlotBox!.width).toBeGreaterThanOrEqual(baselineSlotBox!.width * 2);
+	expect(expandedSlotBox!.height).toBeGreaterThanOrEqual(baselineSlotBox!.height * 2);
+	const panelBoxSelected = await panel.boundingBox();
+	expect(panelBoxSelected).not.toBeNull();
+	expect(panelBoxSelected!.y + panelBoxSelected!.height).toBeLessThanOrEqual(viewport!.height);
+
 	const before = await grid.evaluate((element) => element.scrollTop);
+	// Selection reflowed the grid; re-locate the swipe start on the still
+	// selected piece so the touch sequence begins on an actual piece.
+	const pieceBox = await firstPiece.boundingBox();
+	expect(pieceBox).not.toBeNull();
 	const x = pieceBox!.x + pieceBox!.width / 2;
 	const startY = pieceBox!.y + pieceBox!.height / 2;
 	const endY = Math.max(gridBox!.y + 16, startY - 140);
