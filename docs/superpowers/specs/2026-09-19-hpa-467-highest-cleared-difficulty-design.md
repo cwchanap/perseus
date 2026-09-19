@@ -59,17 +59,15 @@ Add:
 
 `apps/web/src/lib/stores/clearedDifficulties.ts`
 
-State shape:
+Public value shape:
 
 ```ts
-interface ClearedDifficultiesState {
-  accountId: string | null;
-  status: 'idle' | 'loading' | 'loaded' | 'error';
-  byFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>;
-}
+ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
 ```
 
-The store observes `playerAuth` only for identity changes and exposes an explicit `load()`, matching the existing bookmarks store style.
+The store observes `playerAuth` only for identity changes and exposes `subscribe` plus an explicit `load()`, matching the existing bookmarks store's lifecycle pattern without copying its UI-facing status/error state.
+
+`currentAccountId`, `loadedAccountId`, in-flight promise/error state, version, and abort controller stay internal because no HPA-467 consumer renders them.
 
 It does **not** own localStorage completion data.
 
@@ -99,7 +97,7 @@ Reuse the existing bookmarks store's **identity/version/load-dedupe** behavior:
 - abort the active stats request chain when identity changes;
 - ignore any response whose captured version no longer matches.
 
-For cancellation, follow Gallery/Profile rather than `bookmarks.ts`: an `AbortError` or a result that has become stale is expected control flow and must **not** publish `status: 'error'` onto the current identity.
+For cancellation, follow Gallery/Profile rather than `bookmarks.ts`: an `AbortError` or a result that has become stale is expected control flow and must not mutate the currently published clear map.
 
 This prevents old-account clear badges from appearing after logout or account switch.
 
@@ -131,13 +129,12 @@ Build the next map in a local variable and commit it to the store only after the
 
 If any current, non-abort page fails:
 
-- leave `byFamily` empty for that account load;
-- set status to `error`;
+- leave the published map empty for that account load;
 - do **not** mark the account as loaded, so a later `load()` may retry;
 - do not block Gallery or Bookmarks;
 - local completion discovery continues independently.
 
-If the request is aborted or its captured version is stale, ignore it without publishing an error.
+If the request is aborted or its captured version is stale, ignore it without changing the published map.
 
 No retry UI is required for this ticket.
 
@@ -177,13 +174,17 @@ export function resolveHighestClearedDifficulty(
 ): PuzzleDifficulty | null
 ```
 
-Resolve in descending canonical difficulty order without introducing a second ranking table:
+Derive descending canonical order once at module scope rather than allocating per family:
 
 ```ts
-for (const difficulty of [...PUZZLE_DIFFICULTIES].toReversed()) {
+const CLEAR_RANK_DESC: readonly PuzzleDifficulty[] = [...PUZZLE_DIFFICULTIES].reverse();
+
+for (const difficulty of CLEAR_RANK_DESC) {
   // hard -> normal -> easy from the shared canonical tuple
 }
 ```
+
+This keeps one ranking source while avoiding a new `toReversed()` baseline and repeated array allocation.
 
 For each difficulty, the family is cleared when either source says so:
 
@@ -228,7 +229,7 @@ Keep the family result reactive to both infinite-scroll family changes and the a
 
 ```ts
 const highestClearedByFamily = $derived(
-  resolveHighestClearedForFamilies(families, $clearedDifficulties.byFamily)
+  resolveHighestClearedForFamilies(families, $clearedDifficulties)
 );
 ```
 
@@ -250,11 +251,13 @@ Use the same required helper reactively:
 
 ```ts
 const highestClearedByFamily = $derived(
-  resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties.byFamily)
+  resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
 );
 ```
 
 Do not make Bookmarks depend on Gallery state or introduce a cross-route family cache.
+
+Bookmarks does **not** currently discover or pass `progressByVariantId`. HPA-467 keeps that existing behavior: clear-state parity between Gallery and Bookmarks is required, but adding saved-progress discovery to Bookmarks is a separate product change. The shared `PuzzleCard` status stack still supports clear + progress coexistence, and Gallery covers that combined state.
 
 `profile/+page.svelte` also renders `PuzzleCard` for the separate **My Puzzles** ownership surface. Leave that route unchanged in HPA-467: the product slice is browse Gallery + Bookmarks, and Profile already owns its own results/stat presentation.
 
@@ -290,8 +293,8 @@ Use the existing Galaxy Arcade language:
 
 - compact dark translucent chip;
 - a small check/clear mark;
-- existing `DifficultyGems` presentation for the resolved difficulty;
-- difficulty-specific gem accent already owned by `DifficultyGems`.
+- existing `DifficultyGems` gem count/accent for the resolved difficulty;
+- **no piece-count text inside the clear badge** — the difficulty picker immediately below already displays it, and removing it protects the narrow two-column card.
 
 The badge gets one explicit accessible label using the existing `getDifficultyLabel()` helper rather than another Easy/Normal/Hard label table:
 
@@ -299,9 +302,29 @@ The badge gets one explicit accessible label using the existing `getDifficultyLa
 `Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`
 ```
 
-Wrap the decorative check + `DifficultyGems` content in an `aria-hidden="true"` child so the badge exposes one concise accessible name rather than duplicate nested labels.
+Render the badge itself as:
 
-Reuse `family.variants[highestClearedDifficulty].pieceCount` when rendering `DifficultyGems`.
+```svelte
+<span
+  role="img"
+  aria-label={`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`}
+  data-testid="card-cleared-difficulty"
+>
+  <span aria-hidden="true">
+    <!-- check + compact DifficultyGems -->
+  </span>
+</span>
+```
+
+The explicit `role="img"` makes the authored label reliably nameable by assistive technology.
+
+Extend `DifficultyGems` with one backward-compatible presentation prop:
+
+```ts
+showPieceCount?: boolean // default true
+```
+
+The clear badge passes `showPieceCount={false}`; existing picker callers remain unchanged. Keep passing the variant piece count so the component's existing difficulty semantics/accessibility stay intact outside the badge, while the badge's decorative child is hidden from the accessibility tree.
 
 No new icon asset is needed; use a tiny inline check SVG or text glyph consistent with existing inline card icons.
 
@@ -321,7 +344,8 @@ This keeps the ticket presentation-only from the user's perspective.
 
 ## Accessibility
 
-- The clear badge has one explicit label: `Highest cleared difficulty: <label>`.
+- The clear badge is `role="img"` with one explicit label: `Highest cleared difficulty: <label>`.
+- Tests resolve it by role + accessible name, not merely by an `aria-label` attribute.
 - Decorative child content is hidden from the accessibility tree.
 - Existing progress chip behavior remains unchanged.
 - Clear + progress coexist as separate siblings in the status stack.
@@ -339,7 +363,9 @@ This keeps the ticket presentation-only from the user's perspective.
 **Modify**
 
 - `apps/web/src/lib/components/PuzzleCard.svelte`
+- `apps/web/src/lib/components/DifficultyGems.svelte`
 - `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/DifficultyGems.svelte.test.ts`
 - `apps/web/src/routes/+page.svelte`
 - `apps/web/src/routes/page.svelte.test.ts`
 - `apps/web/src/routes/bookmarks/+page.svelte`
@@ -362,7 +388,7 @@ This keeps the ticket presentation-only from the user's perspective.
 Prove:
 
 - local discovery reads `getStats(variant.id)?.totalCompletions > 0`;
-- ranking follows `[...PUZZLE_DIFFICULTIES].toReversed()`;
+- ranking follows one module-level `CLEAR_RANK_DESC` derived from `PUZZLE_DIFFICULTIES`;
 - no clears -> null;
 - local Easy / Normal / Hard resolve correctly;
 - multiple local clears choose the highest;
@@ -379,11 +405,11 @@ Prove:
 - every request uses `limit: 100`;
 - cursor pages are followed until exhausted;
 - no partial snapshot is published before the final page;
-- page failure produces error + empty account map;
+- page failure leaves the published map empty and the account retryable;
 - logout clears old account state;
 - account switch clears old state before the new load;
 - stale/aborted old-account responses cannot repopulate the map;
-- `AbortError` is ignored rather than surfaced as account failure;
+- `AbortError` is ignored without mutating the published map;
 - real failure does not set `loadedAccountId`;
 - repeated `load()` for an already-loaded account is deduped.
 
@@ -393,18 +419,18 @@ Prove:
 
 - no resolved difficulty -> no clear badge;
 - Easy / Normal / Hard produce the expected badge;
-- accessible label is exact;
-- clear badge uses the matching family variant's difficulty presentation;
+- `getByRole('img', { name: 'Highest cleared difficulty: Hard' })` resolves the badge;
+- clear badge uses the matching family variant's difficulty presentation with piece-count text hidden;
 - progress-only still renders;
 - clear-only renders;
 - clear + progress render inside the same non-overlapping status stack;
 - the badge uses `data-testid="card-cleared-difficulty"`;
-- at a 390×844 viewport, the two-status stack does not overlap the title/bookmark row in the existing 343/215 mobile artwork layout;
+- at a 390×844 viewport, the two-status stack does not overlap the title/bookmark row **or** the top-left category badge in the existing 343/215 mobile artwork layout;
 - existing bookmark and difficulty actions remain intact.
 
 ### Gallery route
 
-Before adding route coverage, extend the existing module mocks deliberately: the current `$lib/services/stats` mock exposes only `getBestTime`, so add `getStats` for local-clear tests. Mock `clearedDifficulties` as a store (like bookmarks) while leaving the `highestClearedDifficulty` service real; do not mock away the pure/local composition helper.
+Before adding route coverage, extend the existing module mocks deliberately: both Gallery and Bookmarks route suites should mock `$lib/services/stats` with the same `getBestTime` + controllable `getStats` shape. Gallery already mocks that module and must add `getStats`; Bookmarks must add the same stats mock rather than switching to a different localStorage-seeding strategy. Mock `clearedDifficulties` as a readable clear-map store while leaving the `highestClearedDifficulty` service real; do not mock away the pure/local composition helper.
 
 Prove:
 
@@ -417,7 +443,7 @@ Prove:
 
 ### Bookmarks route
 
-Mock the new account store alongside the existing bookmark/auth stores, but keep the clear read-model service real.
+Mock the new account store alongside the existing bookmark/auth stores, add the same controllable `getStats` module mock used by Gallery, and keep the clear read-model service real.
 
 Prove:
 
@@ -434,11 +460,12 @@ No new E2E spec is required unless implementation uncovers a layout regression t
 2. **Old-account leakage** — clear on identity change and guard every async result with version + abort.
 3. **Incorrect completion signal** — use `totalCompletions > 0` only.
 4. **Local state staleness** — do not cache local stats; derive from current localStorage-backed `getStats`.
-5. **Badge/progress/title overlap** — one top-right vertical status stack owns both statuses, and a 390×844 browser test pins the existing narrow-art layout.
+5. **Badge collisions** — the compact clear badge omits duplicate piece-count text, and a 390×844 browser test asserts the top-right stack intersects neither the title/bookmark row nor the category badge.
 6. **Over-generalization** — dedicated clear store only; no generic fetch/cache abstraction.
 7. **Accidental progression semantics** — the resolver returns one displayed maximum only; it does not infer lower clears.
-8. **Mock drift** — route tests extend the existing stats/store mocks intentionally and do not replace the real clear read-model service.
-9. **Scope creep into Profile/mobile/backend** — Profile My Puzzles, NativeScript, API, and D1 remain unchanged.
+8. **Accessible-name loss** — the badge uses `role="img"` + accessible name and is tested by role.
+9. **Mock drift** — both route suites use the same controllable `getStats` mock shape and do not replace the real clear read-model service.
+10. **Scope creep into Bookmarks progress/Profile/mobile/backend** — Profile My Puzzles, NativeScript, API, and D1 remain unchanged.
 
 ## Delivery guardrail
 
