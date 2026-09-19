@@ -198,7 +198,9 @@ export const clearedDifficulties = createClearedDifficultiesStore();
 Use the repo's actual browser-mode unit command rather than a second invocation shape:
 
 ```bash
-bun run --cwd apps/web test:unit --   src/lib/services/gameplay/highestClearedDifficulty.test.ts   src/lib/stores/clearedDifficulties.test.ts
+bun run --cwd apps/web test:unit -- \
+  src/lib/services/gameplay/highestClearedDifficulty.test.ts \
+  src/lib/stores/clearedDifficulties.test.ts
 ```
 
 Expected: pass.
@@ -384,7 +386,9 @@ Do not wire `profile/+page.svelte` in this ticket. Its `PuzzleCard` usage is the
 ### 3.5 Run focused route tests
 
 ```bash
-bun run --cwd apps/web test:unit --   src/routes/page.svelte.test.ts   src/routes/bookmarks/page.svelte.test.ts
+bun run --cwd apps/web test:unit -- \
+  src/routes/page.svelte.test.ts \
+  src/routes/bookmarks/page.svelte.test.ts
 ```
 
 Expected: pass.
@@ -398,7 +402,12 @@ Expected: pass.
 Use the same command shape as CI:
 
 ```bash
-bun run --cwd apps/web test:unit --   src/lib/services/gameplay/highestClearedDifficulty.test.ts   src/lib/stores/clearedDifficulties.test.ts   src/lib/components/__tests__/PuzzleCard.svelte.test.ts   src/routes/page.svelte.test.ts   src/routes/bookmarks/page.svelte.test.ts
+bun run --cwd apps/web test:unit -- \
+  src/lib/services/gameplay/highestClearedDifficulty.test.ts \
+  src/lib/stores/clearedDifficulties.test.ts \
+  src/lib/components/__tests__/PuzzleCard.svelte.test.ts \
+  src/routes/page.svelte.test.ts \
+  src/routes/bookmarks/page.svelte.test.ts
 ```
 
 ### 4.2 Type/Svelte check
