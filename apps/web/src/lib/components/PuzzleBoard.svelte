@@ -11,6 +11,11 @@
 		onBoardPointerDown?: (event: PointerEvent) => void;
 		resolveImage: (piece: PuzzlePiece) => string;
 		selectedPieceId?: number | null;
+		placementFeedback?: {
+			x: number;
+			y: number;
+			kind: 'accepted' | 'rejected';
+		} | null;
 	}
 
 	let {
@@ -20,13 +25,18 @@
 		activeHintTarget = null,
 		onBoardPointerDown,
 		resolveImage,
-		selectedPieceId = null
+		selectedPieceId = null,
+		placementFeedback = null
 	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
 	let boardElement = $state<HTMLElement | null>(null);
 	let activeCell = $state({ x: 0, y: 0 });
 	const puzzleIdentity = $derived(puzzle.id);
+	// Explicit overlay stacking: every placed piece/tab sits at y * cols + x + 1
+	// (max = gridRows * gridCols), so feedback lands above all of them and the
+	// hint target above the feedback.
+	const overlayBaseZ = $derived(puzzle.gridRows * puzzle.gridCols);
 
 	// Reset the roving position whenever a different puzzle mounts.
 	$effect(() => {
@@ -194,6 +204,7 @@
 	role="group"
 	aria-label="Puzzle board"
 	data-testid="puzzle-board"
+	data-candidate-enabled={selectedPieceId !== null ? 'true' : undefined}
 	onpointerdown={handleBoardPointerDown}
 	onfocusin={handleBoardFocusIn}
 >
@@ -224,9 +235,25 @@
 							pointer-events-none absolute inset-1 rounded-md border-2 border-(--gold)
 							bg-(--gold-glow)
 						"
+						style="z-index: {overlayBaseZ + 2};"
 						data-testid="hint-target"
 						data-x={x}
 						data-y={y}
+						aria-hidden="true"
+					></div>
+				{/if}
+
+				{#if placementFeedback && placementFeedback.x === x && placementFeedback.y === y}
+					<div
+						class="placement-feedback absolute inset-1 rounded-md {placementFeedback.kind ===
+						'accepted'
+							? 'feedback-accepted'
+							: 'feedback-rejected'}"
+						style="z-index: {overlayBaseZ + 1};"
+						data-testid="placement-feedback"
+						data-x={x}
+						data-y={y}
+						data-kind={placementFeedback.kind}
 						aria-hidden="true"
 					></div>
 				{/if}
@@ -289,5 +316,58 @@
 		background: rgb(58 255 255 / 14%);
 		border-color: var(--accent);
 		box-shadow: inset 0 0 18px rgb(58 255 255 / 16%);
+	}
+
+	/* Touch-visible candidate affordance: while a piece is selected every empty
+	   cell glows faintly, intensifying on hover/focus. Kept out of getCellStyle()
+	   so cell-drop-over stays exclusive and wins naturally. */
+	.puzzle-board[data-candidate-enabled='true'] .cell-empty {
+		background: rgb(58 255 255 / 6%);
+		border-color: rgb(58 255 255 / 24%);
+	}
+
+	.puzzle-board[data-candidate-enabled='true'] .cell-empty:hover,
+	.puzzle-board[data-candidate-enabled='true'] .cell-empty:focus-visible {
+		background: rgb(58 255 255 / 14%);
+		border-color: var(--accent);
+		box-shadow: inset 0 0 18px rgb(58 255 255 / 16%);
+	}
+
+	/* Placement feedback renders independently of cell classes so it stays
+	   visible even on an occupied cell (e.g. a rejected drop onto a filled slot). */
+	.placement-feedback {
+		pointer-events: none;
+	}
+
+	.feedback-accepted {
+		border: 2px solid rgb(74 222 128 / 90%);
+		background: rgb(74 222 128 / 16%);
+		animation: feedback-pulse 700ms ease-in-out infinite;
+	}
+
+	.feedback-rejected {
+		border: 2px solid rgb(248 113 113 / 90%);
+		background: rgb(248 113 113 / 16%);
+		animation: feedback-pulse 700ms ease-in-out infinite;
+	}
+
+	@keyframes feedback-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.55;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.puzzle-board .drop-zone {
+			transition: none;
+		}
+
+		.placement-feedback {
+			animation: none;
+		}
 	}
 </style>
