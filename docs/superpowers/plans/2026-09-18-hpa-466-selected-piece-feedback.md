@@ -4,7 +4,7 @@
 
 **Goal:** Improve selected-piece inspection and placement feedback in the existing web puzzle flow without changing gameplay authority, persistence, or backend contracts.
 
-**Architecture:** Keep `PuzzleSession` as the only gameplay state owner. `PuzzleInventoryPanel` derives preview/count presentation from existing controlled props. `PuzzleBoard` owns only short-lived cell feedback and consumes the authoritative `PlacementOutcome` returned by the existing route callback. Candidate cells are CSS-derived from selection + empty-cell hover/focus.
+**Architecture:** `PuzzleSession` remains the only gameplay owner. `PuzzleInventoryPanel` derives preview/count UI from current props. `+page.svelte` inspects the existing `attempt_placement` dispatch result and owns one 500 ms ephemeral `placementFeedback`, matching the shipped mobile composition-root pattern. `PuzzleBoard` only renders candidate CSS and prop-driven overlays.
 
 **Tech stack:** Svelte 5, TypeScript, `@perseus/game-core`, Vitest browser tests, existing Playwright gameplay smoke.
 
@@ -12,11 +12,13 @@
 
 - No new gameplay store/controller/read-model framework.
 - No game-core action, event, codec, or persistence changes.
+- Keep `onPiecePlaced` void; do not introduce a return contract through the component tree.
 - No backend/API/workflow changes.
-- No new generated image assets.
-- No NativeScript parity in this ticket.
-- Keep current hint, shuffle, filter persistence, selection, rotation, undo/redo, completion, and accessibility announcement semantics.
+- No generated image assets.
+- No NativeScript implementation work.
+- Keep current hint, shuffle, filter persistence, selection, rotation, undo/redo, completion, and live-region semantics.
 - Correctness stays exclusively in `PuzzleSession`.
+- Reuse `REJECTED_DURATION_MS = 500` for board feedback lifetime.
 - One implementation PR; do not split this ticket.
 
 ## File map
@@ -30,38 +32,43 @@
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
+- `apps/web/e2e/gameplay-mobile-tap.spec.ts`
 
 **Do not modify by default**
 
 - `packages/game-core/**`
 - `apps/web/src/lib/components/PuzzlePiece.svelte`
 - persistence/codec modules;
-- E2E support/spec files;
-- backend/mobile code.
+- backend/mobile production code;
+- unrelated E2E specs/helpers.
 
 ---
 
-## Task 1: Add selected-piece preview and useful filter status
+## Task 1: Add a bounded selected-piece preview and truthful filter status
 
 ### Files
 
 - Modify: `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
 
-### 1.1 Pin current behavior with focused failing tests
+### 1.1 Add failing inventory tests first
 
-Extend the existing inventory component suite with tests for:
+Extend the current component suite with tests for:
 
-- selected piece shows a dedicated preview;
-- preview image uses the selected piece;
+- selected piece renders a dedicated preview;
+- preview copies the existing tab-offset artwork shape instead of a bare cropped image;
 - preview rotation follows `pieceRotations`;
-- cancel/selection-clear removes the preview;
-- peek hides the preview because the existing body is hidden;
-- All / Corners / Edges / Center counts use **unplaced** pieces only;
-- counts update when `placedPieces` changes;
-- an exhausted non-All filter shows a filter-specific completed message;
-- `SHOW ALL REMAINING` invokes `onFilterChange('all')`;
-- the component does not automatically change the active filter.
+- selection clear removes it;
+- peek hides it with the existing body;
+- All / Corners / Edges / Center remaining counts use unplaced pieces;
+- counts update after `placedPieces` changes;
+- existing 2×1 Edge/Center cases keep factual `NO PIECES MATCH`;
+- a filter kind that exists but is fully placed shows `ALL … PLACED`;
+- both empty-state branches expose `SHOW ALL REMAINING`;
+- recovery invokes `onFilterChange('all')`;
+- the component never auto-switches the active filter.
+
+Explicitly update the current `NO PIECES MATCH` tests instead of deleting/replacing them.
 
 Run:
 
@@ -72,74 +79,60 @@ bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.sv
 
 Expected before implementation: new assertions fail.
 
-### 1.2 Derive the selected piece locally
+### 1.2 Derive selected piece and filter counts from current props
 
-Reuse the existing `piecesById` map:
+Reuse `piecesById`, `unplacedPieces`, and `matchesInventoryFilter`.
 
-```ts
-const selectedPiece = $derived(
-  selectedPieceId === null ? null : (piecesById.get(selectedPieceId) ?? null)
-);
-```
+Add:
 
-Do not introduce another selected-piece state variable.
+- one derived `selectedPiece`;
+- one local `remainingCount(filter)`;
+- one local `totalCount(filter)` for distinguishing "none exist" from "all placed".
 
-### 1.3 Render one read-only preview in the existing body
+Do not lift these counts into game-core and do not persist them.
 
-Add a compact preview before `.pieces-grid`:
+### 1.3 Render the preview using existing piece geometry
 
-- only when `selectedPiece !== null`;
-- image source from `resolveImage(selectedPiece)`;
-- rotation from `displayedRotation(selectedPiece.id)`;
-- no nested Rotate/Cancel buttons;
-- no drag or selection semantics;
-- supplementary/duplicate artwork should not create noisy accessibility output.
+Inside `.inventory-body`, before the grid:
 
-Keep Rotate and Cancel in the existing header actions.
+- render only while `selectedPiece !== null`;
+- use a one-`--piece-slot-size` preview box;
+- copy the inner `EXPANSION_FACTOR / TAB_RATIO` image framing from existing piece rendering;
+- apply `displayedRotation(selectedPiece.id)`;
+- mark duplicate artwork `aria-hidden` / empty alt;
+- keep Rotate/Cancel in the current header.
 
-Do not modify `PuzzlePiece.svelte` just to add a preview mode.
+Do not render a bare square image.
+Do not add a read-only `PuzzlePiece` mode.
+Do not create a third piece component.
 
-### 1.4 Add fixed-filter remaining counts
+### 1.4 Add counts without changing header geometry
 
-Use the existing `unplacedPieces` plus `matchesInventoryFilter`.
+Keep existing control names as prefixes and add remaining counts to accessible labels, e.g.:
 
-Keep the implementation local. A small helper such as:
+- `All pieces, 7 remaining`
+- `Corner pieces, 2 remaining`
 
-```ts
-function remainingCount(filter: InventoryFilter): number {
-  return unplacedPieces.filter((piece) =>
-    matchesInventoryFilter(piece, puzzle, filter)
-  ).length;
-}
-```
+A small visible badge is optional only if it fits inside the current fixed control cleanly.
 
-is sufficient.
+Hard constraints:
 
-Expose counts in the four existing filter controls. Ensure accessible labels communicate both filter name and remaining count.
+- `.inventory-tools` stays non-wrapping;
+- do not enlarge the mobile hit-target row to fit text;
+- if a visible count causes overflow, use accessible-label-only counts.
 
-Do not persist counts or add another read model.
+### 1.5 Make empty-filter copy truthful
 
-### 1.5 Replace the dead-end empty state
+For non-All filters with no visible pieces and an incomplete puzzle:
 
-When `activeFilter !== 'all'`, `unplacedPieces.length > 0`, and `visiblePieces.length === 0`:
+- `totalCount(activeFilter) === 0` -> keep `NO PIECES MATCH`;
+- `totalCount(activeFilter) > 0 && remainingCount(activeFilter) === 0` -> show the matching `ALL … PLACED` copy;
+- both branches show `SHOW ALL REMAINING`;
+- recovery calls existing `onFilterChange('all')` only when activated.
 
-- show `ALL CORNERS PLACED`, `ALL EDGES PLACED`, or `ALL CENTER PIECES PLACED`;
-- show one `SHOW ALL REMAINING` button;
-- call `onFilterChange('all')` only when the player activates it.
+Keep `ALL PIECES PLACED` unchanged for full completion.
 
-Keep the all-pieces-placed state unchanged.
-
-### 1.6 Keep responsive behavior unchanged
-
-The preview lives inside the existing body:
-
-- desktop: visible with the tray;
-- half/full mobile sheet: visible;
-- peek: hidden automatically with the rest of the body.
-
-Do not add a second preview surface or new breakpoint logic.
-
-### 1.7 Re-run focused inventory tests
+### 1.6 Re-run focused inventory tests
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
@@ -149,59 +142,146 @@ Expected: pass.
 
 ---
 
-## Task 2: Add neutral candidate styling and authoritative placement feedback
+## Task 2: Add neutral candidate styling and a prop-driven board feedback overlay
 
 ### Files
 
 - Modify: `apps/web/src/lib/components/PuzzleBoard.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts`
 - Modify: `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
-- Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 
-### 2.1 Add failing board tests first
+### 2.1 Add failing board tests
 
 Extend `PuzzleBoard.svelte.test.ts` to prove:
 
 - candidate-enabled state exists only while `selectedPieceId !== null`;
-- occupied cells are not candidate cells;
-- focus-visible/hover candidate presentation is correctness-neutral;
-- an accepted callback result marks the attempted cell accepted;
-- a rejected callback result marks the attempted cell rejected;
-- a noop result creates no accepted/rejected feedback;
-- a later attempt replaces earlier feedback;
-- existing click, keyboard, and drag/drop paths still forward every attempt without local correctness checks.
+- candidate CSS is restricted to `.cell-empty`;
+- occupied cells are not candidates;
+- `cell-drop-over` remains the drag-over state rather than also receiving candidate chrome;
+- accepted `placementFeedback` prop renders on its exact cell;
+- rejected `placementFeedback` prop renders on its exact cell;
+- accepted feedback still renders when the target cell is already occupied after canonical state updates;
+- placement feedback and hint target can coexist at one cell;
+- existing click/keyboard/drag paths still call the void `onPiecePlaced` callback without local correctness logic.
 
-Use fake timers for the short feedback lifetime rather than sleeping in tests.
+No timer tests belong here; the board does not own feedback lifetime.
 
-### 2.2 Make candidate styling state-free
+### 2.2 Add state-free candidate styling
 
-Mark the board root when a piece is selected, for example:
+Mark the board root when a piece is selected:
 
 ```svelte
 data-candidate-enabled={selectedPieceId !== null ? 'true' : undefined}
 ```
 
-Use CSS selectors to style empty cells on hover/focus only when that marker is present.
+CSS targets only:
 
-Do not store a "candidate cell" in Svelte state.
+- candidate-enabled board;
+- `.cell-empty:hover`;
+- `.cell-empty:focus-visible`.
 
-Keep existing drag-over state separate.
+Do not add a candidate-cell Svelte state value.
 
-### 2.3 Return `PlacementOutcome` through the existing callback
+Because `getCellStyle()` already chooses `cell-drop-over` instead of `cell-empty`, drag-over remains the winner.
 
-Import the existing `PlacementOutcome` type where needed.
+### 2.3 Add optional placement feedback prop
 
-Change the callback contract through `PuzzleBoardPanel` / `PuzzleBoard`:
+Add to `PuzzleBoardPanel` and `PuzzleBoard`:
 
 ```ts
-onPiecePlaced: (
-  pieceId: number,
-  x: number,
-  y: number
-) => PlacementOutcome | void;
+placementFeedback?: {
+  x: number;
+  y: number;
+  kind: 'accepted' | 'rejected';
+} | null;
 ```
 
-In `+page.svelte`:
+Keep:
+
+```ts
+onPiecePlaced: (pieceId: number, x: number, y: number) => void;
+```
+
+`PuzzleBoardPanel` only forwards the prop.
+
+### 2.4 Render feedback independently of `getCellStyle`
+
+For the matching cell, render a pointer-events-none `data-testid="placement-feedback"` child similar to `hint-target`.
+
+Do not fold accepted/rejected into `getCellStyle()`; accepted feedback must survive the same render that turns the cell into `cell-occupied`.
+
+Pin layering:
+
+- placed artwork remains visible;
+- placement feedback remains visible above the cell/art edge;
+- hint target remains visible if it overlaps placement feedback;
+- overlay never receives input.
+
+Use distinct accepted/rejected border/background/outline treatment.
+
+### 2.5 Reduced motion
+
+Add/extend CSS so `prefers-reduced-motion: reduce` disables movement/pulse but leaves static feedback visible.
+
+No JS media-query state.
+
+### 2.6 Re-run board tests
+
+```bash
+bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
+```
+
+Expected: pass.
+
+---
+
+## Task 3: Own the 500 ms placement feedback at the route composition root
+
+### Files
+
+- Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
+
+### 3.1 Add failing route tests
+
+Add focused tests proving:
+
+1. accepted placement sets an accepted board overlay at the attempted cell;
+2. accepted placement still checkpoints and canonical selection clears;
+3. rejected placement sets a rejected board overlay at the attempted cell;
+4. rejected placement keeps canonical selection and existing tray-piece rejected state;
+5. existing accepted/rejected live-region announcements remain unchanged;
+6. a second attempt replaces the first placement feedback;
+7. placement feedback clears after **500 ms** using the existing duration;
+8. navigation/run reset does not leave stale placement feedback;
+9. rotation updates the selected preview from canonical `pieceRotations`;
+10. placements update the filter counts from canonical `placedPieces`.
+
+Use the existing fake-timer route pattern already used for rejected-piece timeout coverage.
+
+Do not try to assert an internal `handlePiecePlaced` return value; the callback stays void.
+
+### 3.2 Add route-local feedback next to existing rejected-piece state
+
+Add:
+
+```ts
+let placementFeedback = $state<{
+  x: number;
+  y: number;
+  kind: 'accepted' | 'rejected';
+} | null>(null);
+
+let placementFeedbackTimeout: ReturnType<typeof setTimeout> | null = null;
+```
+
+Add small helpers to set/replace and clear feedback.
+
+Use `REJECTED_DURATION_MS` for the timeout. Do not add another duration constant.
+
+### 3.3 Extend `handlePiecePlaced` without changing its callback contract
+
+Keep:
 
 ```ts
 function handlePiecePlaced(pieceId: number, x: number, y: number) {
@@ -214,103 +294,34 @@ function handlePiecePlaced(pieceId: number, x: number, y: number) {
     y
   });
 
+  if (
+    result.type === 'placement' &&
+    (result.outcome.status === 'accepted' || result.outcome.status === 'rejected')
+  ) {
+    showPlacementFeedback(x, y, result.outcome.status);
+  }
+
   checkpointSession();
-
-  return result.type === 'placement' ? result.outcome : undefined;
 }
 ```
 
-Important:
+No event correlation state.
+No return contract through `PuzzleBoard`.
+No game-core change.
 
-- do not infer correctness in the board;
-- do not add coordinates to session events;
-- keep current placement event announcements untouched.
+### 3.4 Pass feedback down and clear stale state
 
-### 2.4 Keep short-lived feedback inside `PuzzleBoard`
+Pass `placementFeedback` through `PuzzleBoardPanel`.
 
-Add one component-local value:
+Clear placement feedback:
 
-```ts
-type PlacementFeedback = {
-  x: number;
-  y: number;
-  kind: 'accepted' | 'rejected';
-};
-```
+- on component destroy;
+- when direct puzzle navigation resets route-local presentation state;
+- when restarting/play-again resets the run, matching other ephemeral gameplay chrome.
 
-When an interaction path invokes `onPiecePlaced`:
+Keep route-level `rejectedPiece` and its existing announcement behavior unchanged.
 
-1. receive the authoritative result;
-2. accepted -> set accepted feedback for that cell;
-3. rejected -> set rejected feedback for that cell;
-4. noop/void -> no feedback;
-5. clear/restart one short timeout.
-
-All three interaction paths should use the same small helper rather than duplicating result handling.
-
-Clear the timeout on component teardown.
-
-### 2.5 Add restrained styles
-
-Accepted:
-
-- subtle settle/pulse;
-- positive outline/background;
-- do not cover the placed artwork.
-
-Rejected:
-
-- distinct attempted-cell emphasis;
-- no pre-attempt correctness signal.
-
-Candidate:
-
-- neutral outline;
-- include `:focus-visible`;
-- do not rely solely on hue.
-
-Reduced motion:
-
-```css
-@media (prefers-reduced-motion: reduce) {
-  /* disable movement/pulse animation, keep static feedback styling */
-}
-```
-
-The class/state should remain visible for the normal short interval even when animation is disabled.
-
-### 2.6 Re-run focused board tests
-
-```bash
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
-```
-
-Expected: pass.
-
----
-
-## Task 3: Pin route integration and canonical selection behavior
-
-### Files
-
-- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
-- Production code from Tasks 1-2 only unless a test exposes a real missing seam.
-
-### 3.1 Add route-level regression tests
-
-Add focused tests proving:
-
-1. accepted placement still checkpoints and returns the session placement result to the board path;
-2. accepted placement clears canonical selection, which removes the inventory preview;
-3. rejected placement keeps canonical selection;
-4. rejected placement still drives the existing tray-piece rejection state;
-5. accepted/rejected live-region announcements remain unchanged;
-6. rotation updates the selected preview through canonical `pieceRotations`;
-7. placing pieces updates filter counts because counts derive from `placedPieces`.
-
-Do not test CSS animation timing again at route level; keep that in the board component suite.
-
-### 3.2 Run focused route tests
+### 3.5 Run focused route tests
 
 ```bash
 bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
@@ -320,9 +331,37 @@ Expected: pass.
 
 ---
 
-## Task 4: Final verification and cleanup
+## Task 4: Protect the mobile half-sheet budget in the existing smoke
 
-### 4.1 Run the focused component + route set together
+### Files
+
+- Modify: `apps/web/e2e/gameplay-mobile-tap.spec.ts`
+
+### 4.1 Extend the existing large-inventory smoke, do not add a new spec
+
+The existing `large mobile inventory scrolls from a swipe starting on a piece @smoke` already owns:
+
+- 390×844 fold fit;
+- large inventory;
+- two complete piece rows;
+- tray scrolling.
+
+Extend that same test (or the adjacent existing mobile-inventory smoke if cleaner):
+
+1. select one tray piece so the new preview is mounted;
+2. assert the panel still fits within the viewport;
+3. assert the grid still retains two complete piece rows;
+4. keep the existing swipe-scroll proof.
+
+If visible count badges break the budget, drop the visible badge and retain count in accessible labels instead of widening/wrapping the header.
+
+No new Playwright spec.
+
+---
+
+## Task 5: Final verification and scope review
+
+### 5.1 Focused unit/component/route tests
 
 From `apps/web`:
 
@@ -330,7 +369,7 @@ From `apps/web`:
 bunx vitest --run --browser   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts   src/lib/components/__tests__/PuzzleBoard.svelte.test.ts   'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-### 4.2 Type/Svelte check
+### 5.2 Type/Svelte check
 
 ```bash
 bun run check
@@ -338,42 +377,50 @@ bun run check
 
 Expected: 0 Svelte/TypeScript errors.
 
-### 4.3 Existing gameplay smoke
-
-No new E2E spec is required by default. Run the current smoke suite as the behavioral regression gate:
+### 5.3 Existing gameplay smoke
 
 ```bash
 bun run test:e2e:smoke
 ```
 
-If a focused smoke failure reveals that the new feedback changed interaction timing or selectors, fix the production behavior or existing selector; do not create a parallel interaction path.
+The selected-preview half-sheet density assertion lives in the existing smoke suite; do not create another E2E lane.
 
-### 4.4 Scope review before marking ready
+### 5.4 Scope review
 
-Confirm the diff contains only the planned presentation/wiring/test files and documentation.
+Confirm the implementation does **not** add:
 
-Explicitly reject any accidental additions of:
-
-- game-core event/schema changes;
+- game-core event/action/codec changes;
+- a callback return contract;
 - persistence fields;
 - generic animation helpers/frameworks;
 - new stores/controllers;
+- a third piece-rendering abstraction;
 - new image assets;
-- backend/mobile work;
+- backend/mobile production work;
 - unrelated refactors.
 
 ## Implementation checklist
 
-- [ ] 1. Add selected-piece preview + remaining counts + exhausted-filter recovery
-- [ ] 2. Add neutral candidate styling + authoritative accepted/rejected cell feedback
-- [ ] 3. Pin route integration and canonical selection/rotation/count behavior
-- [ ] 4. Run focused tests, `bun run check`, and existing gameplay smoke
+- [ ] 1. Add tab-framed selected preview + remaining counts + truthful exhausted-filter recovery
+- [ ] 2. Add neutral candidate CSS + prop-driven board feedback overlay
+- [ ] 3. Own/clear 500 ms placement feedback at the route and pin integration tests
+- [ ] 4. Extend existing mobile smoke with selected-preview density
+- [ ] 5. Run focused tests, `bun run check`, and gameplay smoke
+
+## Risks
+
+- **False empty-state copy:** 2×1 fixtures have no Edge/Center pieces; distinguish zero total from zero remaining.
+- **Half-sheet density:** preview is one slot, controls never wrap, selected-state smoke keeps two visible rows.
+- **Overlay stacking:** feedback is a child overlay independent of `getCellStyle`; pin coexistence with hint, drag-over, and occupied cells.
+- **Duplicate accessibility output:** no new live region; session events remain semantic feedback.
+- **Stale feedback:** one replaceable 500 ms route timeout, cleared on navigation/restart/teardown.
 
 ## Planning verification
 
-- Planning branch is documentation-only.
-- Current main already exposes all required state through existing component props.
-- `PuzzleSession.dispatch(attempt_placement)` already returns the authoritative `PlacementOutcome`; no game-core change is needed.
-- Placement accepted/rejected events already own live announcements; visual feedback does not need another semantic channel.
-- Existing inventory and board component suites provide the right focused test homes.
-- No generated art task is required for HPA-466.
+- Planning branch remains documentation-only.
+- Current web callbacks remain void.
+- Current mobile gameplay already owns placement feedback at the composition root and passes it to the renderer.
+- Existing web 2×1 fixtures prove unconditional `ALL EDGES/CENTER PLACED` would be false.
+- Current piece rendering uses `EXPANSION_FACTOR / TAB_RATIO`; the preview must reuse that framing.
+- Existing mobile smoke already owns fold-fit/two-row tray density and will be extended rather than duplicated.
+- No generated art task is required.
