@@ -46,9 +46,12 @@ The implementation should reuse those seams rather than introduce a new progress
 
 ## Selected architecture
 
-Use one dedicated clear-state store plus one pure family resolver.
+Use one dedicated account-clear store plus one small clear read-model service:
 
-This follows the existing `bookmarks.ts` pattern closely enough to reuse proven account-transition semantics, but keeps the state purpose-specific: only account clear rows are cached.
+- `apps/web/src/lib/stores/clearedDifficulties.ts` owns **account state only**: auth identity, request lifecycle, exhaustive stats pagination, stale rejection, and the final family -> cleared-difficulties map.
+- `apps/web/src/lib/services/gameplay/highestClearedDifficulty.ts` owns local `getStats` reads plus the pure local/account merge used by both routes.
+
+This follows the existing `bookmarks.ts` identity/version/load-dedupe pattern without turning clears into a generic remote-state framework. Abort/signal behavior comes from the existing Gallery/Profile request pattern, because `bookmarks.ts` itself does not use `AbortController`.
 
 ### Account clear store
 
@@ -86,14 +89,17 @@ A dedicated `clearedDifficulties` store avoids that duplication without becoming
 
 ## Account identity and stale-response rules
 
-Mirror the existing bookmarks store behavior:
+Reuse the existing bookmarks store's **identity/version/load-dedupe** behavior:
 
+- inject the auth readable into `createClearedDifficultiesStore(auth = playerAuth)` so identity transitions are directly testable;
 - retain the current account snapshot through a transient `playerAuth.status === 'loading'` refresh when the same account is still being resolved;
 - when auth becomes anonymous, clear account-derived clears immediately;
 - when a different authenticated user id appears, clear the previous map immediately before loading the new account;
 - increment a version token on identity change;
 - abort the active stats request chain when identity changes;
 - ignore any response whose captured version no longer matches.
+
+For cancellation, follow Gallery/Profile rather than `bookmarks.ts`: an `AbortError` or a result that has become stale is expected control flow and must **not** publish `status: 'error'` onto the current identity.
 
 This prevents old-account clear badges from appearing after logout or account switch.
 
@@ -108,7 +114,7 @@ let cursor: string | undefined;
 const next = new Map<string, Set<PuzzleDifficulty>>();
 
 do {
-  const page = await getPlayerStats({ cursor, signal });
+  const page = await getPlayerStats({ limit: 100, cursor, signal });
   for (const row of page.stats) {
     if (row.totalCompletions <= 0) continue;
     add(row.familyId, row.difficulty);
@@ -117,16 +123,21 @@ do {
 } while (cursor !== undefined);
 ```
 
+Use the API/repository's existing maximum page size, `limit: 100`, on **every** page. The route defaults to 20 while the repository already clamps at 100, so using 100 reduces round trips without changing any contract.
+
 Do not publish partial pages.
 
 Build the next map in a local variable and commit it to the store only after the final cursor is consumed. This matters because a partial account snapshot can lie about the **highest** clear: an Easy row from page 1 could be published while a Hard row for the same family is still on a later page.
 
-If any page fails:
+If any current, non-abort page fails:
 
 - leave `byFamily` empty for that account load;
 - set status to `error`;
+- do **not** mark the account as loaded, so a later `load()` may retry;
 - do not block Gallery or Bookmarks;
 - local completion discovery continues independently.
+
+If the request is aborted or its captured version is stale, ignore it without publishing an error.
 
 No retry UI is required for this ticket.
 
@@ -134,7 +145,7 @@ No retry UI is required for this ticket.
 
 Keep local completion truth in `stats.ts`.
 
-Add a small helper in the clear-state module:
+Add a small helper in `apps/web/src/lib/services/gameplay/highestClearedDifficulty.ts`:
 
 ```ts
 function readLocalClearedVariantIds(
@@ -166,10 +177,12 @@ export function resolveHighestClearedDifficulty(
 ): PuzzleDifficulty | null
 ```
 
-Resolve in descending order:
+Resolve in descending canonical difficulty order without introducing a second ranking table:
 
 ```ts
-hard -> normal -> easy
+for (const difficulty of [...PUZZLE_DIFFICULTIES].toReversed()) {
+  // hard -> normal -> easy from the shared canonical tuple
+}
 ```
 
 For each difficulty, the family is cleared when either source says so:
@@ -181,7 +194,16 @@ Return the first match; otherwise `null`.
 
 This explicitly permits Hard-only completion. Returning Hard does not claim Easy or Normal were completed.
 
-A convenience helper may build a `ReadonlyMap<familyId, PuzzleDifficulty>` for a route's current family list, but it should remain a thin composition of local discovery + the pure resolver.
+The shared family-list composition helper is **required**, not optional:
+
+```ts
+export function resolveHighestClearedForFamilies(
+  families: readonly PuzzleFamilySummary[],
+  accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+): ReadonlyMap<string, PuzzleDifficulty>
+```
+
+It performs the fresh local discovery once for the supplied families and calls the pure resolver for each family. Gallery and Bookmarks must call this helper rather than duplicating local discovery + merge logic.
 
 ## Route integration
 
@@ -202,11 +224,13 @@ if ($playerAuth.status === 'authenticated') {
 }
 ```
 
-Derive the current family clear map from:
+Keep the family result reactive to both infinite-scroll family changes and the async account snapshot:
 
-- current `families`;
-- fresh local completion reads;
-- `$clearedDifficulties.byFamily`.
+```ts
+const highestClearedByFamily = $derived(
+  resolveHighestClearedForFamilies(families, $clearedDifficulties.byFamily)
+);
+```
 
 Pass:
 
@@ -222,9 +246,17 @@ Infinite-scroll append naturally re-derives for newly loaded families.
 
 Keep bookmark loading unchanged and add the same clear-state `load()` call for authenticated users.
 
-Derive highest clears from `$bookmarks.families` and the shared account store.
+Use the same required helper reactively:
+
+```ts
+const highestClearedByFamily = $derived(
+  resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties.byFamily)
+);
+```
 
 Do not make Bookmarks depend on Gallery state or introduce a cross-route family cache.
+
+`profile/+page.svelte` also renders `PuzzleCard` for the separate **My Puzzles** ownership surface. Leave that route unchanged in HPA-467: the product slice is browse Gallery + Bookmarks, and Profile already owns its own results/stat presentation.
 
 ## PuzzleCard presentation
 
@@ -261,13 +293,11 @@ Use the existing Galaxy Arcade language:
 - existing `DifficultyGems` presentation for the resolved difficulty;
 - difficulty-specific gem accent already owned by `DifficultyGems`.
 
-The badge gets:
+The badge gets one explicit accessible label using the existing `getDifficultyLabel()` helper rather than another Easy/Normal/Hard label table:
 
-```text
-Highest cleared difficulty: Hard
+```ts
+`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`
 ```
-
-as its explicit accessible label.
 
 Wrap the decorative check + `DifficultyGems` content in an `aria-hidden="true"` child so the badge exposes one concise accessible name rather than duplicate nested labels.
 
@@ -301,6 +331,8 @@ This keeps the ticket presentation-only from the user's perspective.
 
 **Add**
 
+- `apps/web/src/lib/services/gameplay/highestClearedDifficulty.ts`
+- `apps/web/src/lib/services/gameplay/highestClearedDifficulty.test.ts`
 - `apps/web/src/lib/stores/clearedDifficulties.ts`
 - `apps/web/src/lib/stores/clearedDifficulties.test.ts`
 
@@ -325,23 +357,34 @@ This keeps the ticket presentation-only from the user's perspective.
 
 ## Test strategy
 
-### Clear-state store / pure resolver
+### Clear read-model service
 
 Prove:
 
+- local discovery reads `getStats(variant.id)?.totalCompletions > 0`;
+- ranking follows `[...PUZZLE_DIFFICULTIES].toReversed()`;
 - no clears -> null;
 - local Easy / Normal / Hard resolve correctly;
 - multiple local clears choose the highest;
 - account clears resolve correctly;
 - local + account merge chooses the highest source result;
 - Hard-only returns Hard without synthesizing lower difficulties;
+- `resolveHighestClearedForFamilies` returns the same family map for both route consumers.
+
+### Account clear store
+
+Prove:
+
 - rows with `totalCompletions === 0` are ignored;
+- every request uses `limit: 100`;
 - cursor pages are followed until exhausted;
 - no partial snapshot is published before the final page;
 - page failure produces error + empty account map;
 - logout clears old account state;
 - account switch clears old state before the new load;
 - stale/aborted old-account responses cannot repopulate the map;
+- `AbortError` is ignored rather than surfaced as account failure;
+- real failure does not set `loadedAccountId`;
 - repeated `load()` for an already-loaded account is deduped.
 
 ### PuzzleCard component
@@ -355,9 +398,13 @@ Prove:
 - progress-only still renders;
 - clear-only renders;
 - clear + progress render inside the same non-overlapping status stack;
+- the badge uses `data-testid="card-cleared-difficulty"`;
+- at a 390×844 viewport, the two-status stack does not overlap the title/bookmark row in the existing 343/215 mobile artwork layout;
 - existing bookmark and difficulty actions remain intact.
 
 ### Gallery route
+
+Before adding route coverage, extend the existing module mocks deliberately: the current `$lib/services/stats` mock exposes only `getBestTime`, so add `getStats` for local-clear tests. Mock `clearedDifficulties` as a store (like bookmarks) while leaving the `highestClearedDifficulty` service real; do not mock away the pure/local composition helper.
 
 Prove:
 
@@ -369,6 +416,8 @@ Prove:
 - account clear load failure does not replace the Gallery error/loading state.
 
 ### Bookmarks route
+
+Mock the new account store alongside the existing bookmark/auth stores, but keep the clear read-model service real.
 
 Prove:
 
@@ -385,10 +434,11 @@ No new E2E spec is required unless implementation uncovers a layout regression t
 2. **Old-account leakage** — clear on identity change and guard every async result with version + abort.
 3. **Incorrect completion signal** — use `totalCompletions > 0` only.
 4. **Local state staleness** — do not cache local stats; derive from current localStorage-backed `getStats`.
-5. **Badge/progress overlap** — one top-right vertical status stack owns both.
+5. **Badge/progress/title overlap** — one top-right vertical status stack owns both statuses, and a 390×844 browser test pins the existing narrow-art layout.
 6. **Over-generalization** — dedicated clear store only; no generic fetch/cache abstraction.
 7. **Accidental progression semantics** — the resolver returns one displayed maximum only; it does not infer lower clears.
-8. **Scope creep into mobile/backend** — explicitly excluded.
+8. **Mock drift** — route tests extend the existing stats/store mocks intentionally and do not replace the real clear read-model service.
+9. **Scope creep into Profile/mobile/backend** — Profile My Puzzles, NativeScript, API, and D1 remain unchanged.
 
 ## Delivery guardrail
 
