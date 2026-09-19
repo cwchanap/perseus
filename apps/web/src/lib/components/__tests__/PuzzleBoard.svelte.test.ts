@@ -499,9 +499,7 @@ describe('PuzzleBoard', () => {
 			placementFeedback: { x: 0, y: 1, kind: 'accepted' },
 			resolveImage
 		});
-		const acceptedColor = getComputedStyle(
-			await page.getByTestId('placement-feedback').element()
-		).backgroundColor;
+		const acceptedStyle = getComputedStyle(await page.getByTestId('placement-feedback').element());
 		accepted.unmount();
 
 		render(PuzzleBoard, {
@@ -511,11 +509,12 @@ describe('PuzzleBoard', () => {
 			placementFeedback: { x: 0, y: 1, kind: 'rejected' },
 			resolveImage
 		});
-		const rejectedColor = getComputedStyle(
-			await page.getByTestId('placement-feedback').element()
-		).backgroundColor;
+		const rejectedStyle = getComputedStyle(await page.getByTestId('placement-feedback').element());
 
-		expect(rejectedColor).not.toBe(acceptedColor);
+		// Distinguishable without hue perception (color-blind safe): the
+		// treatments must differ in shape, not just color.
+		expect(rejectedStyle.backgroundColor).not.toBe(acceptedStyle.backgroundColor);
+		expect(rejectedStyle.borderStyle).not.toBe(acceptedStyle.borderStyle);
 	});
 
 	it('renders accepted feedback even when the target cell is occupied', async () => {

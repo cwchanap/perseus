@@ -71,10 +71,10 @@
 		if (!piece) return;
 
 		// Route every valid piece/coordinate to the session via onPiecePlaced.
-		// The session engine determines accept vs. reject and emits
-		// placement_rejected for rejected attempts; the route drives the shake
-		// animation from that event. Filtering here would bypass the session's
-		// canonical counter/timer/rejection logic.
+		// The session engine determines accept vs. reject from the dispatch
+		// outcome; the route surfaces it as the placementFeedback prop that
+		// drives the board overlay and tray shake. Filtering here would bypass
+		// the session's canonical counter/timer/rejection logic.
 		onPiecePlaced(pieceId, x, y);
 	}
 
@@ -345,8 +345,10 @@
 		animation: feedback-pulse 700ms ease-in-out infinite;
 	}
 
+	/* Dashed border distinguishes rejection from the solid accepted border
+	   without relying on hue (color-blind safe under reduced motion). */
 	.feedback-rejected {
-		border: 2px solid rgb(248 113 113 / 90%);
+		border: 2px dashed rgb(248 113 113 / 90%);
 		background: rgb(248 113 113 / 16%);
 		animation: feedback-pulse 700ms ease-in-out infinite;
 	}
