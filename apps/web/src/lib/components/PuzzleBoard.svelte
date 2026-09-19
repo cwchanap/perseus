@@ -326,11 +326,18 @@
 		border-color: rgb(58 255 255 / 24%);
 	}
 
-	.puzzle-board[data-candidate-enabled='true'] .cell-empty:hover,
 	.puzzle-board[data-candidate-enabled='true'] .cell-empty:focus-visible {
 		background: rgb(58 255 255 / 14%);
 		border-color: var(--accent);
 		box-shadow: inset 0 0 18px rgb(58 255 255 / 16%);
+	}
+
+	@media (hover: hover) {
+		.puzzle-board[data-candidate-enabled='true'] .cell-empty:hover {
+			background: rgb(58 255 255 / 14%);
+			border-color: var(--accent);
+			box-shadow: inset 0 0 18px rgb(58 255 255 / 16%);
+		}
 	}
 
 	/* Placement feedback renders independently of cell classes so it stays
