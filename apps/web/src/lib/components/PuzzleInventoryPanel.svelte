@@ -73,6 +73,24 @@
 		unplacedPieces.filter((piece) => matchesInventoryFilter(piece, puzzle, activeFilter))
 	);
 
+	// Stateless roll-ups over the same sources visiblePieces uses: how many
+	// unplaced pieces still match a filter, and how many pieces of that kind
+	// the puzzle has overall. Badges and the truthful empty-filter copy read
+	// these; no persistence or session state is involved.
+	function remainingCount(filter: InventoryFilter): number {
+		return unplacedPieces.filter((piece) => matchesInventoryFilter(piece, puzzle, filter)).length;
+	}
+
+	function totalCount(filter: InventoryFilter): number {
+		return puzzle.pieces.filter((piece) => matchesInventoryFilter(piece, puzzle, filter)).length;
+	}
+
+	const FILTER_KIND_LABELS: Record<Exclude<InventoryFilter, 'all'>, string> = {
+		corners: 'CORNERS',
+		edges: 'EDGES',
+		center: 'CENTER PIECES'
+	};
+
 	function displayedRotation(pieceId: number): Rotation {
 		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
 	}
@@ -86,13 +104,14 @@
 		const base =
 			'piece-slot relative aspect-square border border-(--border) p-[0.2rem] ' +
 			'transition-[border-color,box-shadow] duration-150';
+		const selectedSuffix = selectedPieceId === piece.id ? ' selected-expanded' : '';
 		if (activeHintPieceId === piece.id) {
-			return `${base} hinted border-(--gold) shadow-[0_0_14px_var(--gold-glow)]`;
+			return `${base} hinted border-(--gold) shadow-[0_0_14px_var(--gold-glow)]${selectedSuffix}`;
 		}
 		if (rejectedPieceId === piece.id) {
-			return `${base} rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]`;
+			return `${base} rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]${selectedSuffix}`;
 		}
-		return base;
+		return `${base}${selectedSuffix}`;
 	}
 
 	type MobileSheetState = 'peek' | 'half' | 'full';
@@ -260,7 +279,7 @@
 			<button
 				type="button"
 				class="panel-action"
-				aria-label="All pieces"
+				aria-label={`All pieces, ${remainingCount('all')} remaining`}
 				aria-pressed={activeFilter === 'all'}
 				onclick={() => onFilterChange('all')}
 			>
@@ -272,6 +291,9 @@
 					/><circle cx="17" cy="17" r="2.2" />
 				</svg>
 				<span class="panel-action-label">ALL</span>
+				<span class="filter-count-badge" data-testid="filter-count-all" aria-hidden="true">
+					{remainingCount('all')}
+				</span>
 			</button>
 			<details
 				class="inventory-filter-disclosure"
@@ -300,7 +322,7 @@
 					<button
 						type="button"
 						class="panel-action"
-						aria-label="Corner pieces"
+						aria-label={`Corner pieces, ${remainingCount('corners')} remaining`}
 						aria-pressed={activeFilter === 'corners'}
 						onclick={() => onFilterChange('corners')}
 					>
@@ -314,11 +336,14 @@
 							<path stroke-linecap="round" stroke-linejoin="round" d="M5 19V5h14M5 19h14" />
 						</svg>
 						<span class="panel-action-label">CORNERS</span>
+						<span class="filter-count-badge" data-testid="filter-count-corners" aria-hidden="true">
+							{remainingCount('corners')}
+						</span>
 					</button>
 					<button
 						type="button"
 						class="panel-action"
-						aria-label="Edge pieces"
+						aria-label={`Edge pieces, ${remainingCount('edges')} remaining`}
 						aria-pressed={activeFilter === 'edges'}
 						onclick={() => onFilterChange('edges')}
 					>
@@ -332,11 +357,14 @@
 							<path stroke-linecap="round" d="M5 19h14M5 5v14" />
 						</svg>
 						<span class="panel-action-label">EDGES</span>
+						<span class="filter-count-badge" data-testid="filter-count-edges" aria-hidden="true">
+							{remainingCount('edges')}
+						</span>
 					</button>
 					<button
 						type="button"
 						class="panel-action"
-						aria-label="Center pieces"
+						aria-label={`Center pieces, ${remainingCount('center')} remaining`}
 						aria-pressed={activeFilter === 'center'}
 						onclick={() => onFilterChange('center')}
 					>
@@ -353,6 +381,9 @@
 							/>
 						</svg>
 						<span class="panel-action-label">CENTER</span>
+						<span class="filter-count-badge" data-testid="filter-count-center" aria-hidden="true">
+							{remainingCount('center')}
+						</span>
 					</button>
 					<button
 						type="button"
@@ -484,7 +515,23 @@
 			{/each}
 		</div>
 		{#if unplacedPieces.length > 0 && visiblePieces.length === 0}
-			<div class="filter-empty-msg" data-testid="inventory-filter-empty">NO PIECES MATCH</div>
+			<div class="filter-empty-msg" data-testid="inventory-filter-empty">
+				<span class="filter-empty-reason">
+					{#if activeFilter !== 'all' && totalCount(activeFilter) > 0}
+						ALL {FILTER_KIND_LABELS[activeFilter]} PLACED
+					{:else}
+						NO PIECES MATCH
+					{/if}
+				</span>
+				<button
+					type="button"
+					class="filter-recovery-action"
+					data-testid="inventory-filter-recovery"
+					onclick={() => onFilterChange('all')}
+				>
+					SHOW ALL REMAINING
+				</button>
+			</div>
 		{/if}
 		{#if placedPieces.length === puzzle.pieceCount}
 			<div class="complete-msg">
@@ -610,6 +657,27 @@
 
 	.inventory-tools .panel-action {
 		flex: 0 0 auto;
+		position: relative;
+	}
+
+	/* Compact remaining-count badge. Absolutely positioned so button boxes
+	   keep their size, and pointer-transparent so clicks reach the button. */
+	.filter-count-badge {
+		position: absolute;
+		top: 0.1rem;
+		right: 0.15rem;
+		z-index: 1;
+		min-width: 0.85rem;
+		padding: 0 0.15rem;
+		border-radius: 999px;
+		background: var(--accent);
+		color: #03202a;
+		font-family: var(--font-display), Orbitron, monospace;
+		font-size: 0.5rem;
+		font-weight: 700;
+		line-height: 1.1;
+		text-align: center;
+		pointer-events: none;
 	}
 
 	.panel-tag {
@@ -660,6 +728,16 @@
 		height: var(--piece-slot-size);
 	}
 
+	/* Selected piece inspection: the slot claims a 2x2 grid area (two slot
+	   tracks plus the existing gap) while reusing the same PuzzlePiece
+	   surface — presentation only, no second preview or image. */
+	.piece-slot.selected-expanded {
+		grid-column: span 2;
+		grid-row: span 2;
+		width: calc(var(--piece-slot-size) * 2 + var(--inventory-gap));
+		height: calc(var(--piece-slot-size) * 2 + var(--inventory-gap));
+	}
+
 	.hint-badge {
 		position: absolute;
 		top: 0.25rem;
@@ -698,6 +776,10 @@
 	}
 
 	.filter-empty-msg {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.35rem;
 		flex-shrink: 0;
 		padding: 0.75rem;
 		border-top: 1px solid var(--border);
@@ -706,6 +788,23 @@
 		letter-spacing: 0.15em;
 		text-align: center;
 		color: var(--text-2);
+	}
+
+	.filter-recovery-action {
+		padding: 0.3rem 0.6rem;
+		font-family: var(--font-display), Orbitron, monospace;
+		font-size: 0.55rem;
+		font-weight: 700;
+		letter-spacing: 0.15em;
+		color: var(--accent);
+		background: transparent;
+		border: 1px solid var(--accent);
+		border-radius: 0.5rem;
+		cursor: pointer;
+	}
+
+	.filter-recovery-action:hover {
+		background: rgb(58 255 255 / 10%);
 	}
 
 	/* Mobile-only tray preview size. Below 1024px the tray decouples from the

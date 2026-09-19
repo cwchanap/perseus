@@ -13,6 +13,10 @@ const scrollIntoView = vi.fn(function (this: HTMLElement) {
 });
 
 beforeEach(() => {
+	// Standalone renders inherit no layout vars; pin the same values the
+	// route's .game-layout provides so slot-size math resolves in tests.
+	document.documentElement.style.setProperty('--piece-slot-size', '4rem');
+	document.documentElement.style.setProperty('--inventory-gap', '0.375rem');
 	drawerDisplayAtScroll = '';
 	scrollIntoView.mockClear();
 	HTMLElement.prototype.scrollIntoView = scrollIntoView;
@@ -392,10 +396,11 @@ describe('PuzzleInventoryPanel', () => {
 		const input = baseProps();
 		render(PuzzleInventoryPanel, input);
 
-		await page.getByRole('button', { name: 'All pieces' }).click();
-		await page.getByRole('button', { name: 'Corner pieces' }).click();
-		await page.getByRole('button', { name: 'Edge pieces' }).click();
-		await page.getByRole('button', { name: 'Center pieces' }).click();
+		// Filter buttons expose their remaining count in the accessible name.
+		await page.getByRole('button', { name: 'All pieces, 2 remaining' }).click();
+		await page.getByRole('button', { name: 'Corner pieces, 2 remaining' }).click();
+		await page.getByRole('button', { name: 'Edge pieces, 0 remaining' }).click();
+		await page.getByRole('button', { name: 'Center pieces, 0 remaining' }).click();
 
 		expect(input.onFilterChange.mock.calls.map(([filter]) => filter)).toEqual([
 			'all',
@@ -404,7 +409,7 @@ describe('PuzzleInventoryPanel', () => {
 			'center'
 		]);
 		await expect
-			.element(page.getByRole('button', { name: 'All pieces' }))
+			.element(page.getByRole('button', { name: 'All pieces, 2 remaining' }))
 			.toHaveAttribute('aria-pressed', 'true');
 	});
 
@@ -428,8 +433,211 @@ describe('PuzzleInventoryPanel', () => {
 			...baseProps(),
 			activeFilter: 'center'
 		});
+		// The 2x1 puzzle has no center pieces at all (totalCount is 0), so the
+		// factual NO PIECES MATCH copy is kept and a recovery action is offered.
 		await expect.element(page.getByText('NO PIECES MATCH')).toBeVisible();
+		await expect.element(page.getByText('SHOW ALL REMAINING')).toBeVisible();
 		expect(page.getByText('ALL PIECES PLACED').query()).toBeNull();
+	});
+
+	describe('selected slot expansion', () => {
+		it('marks the selected slot as an expanded 2x2 grid area', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+			const slot = await page.getByTestId('piece-slot-1').element();
+			const style = getComputedStyle(slot);
+			// The span is carried on the start side; end resolves to 'auto'.
+			expect(style.gridColumnStart).toBe('span 2');
+			expect(style.gridRowStart).toBe('span 2');
+		});
+
+		it('renders the selected slot materially larger than an unselected slot', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+			const selected = await page.getByTestId('piece-slot-1').element();
+			const unselected = await page.getByTestId('piece-slot-0').element();
+			const selectedBox = selected.getBoundingClientRect();
+			const unselectedBox = unselected.getBoundingClientRect();
+			// 2x2 math: two slot tracks plus the existing grid gap, so the box is
+			// roughly twice a single slot (1.8x floor tolerates content-box
+			// padding/border rounding in the standalone render).
+			expect(selectedBox.width).toBeGreaterThan(unselectedBox.width * 1.8);
+			expect(selectedBox.height).toBeCloseTo(selectedBox.width, 1);
+		});
+
+		it('keeps the same PuzzlePiece interaction path inside the expanded slot', async () => {
+			const input = baseProps();
+			render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+			const piece = document.querySelector<HTMLElement>(
+				'[data-testid="piece-slot-1"] [data-testid="puzzle-piece"]'
+			);
+			expect(piece?.getAttribute('data-piece-id')).toBe('1');
+			piece?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+			expect(input.onCancelSelection).toHaveBeenCalledOnce();
+		});
+
+		it('rotates the selected enlarged piece and reflects the new angle', async () => {
+			const input = baseProps();
+			const view = render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+			await page.getByRole('button', { name: 'Rotate selected piece' }).click();
+			expect(input.onRotate).toHaveBeenCalledWith(1);
+			await view.rerender({ ...input, selectedPieceId: 1, pieceRotations: { 1: 90 as const } });
+			const slot = await page.getByTestId('piece-slot-1').element();
+			const visual = slot.querySelector('[data-testid="puzzle-piece-visual"]');
+			expect(visual?.getAttribute('style') ?? '').toContain('rotate(90deg)');
+			expect(getComputedStyle(slot).gridColumnStart).toBe('span 2');
+		});
+
+		it('removes the expanded state when the selection is cleared', async () => {
+			const input = baseProps();
+			const view = render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+			const slot = await page.getByTestId('piece-slot-1').element();
+			expect(getComputedStyle(slot).gridColumnStart).toBe('span 2');
+			await view.rerender({ ...input, selectedPieceId: null });
+			expect(getComputedStyle(slot).gridColumnStart).not.toBe('span 2');
+			const unselected = await page.getByTestId('piece-slot-0').element();
+			expect(slot.getBoundingClientRect().width).toBeCloseTo(
+				unselected.getBoundingClientRect().width,
+				0
+			);
+		});
+
+		it('still hides the tray body and grid when peeked with an expanded selection', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+			const toggle = (await page
+				.getByTestId('inventory-drawer-toggle')
+				.element()) as HTMLButtonElement;
+			toggle.click();
+			toggle.click();
+			await expect
+				.element(page.getByTestId('puzzle-inventory-panel'))
+				.toHaveAttribute('data-sheet-state', 'peek');
+			const body = document.querySelector<HTMLElement>('#puzzle-inventory-body')!;
+			await expect.poll(() => getComputedStyle(body).display).toBe('none');
+		});
+	});
+
+	describe('filter count badges', () => {
+		function filterProps() {
+			return {
+				puzzle: filterPuzzle,
+				trayOrder: filterPuzzle.pieces.map((piece) => piece.id)
+			};
+		}
+
+		function badgeText(filter: string): string {
+			return (
+				document
+					.querySelector<HTMLElement>(`[data-testid="filter-count-${filter}"]`)
+					?.textContent?.trim() ?? ''
+			);
+		}
+
+		it('shows a remaining-count badge on every filter button', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), ...filterProps() });
+			expect(badgeText('all')).toBe('9');
+			expect(badgeText('corners')).toBe('4');
+			expect(badgeText('edges')).toBe('4');
+			expect(badgeText('center')).toBe('1');
+			await expect.element(page.getByTestId('filter-count-all')).toBeVisible();
+			await expect.element(page.getByTestId('filter-count-corners')).toBeVisible();
+			await expect.element(page.getByTestId('filter-count-edges')).toBeVisible();
+			await expect.element(page.getByTestId('filter-count-center')).toBeVisible();
+		});
+
+		it('renders a visible zero badge when a kind has nothing remaining', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			expect(badgeText('edges')).toBe('0');
+			expect(badgeText('center')).toBe('0');
+			await expect.element(page.getByTestId('filter-count-edges')).toBeVisible();
+			await expect.element(page.getByTestId('filter-count-center')).toBeVisible();
+		});
+
+		it('retains each label prefix and appends the remaining count', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), ...filterProps() });
+			expect(page.getByRole('button', { name: 'All pieces, 9 remaining' }).query()).not.toBeNull();
+			expect(
+				page.getByRole('button', { name: 'Corner pieces, 4 remaining' }).query()
+			).not.toBeNull();
+			expect(page.getByRole('button', { name: 'Edge pieces, 4 remaining' }).query()).not.toBeNull();
+			expect(
+				page.getByRole('button', { name: 'Center pieces, 1 remaining' }).query()
+			).not.toBeNull();
+		});
+
+		it('updates badges after placedPieces changes', async () => {
+			const input = { ...baseProps(), ...filterProps() };
+			const view = render(PuzzleInventoryPanel, input);
+			expect(badgeText('center')).toBe('1');
+			expect(badgeText('all')).toBe('9');
+			await view.rerender({ ...input, placedPieces: [{ pieceId: 4, x: 1, y: 1 }] });
+			expect(badgeText('center')).toBe('0');
+			expect(badgeText('all')).toBe('8');
+			expect(badgeText('corners')).toBe('4');
+		});
+
+		it('surfaces non-All counts in the filter popup at 1024-1279 when opened', async () => {
+			const originalWidth = window.innerWidth;
+			const originalHeight = window.innerHeight;
+			await page.viewport(1200, 800);
+			try {
+				render(PuzzleInventoryPanel, { ...baseProps(), ...filterProps() });
+				const corners = page.getByTestId('filter-count-corners');
+				await expect.element(corners).not.toBeVisible();
+				await page.getByTestId('inventory-filter-toggle').click();
+				await expect.element(corners).toBeVisible();
+				await expect.element(page.getByTestId('filter-count-edges')).toBeVisible();
+				await expect.element(page.getByTestId('filter-count-center')).toBeVisible();
+			} finally {
+				await page.viewport(originalWidth, originalHeight);
+			}
+		});
+	});
+
+	describe('truthful empty-filter copy', () => {
+		function allCornersPlacedProps() {
+			return {
+				...baseProps(),
+				puzzle: filterPuzzle,
+				trayOrder: filterPuzzle.pieces.map((piece) => piece.id),
+				placedPieces: [0, 2, 6, 8].map((pieceId) => ({ pieceId, x: 0, y: 0 })),
+				activeFilter: 'corners' as const
+			};
+		}
+
+		it('keeps factual NO PIECES MATCH for the 2x1 edge kind', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), activeFilter: 'edges' });
+			await expect.element(page.getByText('NO PIECES MATCH')).toBeVisible();
+		});
+
+		it('shows ALL CORNERS PLACED when the kind exists but every one is placed', async () => {
+			render(PuzzleInventoryPanel, allCornersPlacedProps());
+			await expect.element(page.getByText('ALL CORNERS PLACED')).toBeVisible();
+			expect(page.getByText('NO PIECES MATCH').query()).toBeNull();
+		});
+
+		it('shows SHOW ALL REMAINING in both empty branches and recovers on activation', async () => {
+			const emptyKind = baseProps();
+			const view = render(PuzzleInventoryPanel, { ...emptyKind, activeFilter: 'center' });
+			await expect.element(page.getByText('SHOW ALL REMAINING')).toBeVisible();
+			expect(emptyKind.onFilterChange).not.toHaveBeenCalled();
+			await page.getByTestId('inventory-filter-recovery').click();
+			expect(emptyKind.onFilterChange).toHaveBeenCalledTimes(1);
+			expect(emptyKind.onFilterChange).toHaveBeenCalledWith('all');
+
+			const exhaustedKind = allCornersPlacedProps();
+			await view.rerender(exhaustedKind);
+			await expect.element(page.getByText('SHOW ALL REMAINING')).toBeVisible();
+			expect(exhaustedKind.onFilterChange).not.toHaveBeenCalled();
+			await page.getByTestId('inventory-filter-recovery').click();
+			expect(exhaustedKind.onFilterChange).toHaveBeenCalledTimes(1);
+			expect(exhaustedKind.onFilterChange).toHaveBeenCalledWith('all');
+		});
+
+		it('does not auto-switch the filter when the empty state renders', async () => {
+			const input = baseProps();
+			render(PuzzleInventoryPanel, { ...input, activeFilter: 'edges' });
+			await expect.element(page.getByText('NO PIECES MATCH')).toBeVisible();
+			expect(input.onFilterChange).not.toHaveBeenCalled();
+		});
 	});
 
 	it('keeps the tools in the header on one non-wrapping row', async () => {
