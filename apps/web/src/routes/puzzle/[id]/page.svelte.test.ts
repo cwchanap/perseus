@@ -3674,6 +3674,22 @@ describe('Puzzle page placement feedback state', () => {
 		}
 	});
 
+	it('clears stale feedback when the placement is undone or redone', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		expect(page.getByTestId('placement-feedback').query()).not.toBeNull();
+
+		// Undo removes the piece; the accepted overlay must not linger on the
+		// now-empty cell until the 500 ms timer expires.
+		await page.getByLabelText('Undo').click();
+		expect(page.getByTestId('placement-feedback').query()).toBeNull();
+
+		await openMoreActions();
+		await page.getByLabelText('Redo').click();
+		expect(page.getByTestId('placement-feedback').query()).toBeNull();
+	});
+
 	it('clears stale feedback when the run restarts', async () => {
 		await renderPuzzlePage();
 

@@ -848,12 +848,14 @@
 	function handleUndo() {
 		if (!sessionStore) return;
 		sessionStore.dispatch({ type: 'undo' });
+		clearPlacementFeedback();
 		checkpointSession();
 	}
 
 	function handleRedo() {
 		if (!sessionStore) return;
 		sessionStore.dispatch({ type: 'redo' });
+		clearPlacementFeedback();
 		checkpointSession();
 	}
 
