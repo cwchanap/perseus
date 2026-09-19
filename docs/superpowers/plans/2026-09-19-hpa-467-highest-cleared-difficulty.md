@@ -4,7 +4,7 @@
 
 **Goal:** Show one truthful highest-cleared-difficulty badge on web Gallery and Bookmarks cards by merging current-device completion stats with fully paginated signed-in account stats.
 
-**Architecture:** Keep local completion truth in `stats.ts`. Add one dedicated `clearedDifficulties` store that only owns account clear rows and mirrors the existing bookmarks identity/stale-response pattern. A pure resolver merges local variant clears with account family+difficulty clears. `PuzzleCard` receives only the resolved difficulty and renders it in a shared top-right status stack with saved progress.
+**Architecture:** Keep local completion truth in `stats.ts`. Add `highestClearedDifficulty.ts` as the shared local-read + pure merge service, and keep `clearedDifficulties.ts` account-only. The store reuses bookmarks' identity/version/load-dedupe pattern plus Gallery/Profile abort semantics, exhausts account stats with `limit: 100`, and publishes one final map. Gallery and Bookmarks reactively call the same required family composition helper. `PuzzleCard` receives only the resolved difficulty and renders it in a shared top-right status stack with saved progress.
 
 **Tech stack:** Svelte 5, TypeScript, Svelte stores, existing `getPlayerStats` API client, Vitest + vitest-browser-svelte.
 
@@ -26,6 +26,8 @@
 
 **Add**
 
+- `apps/web/src/lib/services/gameplay/highestClearedDifficulty.ts`
+- `apps/web/src/lib/services/gameplay/highestClearedDifficulty.test.ts`
 - `apps/web/src/lib/stores/clearedDifficulties.ts`
 - `apps/web/src/lib/stores/clearedDifficulties.test.ts`
 
@@ -48,10 +50,12 @@
 
 ---
 
-## Task 1: Add the clear-specific account store and pure resolver
+## Task 1: Add the shared clear read model and clear-specific account store
 
 ### Files
 
+- Create: `apps/web/src/lib/services/gameplay/highestClearedDifficulty.ts`
+- Create: `apps/web/src/lib/services/gameplay/highestClearedDifficulty.test.ts`
 - Create: `apps/web/src/lib/stores/clearedDifficulties.ts`
 - Create: `apps/web/src/lib/stores/clearedDifficulties.test.ts`
 
@@ -82,10 +86,12 @@ export function resolveHighestClearedDifficulty(
 ): PuzzleDifficulty | null
 ```
 
-Check in this order:
+Walk the shared tuple in reverse rather than introducing another ranking constant:
 
 ```ts
-hard, normal, easy
+for (const difficulty of [...PUZZLE_DIFFICULTIES].toReversed()) {
+  // hard -> normal -> easy
+}
 ```
 
 A difficulty matches when either local variant id or account family+difficulty contains it.
@@ -108,7 +114,13 @@ getStats(variant.id)?.totalCompletions > 0
 
 Keep `stats.ts` unchanged.
 
-Optionally add one composition helper that returns `Map<familyId, PuzzleDifficulty>` for a given family list; keep it as a thin call to local discovery + the pure resolver.
+Add the required route composition helper:
+
+```ts
+resolveHighestClearedForFamilies(families, accountClearedByFamily)
+```
+
+It returns `ReadonlyMap<familyId, PuzzleDifficulty>`, performs local discovery once for the supplied family list, and calls the pure resolver. Gallery and Bookmarks must use this helper; neither route may inline local discovery + merge logic.
 
 ### 1.4 Write failing account-store tests
 
@@ -129,11 +141,14 @@ Cover:
 11. account switch clears old data before new data arrives;
 12. stale old-account response cannot repopulate state;
 13. active request chain is aborted on identity change;
-14. transient auth `loading` for the same observed account does not flicker away a valid loaded snapshot.
+14. `AbortError` and stale-version completions are ignored rather than published as failures;
+15. a real failure leaves the map empty and does not mark the account loaded, allowing retry;
+16. transient auth `loading` for the same observed account does not flicker away a valid loaded snapshot;
+17. every stats request uses `limit: 100`.
 
 ### 1.5 Implement `createClearedDifficultiesStore`
 
-Follow `bookmarks.ts` rather than inventing infrastructure.
+Reuse `bookmarks.ts` for identity/version/load-dedupe, but copy abort/signal/error handling from Gallery/Profile rather than pretending bookmarks already owns cancellation. Accept an injected auth readable, matching `createBookmarksStore(auth)`, so store tests control account transitions directly.
 
 State:
 
@@ -164,11 +179,13 @@ Auth subscription:
 - return immediately if no account;
 - dedupe same-account loaded/in-flight requests;
 - create one controller and captured version;
+- call `getPlayerStats({ limit: 100, cursor, signal })` on every page;
 - follow every cursor page;
 - accumulate only `totalCompletions > 0`;
 - do not call `set()` with partial pages;
 - publish once when pagination is complete and still current;
-- on current non-abort failure publish `status: 'error'` with empty map.
+- ignore `AbortError` and stale-version completion without changing the current identity's status;
+- on current non-abort failure publish `status: 'error'` with empty map and leave `loadedAccountId` unset.
 
 Export singleton:
 
@@ -176,12 +193,12 @@ Export singleton:
 export const clearedDifficulties = createClearedDifficultiesStore();
 ```
 
-### 1.6 Run focused store tests
+### 1.6 Run focused read-model/store tests
 
-From `apps/web`:
+Use the repo's actual browser-mode unit command rather than a second invocation shape:
 
 ```bash
-bunx vitest --run src/lib/stores/clearedDifficulties.test.ts
+bun run --cwd apps/web test:unit --   src/lib/services/gameplay/highestClearedDifficulty.test.ts   src/lib/stores/clearedDifficulties.test.ts
 ```
 
 Expected: pass.
@@ -206,7 +223,10 @@ Cover:
 - progress-only layout still works;
 - clear-only layout works;
 - clear + progress both render inside one status-stack container;
+- the clear badge is independently queryable as `data-testid="card-cleared-difficulty"`;
 - both states remain independently queryable;
+- at `await page.viewport(390, 844)`, status-stack/title/bookmark bounding boxes do not overlap in the existing narrow `343 / 215` artwork layout;
+- restore the default test viewport after the responsive assertion;
 - bookmark button and all three difficulty actions remain unchanged.
 
 ### 2.2 Extend `PuzzleCard` props
@@ -243,7 +263,7 @@ Render:
 - compact translucent background matching existing card status chrome;
 - small check mark;
 - existing `DifficultyGems` for the resolved difficulty;
-- explicit badge `aria-label`.
+- explicit badge `aria-label` built with the existing `getDifficultyLabel(highestClearedDifficulty)` helper rather than another label table.
 
 Use:
 
@@ -264,7 +284,7 @@ No new image asset.
 ### 2.5 Run focused component tests
 
 ```bash
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleCard.svelte.test.ts
+bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleCard.svelte.test.ts
 ```
 
 Expected: pass.
@@ -295,6 +315,13 @@ Cover:
 
 Prefer observable card DOM over asserting implementation details.
 
+Before adding these tests, extend the existing Gallery mocks deliberately:
+
+- `$lib/services/stats` currently exposes only `getBestTime`; add `getStats` for local-clear scenarios (or seed localStorage while preserving the real `getStats`);
+- mock `$lib/stores/clearedDifficulties` like the existing bookmarks store;
+- keep `$lib/services/gameplay/highestClearedDifficulty` real so route tests exercise the actual local/account composition helper;
+- do not add `getPlayerStats` to the Gallery API mock when the account store itself is mocked.
+
 ### 3.2 Wire Gallery
 
 Import:
@@ -311,13 +338,21 @@ if ($playerAuth.status === 'authenticated') {
 }
 ```
 
-Derive highest clear by family from current `families`, fresh local stats, and `$clearedDifficulties.byFamily`.
+Derive through the required helper so async account results and infinite-scroll appends both update the cards:
+
+```ts
+const highestClearedByFamily = $derived(
+  resolveHighestClearedForFamilies(families, $clearedDifficulties.byFamily)
+);
+```
 
 Pass the resolved value into `PuzzleCard`.
 
 Do not couple this to saved-progress discovery; completion and in-progress are independent states.
 
 ### 3.3 Add failing Bookmarks tests
+
+Mock the new account store alongside the existing bookmark/auth stores, but keep `highestClearedDifficulty.ts` real.
 
 Cover:
 
@@ -332,20 +367,24 @@ Cover:
 
 Keep bookmark store behavior unchanged.
 
-Add the same clear-state load call and derive highest clears from:
+Add the same clear-state load call and derive through the same required helper:
 
-- `$bookmarks.families`;
-- local stats;
-- `$clearedDifficulties.byFamily`.
+```ts
+const highestClearedByFamily = $derived(
+  resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties.byFamily)
+);
+```
 
 Pass `highestClearedDifficulty` into each `PuzzleCard`.
 
 No second account pagination implementation is allowed in the route.
 
+Do not wire `profile/+page.svelte` in this ticket. Its `PuzzleCard` usage is the separate My Puzzles ownership surface, and Profile already owns a dedicated Puzzle Results section.
+
 ### 3.5 Run focused route tests
 
 ```bash
-bunx vitest --run --browser   src/routes/page.svelte.test.ts   src/routes/bookmarks/page.svelte.test.ts
+bun run --cwd apps/web test:unit --   src/routes/page.svelte.test.ts   src/routes/bookmarks/page.svelte.test.ts
 ```
 
 Expected: pass.
@@ -356,11 +395,10 @@ Expected: pass.
 
 ### 4.1 Run all focused HPA-467 tests
 
-From `apps/web`:
+Use the same command shape as CI:
 
 ```bash
-bunx vitest --run src/lib/stores/clearedDifficulties.test.ts
-bunx vitest --run --browser   src/lib/components/__tests__/PuzzleCard.svelte.test.ts   src/routes/page.svelte.test.ts   src/routes/bookmarks/page.svelte.test.ts
+bun run --cwd apps/web test:unit --   src/lib/services/gameplay/highestClearedDifficulty.test.ts   src/lib/stores/clearedDifficulties.test.ts   src/lib/components/__tests__/PuzzleCard.svelte.test.ts   src/routes/page.svelte.test.ts   src/routes/bookmarks/page.svelte.test.ts
 ```
 
 ### 4.2 Type/Svelte check
@@ -392,7 +430,7 @@ Confirm the implementation does **not** add:
 
 ## Implementation checklist
 
-- [ ] 1. Add pure highest-clear resolver + clear-specific account store with exhaustive pagination and auth stale guards
+- [ ] 1. Add shared clear read model + clear-specific account store with canonical ranking, limit-100 pagination, abort/stale guards
 - [ ] 2. Add `PuzzleCard` clear badge + shared top-right status stack
 - [ ] 3. Wire Gallery and Bookmarks through the same clear read model
 - [ ] 4. Run focused tests, `bun run check`, broader web unit gate, and scope review
@@ -403,18 +441,24 @@ Confirm the implementation does **not** add:
 - **Old account badges after switch/logout:** clear on identity change, abort, and version-guard results.
 - **Assisted/rotation/relaxed clears missing:** use `totalCompletions`, never best time.
 - **Local completion appears late:** read local stats fresh from visible families; do not cache local clear state.
-- **Status collision:** clear + progress share one vertical status stack.
-- **Over-engineering:** one purpose-built store; no reusable remote-state abstraction.
+- **Status collision:** clear + progress share one vertical status stack; a 390×844 browser test pins it away from the title/bookmark row.
+- **Mock drift:** route tests extend the existing stats/store mocks intentionally and keep the real clear read-model service.
+- **Over-engineering:** one purpose-built store plus one narrow service; no reusable remote-state abstraction.
 - **Wrong implied progression:** display one highest observed clear only; never synthesize lower clears.
 
 ## Planning verification
 
-- HPA-467 is High priority, Todo, and unblocked.
-- HPA-466 is complete and merged; there are currently no open Perseus PRs.
+- HPA-467 is High priority, In Progress, and attached to draft PR #88.
+- HPA-466 is complete and merged; PR #88 is the only current HPA-467 implementation/planning PR.
 - `PuzzleCard` is shared by Gallery and Bookmarks and already owns the artwork status area.
 - `getStats` exposes the correct local `totalCompletions` aggregate.
 - `getPlayerStats` already supports cursor + abort signal.
 - `PlayerStatRow` already carries family id, difficulty, and total completions, so no family/variant lookup endpoint is needed for account rows.
-- `bookmarks.ts` already provides the account identity/version pattern to reuse.
+- `bookmarks.ts` provides account identity/version/load-dedupe; Gallery/Profile provide abort/signal handling.
+- `/api/player/stats` defaults to 20 while `listPlayerStats` clamps at 100; this plan explicitly requests `limit: 100` on every page.
+- `PUZZLE_DIFFICULTIES` is the canonical Easy/Normal/Hard order; the resolver reverses it rather than hardcoding a second ranking.
+- Gallery's current stats mock exposes only `getBestTime`; implementation must extend it intentionally for local clear coverage.
+- Vitest browser mode supports `page.viewport(width, height)`, so the narrow-card overlap check stays in the existing component test suite.
+- Profile's My Puzzles `PuzzleCard` surface remains outside HPA-467.
 - No generated art task is required.
 - Planning branch remains documentation-only until implementation starts.
