@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
+import { tick } from 'svelte';
 import PuzzleBoard from '../PuzzleBoard.svelte';
 import type { Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 import type { PlacedPiece } from '@perseus/game-core';
@@ -358,5 +359,236 @@ describe('PuzzleBoard', () => {
 
 		const activeAfter = cells.find((cell) => cell.tabIndex === 0)!;
 		expect(activeAfter).toBe(activeBefore);
+	});
+
+	it('exposes data-candidate-enabled only while a piece is selected', async () => {
+		const puzzle = createMockPuzzle(3);
+
+		const unselected = render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			selectedPieceId: null,
+			resolveImage
+		});
+		const unselectedBoard = await page.getByTestId('puzzle-board').element();
+		expect(unselectedBoard.getAttribute('data-candidate-enabled')).toBeNull();
+		unselected.unmount();
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			selectedPieceId: 0,
+			resolveImage
+		});
+		await expect
+			.element(page.getByTestId('puzzle-board'))
+			.toHaveAttribute('data-candidate-enabled', 'true');
+	});
+
+	it('changes an empty cell baseline styling while selected even without hover', async () => {
+		const puzzle = createMockPuzzle(3);
+
+		const unselected = render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			selectedPieceId: null,
+			resolveImage
+		});
+		const unselectedCell = await page
+			.getByRole('button', { name: 'Row 1, column 2, empty' })
+			.element();
+		const unselectedColor = getComputedStyle(unselectedCell).backgroundColor;
+		unselected.unmount();
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			selectedPieceId: 0,
+			resolveImage
+		});
+		const selectedCell = await page
+			.getByRole('button', { name: 'Row 1, column 2, empty' })
+			.element();
+		const selectedColor = getComputedStyle(selectedCell).backgroundColor;
+
+		expect(selectedColor).not.toBe(unselectedColor);
+	});
+
+	it('keeps occupied cells out of the candidate baseline while selected', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			onPiecePlaced: vi.fn(),
+			selectedPieceId: 1,
+			resolveImage: resolveImageData
+		});
+
+		const occupied = await page
+			.getByRole('button', { name: 'Row 1, column 1, occupied by puzzle piece 0' })
+			.element();
+		expect(occupied.className).toContain('cell-occupied');
+		expect(occupied.className).not.toContain('cell-empty');
+		// The occupied background (#0a0620) must be untouched by candidate styling.
+		expect(getComputedStyle(occupied).backgroundColor).toBe('rgb(10, 6, 32)');
+	});
+
+	it('still marks the dragged-over cell with cell-drop-over while selected', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			selectedPieceId: 0,
+			resolveImage
+		});
+
+		const dropZone = await page.getByRole('button', { name: 'Row 1, column 2, empty' }).element();
+		dropZone.dispatchEvent(
+			new DragEvent('dragover', {
+				bubbles: true,
+				cancelable: true,
+				dataTransfer: new DataTransfer()
+			})
+		);
+		await tick();
+
+		expect(dropZone.className).toContain('cell-drop-over');
+	});
+
+	it('renders accepted placement feedback on the exact cell', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			placementFeedback: { x: 1, y: 2, kind: 'accepted' },
+			resolveImage
+		});
+
+		const feedback = page.getByTestId('placement-feedback');
+		await expect.element(feedback).toHaveAttribute('data-kind', 'accepted');
+		await expect.element(feedback).toHaveAttribute('data-x', '1');
+		await expect.element(feedback).toHaveAttribute('data-y', '2');
+		expect(getComputedStyle(await feedback.element()).pointerEvents).toBe('none');
+	});
+
+	it('renders rejected placement feedback on the exact cell', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			placementFeedback: { x: 2, y: 0, kind: 'rejected' },
+			resolveImage
+		});
+
+		const feedback = page.getByTestId('placement-feedback');
+		await expect.element(feedback).toHaveAttribute('data-kind', 'rejected');
+		await expect.element(feedback).toHaveAttribute('data-x', '2');
+		await expect.element(feedback).toHaveAttribute('data-y', '0');
+	});
+
+	it('styles accepted and rejected feedback distinctly', async () => {
+		const puzzle = createMockPuzzle(3);
+
+		const accepted = render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			placementFeedback: { x: 0, y: 1, kind: 'accepted' },
+			resolveImage
+		});
+		const acceptedColor = getComputedStyle(
+			await page.getByTestId('placement-feedback').element()
+		).backgroundColor;
+		accepted.unmount();
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			placementFeedback: { x: 0, y: 1, kind: 'rejected' },
+			resolveImage
+		});
+		const rejectedColor = getComputedStyle(
+			await page.getByTestId('placement-feedback').element()
+		).backgroundColor;
+
+		expect(rejectedColor).not.toBe(acceptedColor);
+	});
+
+	it('renders accepted feedback even when the target cell is occupied', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [{ pieceId: 4, x: 1, y: 2 }],
+			onPiecePlaced: vi.fn(),
+			placementFeedback: { x: 1, y: 2, kind: 'accepted' },
+			resolveImage: resolveImageData
+		});
+
+		const cell = await page
+			.getByRole('button', { name: 'Row 3, column 2, occupied by puzzle piece 4' })
+			.element();
+		expect(cell.className).toContain('cell-occupied');
+		await expect
+			.element(page.getByTestId('placement-feedback'))
+			.toHaveAttribute('data-kind', 'accepted');
+	});
+
+	it('renders placement feedback and the hint target together', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			activeHintTarget: { x: 1, y: 2 },
+			placementFeedback: { x: 1, y: 2, kind: 'rejected' },
+			resolveImage
+		});
+
+		await expect.element(page.getByTestId('placement-feedback')).toBeInTheDocument();
+		await expect.element(page.getByTestId('hint-target')).toBeInTheDocument();
+	});
+
+	it('stacks placement feedback above every placed piece', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			// (2,2) is the highest-z placed slot: y * cols + x + 1 = 9.
+			placedPieces: [{ pieceId: 8, x: 2, y: 2 }],
+			onPiecePlaced: vi.fn(),
+			placementFeedback: { x: 2, y: 2, kind: 'accepted' },
+			resolveImage: resolveImageData
+		});
+
+		const feedbackZ = parseInt(
+			getComputedStyle(await page.getByTestId('placement-feedback').element()).zIndex,
+			10
+		);
+		const placedZ = parseInt(
+			getComputedStyle(document.querySelector('.placed-piece-shadow')!).zIndex,
+			10
+		);
+		expect(feedbackZ).toBeGreaterThan(placedZ);
+	});
+
+	it('stacks the hint target above placement feedback', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			activeHintTarget: { x: 0, y: 0 },
+			placementFeedback: { x: 0, y: 0, kind: 'accepted' },
+			resolveImage
+		});
+
+		const feedbackZ = parseInt(
+			getComputedStyle(await page.getByTestId('placement-feedback').element()).zIndex,
+			10
+		);
+		const hintZ = parseInt(
+			getComputedStyle(await page.getByTestId('hint-target').element()).zIndex,
+			10
+		);
+		expect(hintZ).toBeGreaterThan(feedbackZ);
 	});
 });

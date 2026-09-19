@@ -23,6 +23,11 @@
 		interactionBlocked: boolean;
 		viewResetVersion: number;
 		referenceToggled: boolean;
+		placementFeedback?: {
+			x: number;
+			y: number;
+			kind: 'accepted' | 'rejected';
+		} | null;
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onReferenceToggle: () => void;
 	}
@@ -39,6 +44,7 @@
 		interactionBlocked,
 		viewResetVersion,
 		referenceToggled,
+		placementFeedback = null,
 		onPiecePlaced,
 		onReferenceToggle
 	}: Props = $props();
@@ -263,6 +269,7 @@
 						{activeHintTarget}
 						{resolveImage}
 						{selectedPieceId}
+						{placementFeedback}
 						onBoardPointerDown={handleBoardPointerDown}
 					/>
 				</div>
