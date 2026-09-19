@@ -1746,6 +1746,7 @@ describe('Puzzle route gameplay integration', () => {
 		await selectPiece(0);
 		await placeSelectedPieceAt(1, 0);
 		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass('rejected');
+		expect(page.getByTestId('placement-feedback').query()).not.toBeNull();
 
 		// Navigate to a different puzzle
 		mockPageStore.set({
@@ -1759,6 +1760,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expectMissionName('NEXT MISSION');
 		const nextSlot = await page.getByTestId('piece-slot-0').element();
 		expect(nextSlot.classList.contains('rejected')).toBe(false);
+		expect(page.getByTestId('placement-feedback').query()).toBeNull();
 	});
 
 	it('resets reference state when navigating to a different puzzle', async () => {
@@ -3004,8 +3006,8 @@ describe('Puzzle page defensive guard coverage', () => {
 		// rejects it (non_upright) and emits a placement_rejected event.
 		await placeSelectedPieceAt(0, 0);
 
-		// The placement_rejected event handler sets rejectedPiece, which
-		// triggers the rejected animation on the piece slot.
+		// The rejected dispatch outcome sets the route's placement feedback,
+		// whose derived rejected piece triggers the tray shake.
 		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
 		// Board should still show 0/2 (placement was rejected).
 		await expectPiecesRemaining(2);
@@ -3020,11 +3022,11 @@ describe('Puzzle page defensive guard coverage', () => {
 		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
 
 		// Second incorrect placement on the same piece should clear the
-		// existing timeout and set a new one (exercises the
-		// clearTimeout branch in the rejected-piece handler). The piece is
-		// still selected from the first attempt (a rejected placement does
-		// not clear selection), so place it directly — re-selecting would
-		// toggle selection off.
+		// existing timeout and set a new one (exercises the replace branch in
+		// showPlacementFeedback, driven by the attempt_placement dispatch).
+		// The piece is still selected from the first attempt (a rejected
+		// placement does not clear selection), so place it directly —
+		// re-selecting would toggle selection off.
 		await placeSelectedPieceAt(1, 0);
 		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
 	});
@@ -3560,5 +3562,147 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
 			.toHaveTextContent('Selection canceled.');
+	});
+});
+
+describe('Puzzle page placement feedback state', () => {
+	it('shows accepted placement feedback on the board at the placement coordinates', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+
+		const feedback = await page.getByTestId('placement-feedback').element();
+		expect(feedback.getAttribute('data-kind')).toBe('accepted');
+		expect(feedback.getAttribute('data-x')).toBe('0');
+		expect(feedback.getAttribute('data-y')).toBe('0');
+		// An accepted kind never derives a rejected piece: the placed piece
+		// leaves the tray and the remaining slot must not shake.
+		expect(page.getByTestId('piece-slot-0').query()).toBeNull();
+		const slot = await page.getByTestId('piece-slot-1').element();
+		expect(slot.classList.contains('rejected')).toBe(false);
+	});
+
+	it('checkpoints and clears canonical selection after an accepted placement', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+
+		// handlePiecePlaced still checkpoints after dispatching.
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
+
+		// The accepted dispatch cleared the canonical selection: undo restores
+		// the piece from the post-clear history snapshot, so it comes back
+		// unselected.
+		await page.getByLabelText('Undo').click();
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'false');
+	});
+
+	it('shows rejected placement feedback and keeps the canonical selection', async () => {
+		await renderPuzzlePage();
+
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+
+		const feedback = await page.getByTestId('placement-feedback').element();
+		expect(feedback.getAttribute('data-kind')).toBe('rejected');
+		expect(feedback.getAttribute('data-x')).toBe('1');
+		expect(feedback.getAttribute('data-y')).toBe('0');
+		// The derived rejected piece drives the existing tray shake.
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+		// A rejected placement keeps the canonical selection.
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'true');
+	});
+
+	it('replaces the first feedback and timer with the second attempt', async () => {
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+
+			await selectPiece(0);
+			await placeSelectedPieceAt(1, 0);
+			const rejected = await page.getByTestId('placement-feedback').element();
+			expect(rejected.getAttribute('data-kind')).toBe('rejected');
+
+			// Advance partway into the first 500 ms window.
+			await vi.advanceTimersByTimeAsync(300);
+
+			// Second attempt: the still-selected piece lands correctly, so the
+			// accepted feedback replaces the rejected one (exactly one overlay)
+			// and the single timer is rescheduled.
+			await placeSelectedPieceAt(0, 0);
+			expect(document.querySelectorAll('.placement-feedback').length).toBe(1);
+			const replaced = await page.getByTestId('placement-feedback').element();
+			expect(replaced.getAttribute('data-kind')).toBe('accepted');
+			expect(replaced.getAttribute('data-x')).toBe('0');
+
+			// t = 600 ms: if the first attempt's timer had not been replaced it
+			// would have fired at 500 ms and cleared the feedback already.
+			await vi.advanceTimersByTimeAsync(300);
+			expect(page.getByTestId('placement-feedback').query()).not.toBeNull();
+
+			// t = 800 ms: the replacement timer fires.
+			await vi.advanceTimersByTimeAsync(200);
+			expect(page.getByTestId('placement-feedback').query()).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('clears the feedback after exactly 500 ms', async () => {
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+
+			await selectPiece(0);
+			await placeSelectedPieceAt(1, 0);
+			await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+			expect(page.getByTestId('placement-feedback').query()).not.toBeNull();
+
+			await vi.advanceTimersByTimeAsync(499);
+			expect(page.getByTestId('placement-feedback').query()).not.toBeNull();
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(page.getByTestId('placement-feedback').query()).toBeNull();
+			const slot = await page.getByTestId('piece-slot-0').element();
+			expect(slot.classList.contains('rejected')).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('clears stale feedback when the run restarts', async () => {
+		await renderPuzzlePage();
+
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+		expect(page.getByTestId('placement-feedback').query()).not.toBeNull();
+
+		// The rejected attempt counts as user activity, so restart asks for
+		// confirmation first.
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Restart' }).click();
+		await page.getByRole('button', { name: 'Confirm restart' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		expect(page.getByTestId('placement-feedback').query()).toBeNull();
+		const slot = await page.getByTestId('piece-slot-0').element();
+		expect(slot.classList.contains('rejected')).toBe(false);
+	});
+
+	it('updates filter counts from canonical placedPieces after a placement', async () => {
+		await renderPuzzlePage();
+
+		const countBefore = await page.getByTestId('filter-count-all').element();
+		expect(countBefore.textContent?.trim()).toBe('2');
+
+		await placePiece(0, 0, 0);
+
+		await expect.element(page.getByTestId('filter-count-all')).toHaveTextContent('1');
 	});
 });

@@ -73,7 +73,19 @@
 	let error: string | null = $state(null);
 	let errorStatus: number | null = $state(null);
 	let showCelebration = $state(false);
-	let rejectedPiece: number | null = $state(null);
+	// Single route-owned placement feedback for both accepted and rejected
+	// outcomes: rendered on the board overlay via PuzzleBoardPanel and
+	// derived into the tray rejection shake below. One replaceable timer
+	// bounds its lifetime; a second placement replaces both.
+	let placementFeedback = $state<{
+		pieceId: number;
+		x: number;
+		y: number;
+		kind: 'accepted' | 'rejected';
+	} | null>(null);
+	const rejectedPiece = $derived(
+		placementFeedback?.kind === 'rejected' ? placementFeedback.pieceId : null
+	);
 	let activeHintPieceId = $state<number | null>(null);
 	let activeHintTarget = $state<{ x: number; y: number } | null>(null);
 	let boardViewResetVersion = $state(0);
@@ -144,7 +156,7 @@
 
 	let sessionUnsubscribe: (() => void) | null = null;
 	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
-	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
+	let placementFeedbackTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Track the previous player-auth status so a transition to authenticated
 	// (login or session restore) triggers a one-shot retry of any unauthorized
@@ -208,10 +220,7 @@
 			checkpointInterval = null;
 		}
 
-		if (rejectedPieceTimeout !== null) {
-			clearTimeout(rejectedPieceTimeout);
-			rejectedPieceTimeout = null;
-		}
+		clearPlacementFeedback();
 
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('pointerup', handleWindowPointerUp, true);
@@ -539,19 +548,14 @@
 					: `Puzzle piece ${event.pieceId} placed.`
 			);
 		} else if (event.type === 'placement_rejected') {
+			// The announcement stays event-driven (the event carries the
+			// rejection reason); the visual feedback is owned by the dispatch
+			// call site in handlePiecePlaced for both outcomes.
 			announceGameplay(
 				event.reason === 'non_upright'
 					? `Puzzle piece ${event.pieceId} must be upright.`
 					: `Puzzle piece ${event.pieceId} does not fit there.`
 			);
-			if (rejectedPieceTimeout !== null) {
-				clearTimeout(rejectedPieceTimeout);
-			}
-			rejectedPiece = event.pieceId;
-			rejectedPieceTimeout = setTimeout(() => {
-				rejectedPiece = null;
-				rejectedPieceTimeout = null;
-			}, REJECTED_DURATION_MS);
 		} else if (event.type === 'hint_target') {
 			if (event.pieceId !== null && event.target) {
 				announceGameplay(
@@ -662,11 +666,7 @@
 			// dialog/celebration reset itself ran before the fetch above.)
 			showCelebration = restored?.lifecycle === 'completed';
 			clearHintTarget();
-			if (rejectedPieceTimeout !== null) {
-				clearTimeout(rejectedPieceTimeout);
-				rejectedPieceTimeout = null;
-			}
-			rejectedPiece = null;
+			clearPlacementFeedback();
 			bestTime = getBestTime(id);
 			isNewBest = false;
 			localStatsFailed = false;
@@ -789,8 +789,44 @@
 
 	function handlePiecePlaced(pieceId: number, x: number, y: number) {
 		if (!sessionStore) return;
-		sessionStore.dispatch({ type: 'attempt_placement', pieceId, x, y });
+
+		const result = sessionStore.dispatch({
+			type: 'attempt_placement',
+			pieceId,
+			x,
+			y
+		});
+
+		if (
+			result.type === 'placement' &&
+			(result.outcome.status === 'accepted' || result.outcome.status === 'rejected')
+		) {
+			showPlacementFeedback(pieceId, x, y, result.outcome.status);
+		}
+
 		checkpointSession();
+	}
+
+	function clearPlacementFeedback(): void {
+		if (placementFeedbackTimeout !== null) {
+			clearTimeout(placementFeedbackTimeout);
+			placementFeedbackTimeout = null;
+		}
+		placementFeedback = null;
+	}
+
+	function showPlacementFeedback(
+		pieceId: number,
+		x: number,
+		y: number,
+		kind: 'accepted' | 'rejected'
+	): void {
+		if (placementFeedbackTimeout !== null) clearTimeout(placementFeedbackTimeout);
+		placementFeedback = { pieceId, x, y, kind };
+		placementFeedbackTimeout = setTimeout(() => {
+			placementFeedback = null;
+			placementFeedbackTimeout = null;
+		}, REJECTED_DURATION_MS);
 	}
 
 	function clearHintTarget(): void {
@@ -1085,7 +1121,7 @@
 	// --- Pause / resume / restart / exit composition ---------------------------
 
 	// Consolidated route-local cleanup of transient gameplay presentation
-	// (selection, hint, rejection animation). Pan cancellation is panel-local
+	// (selection, hint, placement feedback). Pan cancellation is panel-local
 	// and follows the interactionBlocked signal. Invoked before any lifecycle
 	// transition so stale overlay/interaction cannot leak into the next
 	// presentation. PuzzleSession remains the sole canonical owner of run
@@ -1094,9 +1130,7 @@
 	function clearTransientGameplayState(): void {
 		sessionStore?.dispatch({ type: 'cancel_selection' });
 		clearHintTarget();
-		if (rejectedPieceTimeout !== null) clearTimeout(rejectedPieceTimeout);
-		rejectedPieceTimeout = null;
-		rejectedPiece = null;
+		clearPlacementFeedback();
 	}
 
 	function openPauseDialog(presentation: 'resume' | 'paused' = 'paused'): void {
@@ -1382,6 +1416,7 @@
 							{placedPieces}
 							selectedPieceId={currentSelectedPieceId}
 							{activeHintTarget}
+							{placementFeedback}
 							resolveImage={source.resolvePieceImage}
 							referenceImageUrl={source.resolveReferenceImage() ?? null}
 							{referenceActive}
