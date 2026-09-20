@@ -203,7 +203,7 @@ Add one cleanup regression covering restart or direct puzzle navigation while a 
 
 ### 1.12 Run the focused route suite
 
-`bun run --cwd apps/web test:unit -- src/routes/puzzle/[id]/page.svelte.test.ts`
+`bun run --cwd apps/web test:unit -- 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
 Expected: pass.
 
@@ -268,7 +268,7 @@ No `PuzzleBoard.svelte` change unless the panel wrapper proves insufficient duri
 
 ### 2.5 Run focused board tests
 
-`bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts src/routes/puzzle/[id]/page.svelte.test.ts`
+`bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
 Expected: pass.
 
@@ -390,7 +390,7 @@ Expected: pass.
 
 ### 4.1 Run focused HPA-465 suites together
 
-`bun run --cwd apps/web test:unit -- src/routes/puzzle/[id]/page.svelte.test.ts src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
+`bun run --cwd apps/web test:unit -- 'src/routes/puzzle/[id]/page.svelte.test.ts' src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
 
 Expected: pass.
 
