@@ -62,10 +62,10 @@ Add:
 Public value shape:
 
 ```ts
-ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>;
 ```
 
-The store observes `playerAuth` only for identity changes and exposes `subscribe` plus an explicit `load()`, matching the existing bookmarks store's lifecycle pattern without copying its UI-facing status/error state.
+The store observes `playerAuth` only for identity changes and exposes `subscribe`, an explicit `load()`, and an `invalidate()` hook, matching the existing bookmarks store's lifecycle pattern without copying its UI-facing status/error state.
 
 `currentAccountId`, `loadedAccountId`, in-flight promise/error state, version, and abort controller stay internal because no HPA-467 consumer renders them.
 
@@ -101,6 +101,12 @@ For cancellation, follow Gallery/Profile rather than `bookmarks.ts`: an `AbortEr
 
 This prevents old-account clear badges from appearing after logout or account switch.
 
+## Server-write invalidation
+
+Clear writes bypass the store entirely — the puzzle route POSTs `recordCompletion` itself — so unlike bookmarks (whose mutations all flow through `toggle()`), a loaded snapshot can fall behind the server mid-session. The concrete gap: the local stats write fails while the server completion lands, and the once-per-account `load()` dedupe would hide that clear until reload.
+
+After a successful `recordCompletion`, the puzzle route calls `clearedDifficulties.invalidate()`: bump the version (dropping any in-flight chain's results), abort the active controller, clear the loaded marker, and leave the published map unchanged as last-known-good. The next `load()` then refetches instead of deduping against the stale snapshot. Clears recorded on other devices still surface only at the next load boundary — the same session-level staleness the bookmarks store already accepts.
+
 ## Exhaustive account pagination
 
 `load()` must follow `nextCursor` until it is absent.
@@ -112,12 +118,12 @@ let cursor: string | undefined;
 const next = new Map<string, Set<PuzzleDifficulty>>();
 
 do {
-  const page = await getPlayerStats({ limit: 100, cursor, signal });
-  for (const row of page.stats) {
-    if (row.totalCompletions <= 0) continue;
-    add(row.familyId, row.difficulty);
-  }
-  cursor = page.nextCursor;
+	const page = await getPlayerStats({ limit: 100, cursor, signal });
+	for (const row of page.stats) {
+		if (row.totalCompletions <= 0) continue;
+		add(row.familyId, row.difficulty);
+	}
+	cursor = page.nextCursor;
 } while (cursor !== undefined);
 ```
 
@@ -145,15 +151,13 @@ Keep local completion truth in `stats.ts`.
 Add a small helper in `apps/web/src/lib/services/gameplay/highestClearedDifficulty.ts`:
 
 ```ts
-function readLocalClearedVariantIds(
-  families: readonly PuzzleFamilySummary[]
-): ReadonlySet<string>
+function readLocalClearedVariantIds(families: readonly PuzzleFamilySummary[]): ReadonlySet<string>;
 ```
 
 For every family variant, include `variant.id` only when:
 
 ```ts
-getStats(variant.id)?.totalCompletions > 0
+getStats(variant.id)?.totalCompletions > 0;
 ```
 
 Do not use `standardBestTime`.
@@ -168,10 +172,10 @@ Keep ranking/merge logic pure:
 
 ```ts
 export function resolveHighestClearedDifficulty(
-  family: PuzzleFamilySummary,
-  localClearedVariantIds: ReadonlySet<string>,
-  accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
-): PuzzleDifficulty | null
+	family: PuzzleFamilySummary,
+	localClearedVariantIds: ReadonlySet<string>,
+	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+): PuzzleDifficulty | null;
 ```
 
 Derive descending canonical order once at module scope rather than allocating per family:
@@ -180,7 +184,7 @@ Derive descending canonical order once at module scope rather than allocating pe
 const CLEAR_RANK_DESC: readonly PuzzleDifficulty[] = [...PUZZLE_DIFFICULTIES].reverse();
 
 for (const difficulty of CLEAR_RANK_DESC) {
-  // hard -> normal -> easy from the shared canonical tuple
+	// hard -> normal -> easy from the shared canonical tuple
 }
 ```
 
@@ -199,9 +203,9 @@ The shared family-list composition helper is **required**, not optional:
 
 ```ts
 export function resolveHighestClearedForFamilies(
-  families: readonly PuzzleFamilySummary[],
-  accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
-): ReadonlyMap<string, PuzzleDifficulty>
+	families: readonly PuzzleFamilySummary[],
+	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+): ReadonlyMap<string, PuzzleDifficulty>;
 ```
 
 It performs the fresh local discovery once for the supplied families and calls the pure resolver for each family. Gallery and Bookmarks must call this helper rather than duplicating local discovery + merge logic.
@@ -220,8 +224,8 @@ Add one load call beside the existing bookmark load:
 
 ```ts
 if ($playerAuth.status === 'authenticated') {
-  void bookmarks.load();
-  void clearedDifficulties.load();
+	void bookmarks.load();
+	void clearedDifficulties.load();
 }
 ```
 
@@ -229,7 +233,7 @@ Keep the family result reactive to both infinite-scroll family changes and the a
 
 ```ts
 const highestClearedByFamily = $derived(
-  resolveHighestClearedForFamilies(families, $clearedDifficulties)
+	resolveHighestClearedForFamilies(families, $clearedDifficulties)
 );
 ```
 
@@ -251,7 +255,7 @@ Use the same required helper reactively:
 
 ```ts
 const highestClearedByFamily = $derived(
-  resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
+	resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
 );
 ```
 
@@ -299,20 +303,20 @@ Use the existing Galaxy Arcade language:
 The badge gets one explicit accessible label using the existing `getDifficultyLabel()` helper rather than another Easy/Normal/Hard label table:
 
 ```ts
-`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`
+`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`;
 ```
 
 Render the badge itself as:
 
 ```svelte
 <span
-  role="img"
-  aria-label={`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`}
-  data-testid="card-cleared-difficulty"
+	role="img"
+	aria-label={`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`}
+	data-testid="card-cleared-difficulty"
 >
-  <span aria-hidden="true">
-    <!-- check + compact DifficultyGems -->
-  </span>
+	<span aria-hidden="true">
+		<!-- check + compact DifficultyGems -->
+	</span>
 </span>
 ```
 
@@ -411,7 +415,9 @@ Prove:
 - stale/aborted old-account responses cannot repopulate the map;
 - `AbortError` is ignored without mutating the published map;
 - real failure does not set `loadedAccountId`;
-- repeated `load()` for an already-loaded account is deduped.
+- real failure is logged via `console.error` while abort/stale exits stay silent;
+- repeated `load()` for an already-loaded account is deduped;
+- `invalidate()` keeps the published map but forces the next `load()` to refetch, and drops an in-flight load.
 
 ### PuzzleCard component
 
