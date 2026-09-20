@@ -19,6 +19,7 @@ vi.mock('$lib/services/api', () => {
 	return {
 		fetchPuzzles: vi.fn().mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 }),
 		fetchPuzzle: vi.fn(),
+		getPlayerStats: vi.fn(),
 		ApiError: MockApiError,
 		getFamilyThumbnailUrl: vi.fn((id: string) => `/api/puzzle-families/${id}/thumbnail`),
 		getPieceImageUrl: vi.fn()
@@ -26,7 +27,8 @@ vi.mock('$lib/services/api', () => {
 });
 
 vi.mock('$lib/services/stats', () => ({
-	getBestTime: vi.fn().mockReturnValue(null)
+	getBestTime: vi.fn().mockReturnValue(null),
+	getStats: vi.fn().mockReturnValue(null)
 }));
 
 vi.mock('$lib/stores/playerAuth', () => ({
