@@ -9,6 +9,16 @@ vi.mock('$lib/services/api', () => ({
 	getFamilyThumbnailUrl: vi.fn((id: string) => `/api/puzzle-families/${id}/thumbnail`)
 }));
 
+const statsSpies = vi.hoisted(() => ({
+	getBestTime: vi.fn<() => number | null>(),
+	getStats: vi.fn<(puzzleId: string) => { totalCompletions: number } | null>()
+}));
+
+vi.mock('$lib/services/stats', () => ({
+	getBestTime: statsSpies.getBestTime,
+	getStats: statsSpies.getStats
+}));
+
 vi.mock('$app/paths', () => ({
 	resolve: (path: string) => path
 }));
@@ -74,6 +84,30 @@ vi.mock('$lib/stores/bookmarks', () => ({
 	bookmarks: mockBookmarks
 }));
 
+const mockClearedDifficulties = vi.hoisted(() => {
+	const subscribers = new Set<(value: unknown) => void>();
+	let value: unknown = new Map();
+
+	return {
+		subscribe(fn: (value: unknown) => void) {
+			fn(value);
+			subscribers.add(fn);
+			return () => {
+				subscribers.delete(fn);
+			};
+		},
+		set(nextValue: unknown) {
+			value = nextValue;
+			subscribers.forEach((fn) => fn(value));
+		},
+		load: vi.fn().mockResolvedValue(undefined)
+	};
+});
+
+vi.mock('$lib/stores/clearedDifficulties', () => ({
+	clearedDifficulties: mockClearedDifficulties
+}));
+
 const authenticatedAuth = {
 	status: 'authenticated' as const,
 	user: {
@@ -102,6 +136,8 @@ const makeFamily = (id: string): PuzzleFamilySummary => ({
 describe('Bookmarks Page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		statsSpies.getBestTime.mockReturnValue(null);
+		statsSpies.getStats.mockReturnValue(null);
 		mockPlayerAuth.set({
 			status: 'anonymous',
 			user: null,
@@ -115,6 +151,7 @@ describe('Bookmarks Page', () => {
 			error: null,
 			pendingIds: []
 		});
+		mockClearedDifficulties.set(new Map());
 	});
 
 	it('declares the static-adapter prerender contract', () => {
@@ -257,5 +294,139 @@ describe('Bookmarks Page', () => {
 
 		await page.getByRole('button', { name: 'Remove bookmark' }).click();
 		expect(mockBookmarks.toggle).toHaveBeenCalledExactlyOnceWith(family);
+	});
+
+	it('authenticated bookmarks load cleared difficulties alongside bookmarks', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+
+		await expect.element(page.getByTestId('bookmarks-grid')).toBeVisible();
+		await vi.waitFor(() => {
+			expect(mockBookmarks.load).toHaveBeenCalledOnce();
+			expect(mockClearedDifficulties.load).toHaveBeenCalledOnce();
+		});
+	});
+
+	it('bookmarked family shows the local clear badge', async () => {
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'f1-h' ? { totalCompletions: 3 } : null
+		);
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+	});
+
+	it('bookmarked family shows the account clear badge', async () => {
+		mockClearedDifficulties.set(new Map([['f1', new Set(['normal'])]]));
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Normal' }))
+			.toBeVisible();
+	});
+
+	it('resolves the same badge as gallery for equivalent local and account clears', async () => {
+		// Local Easy + account Hard must show Hard — the same composition the
+		// Gallery renders for identical inputs.
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'f1-e' ? { totalCompletions: 1 } : null
+		);
+		mockClearedDifficulties.set(new Map([['f1', new Set(['hard'])]]));
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+		expect(page.getByRole('img', { name: 'Highest cleared difficulty: Easy' }).query()).toBeNull();
+	});
+
+	it('renders bookmark cards even when the account stats load fails', async () => {
+		// A failed account load publishes an empty map; bookmarked cards must
+		// still render with their local clear state intact.
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'f1-n' ? { totalCompletions: 1 } : null
+		);
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+
+		await expect.element(page.getByTestId('bookmarks-grid')).toBeVisible();
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Normal' }))
+			.toBeVisible();
+	});
+
+	it('drops clear badges after the shared store identity reset', async () => {
+		// The real cleared-difficulties store publishes an empty map on
+		// logout/account switch; badges must disappear with it.
+		mockClearedDifficulties.set(new Map([['f1', new Set(['hard'])]]));
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+
+		mockClearedDifficulties.set(new Map());
+
+		await expect.poll(() => page.getByTestId('card-cleared-difficulty').query()).toBeNull();
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
 	});
 });

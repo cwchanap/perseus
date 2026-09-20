@@ -44,8 +44,14 @@ vi.mock('$lib/services/api', () => {
 	};
 });
 
+const statsSpies = vi.hoisted(() => ({
+	getBestTime: vi.fn<() => number | null>(),
+	getStats: vi.fn<(puzzleId: string) => { totalCompletions: number } | null>()
+}));
+
 vi.mock('$lib/services/stats', () => ({
-	getBestTime: vi.fn().mockReturnValue(null)
+	getBestTime: statsSpies.getBestTime,
+	getStats: statsSpies.getStats
 }));
 
 const mockPlayerAuth = vi.hoisted(() => {
@@ -110,6 +116,30 @@ vi.mock('$lib/stores/playerAuth', () => ({
 
 vi.mock('$lib/stores/bookmarks', () => ({
 	bookmarks: mockBookmarks
+}));
+
+const mockClearedDifficulties = vi.hoisted(() => {
+	const subscribers = new Set<(value: unknown) => void>();
+	let value: unknown = new Map();
+
+	return {
+		subscribe(fn: (value: unknown) => void) {
+			fn(value);
+			subscribers.add(fn);
+			return () => {
+				subscribers.delete(fn);
+			};
+		},
+		set(nextValue: unknown) {
+			value = nextValue;
+			subscribers.forEach((fn) => fn(value));
+		},
+		load: vi.fn().mockResolvedValue(undefined)
+	};
+});
+
+vi.mock('$lib/stores/clearedDifficulties', () => ({
+	clearedDifficulties: mockClearedDifficulties
 }));
 
 const authenticatedAuth = {
@@ -238,12 +268,15 @@ describe('Gallery Page', () => {
 		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		sessionStorageSpies.listCandidates.mockReturnValue([]);
+		statsSpies.getBestTime.mockReturnValue(null);
+		statsSpies.getStats.mockReturnValue(null);
 		mockPlayerAuth.set({
 			status: 'anonymous',
 			user: null,
 			error: null
 		});
 		mockBookmarks.set(mockBookmarks.initial);
+		mockClearedDifficulties.set(new Map());
 	});
 
 	afterEach(() => {
@@ -1629,5 +1662,192 @@ describe('Gallery Page', () => {
 			)
 			.toBeVisible();
 		expect(mockBookmarks.load).toHaveBeenCalledTimes(1);
+	});
+
+	it('authenticated gallery loads cleared difficulties alongside bookmarks', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
+		await vi.waitFor(() => expect(mockClearedDifficulties.load).toHaveBeenCalledOnce());
+	});
+
+	it('shows the cleared badge from local completions on the card', async () => {
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-h' ? { totalCompletions: 2 } : null
+		);
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+	});
+
+	it('shows the cleared badge from the account clear map on the card', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockClearedDifficulties.set(new Map([['p1', new Set(['normal'])]]));
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Normal' }))
+			.toBeVisible();
+	});
+
+	it('shows the account clear when local easy and account hard coexist', async () => {
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-e' ? { totalCompletions: 1 } : null
+		);
+		mockPlayerAuth.set(authenticatedAuth);
+		mockClearedDifficulties.set(new Map([['p1', new Set(['hard'])]]));
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+		expect(page.getByRole('img', { name: 'Highest cleared difficulty: Easy' }).query()).toBeNull();
+	});
+
+	it('remounted gallery reads current local stats instead of a stale local snapshot', async () => {
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-h' ? { totalCompletions: 1 } : null
+		);
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		const { unmount } = render(GalleryPage);
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+		unmount();
+
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-e' ? { totalCompletions: 1 } : null
+		);
+		render(GalleryPage);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Easy' }))
+			.toBeVisible();
+		expect(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }).query()).toBeNull();
+	});
+
+	it('shows the cleared badge and saved progress together on one card', async () => {
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-n' ? { totalCompletions: 1 } : null
+		);
+		const progress: GalleryProgress = {
+			puzzleId: 'p1-e',
+			name: 'Resume Me',
+			source: 'api',
+			placedCount: 2,
+			pieceCount: 16,
+			lastUpdated: 2_000
+		};
+		mockedDiscoverGalleryProgress.mockReturnValue({
+			byVariantId: new Map([['p1-e', progress]]),
+			newest: progress
+		});
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		const card = page.getByTestId('puzzle-card').nth(0);
+		await expect.element(card.getByTestId('card-cleared-difficulty')).toBeVisible();
+		await expect.element(card.getByTestId('card-progress')).toBeVisible();
+	});
+
+	it('keeps gallery content and local clears when the account clear map is empty', async () => {
+		// A failed or not-yet-loaded account store publishes an empty map;
+		// that must not blank the gallery or erase the local clear badge.
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-h' ? { totalCompletions: 1 } : null
+		);
+		mockPlayerAuth.set(authenticatedAuth);
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1'), makeFamily('p2')],
+			total: 2,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByText('Puzzle p1')).toBeVisible();
+		await expect.element(page.getByText('Puzzle p2')).toBeVisible();
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
+	});
+
+	it('appended infinite-scroll rows get the cleared badge from the shared read model', async () => {
+		mockPlayerAuth.set(authenticatedAuth);
+		mockClearedDifficulties.set(new Map([['p2', new Set(['easy'])]]));
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			if (params?.cursor === 'cursor-page2') {
+				return { families: [makeFamily('p2')], total: 2, offset: 1, limit: 20 };
+			}
+			return {
+				families: [makeFamily('p1')],
+				total: 2,
+				offset: 0,
+				limit: 20,
+				nextCursor: 'cursor-page2'
+			};
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await expect.element(page.getByText('Puzzle p2')).toBeVisible();
+
+		await expect
+			.element(
+				page
+					.getByTestId('puzzle-card')
+					.nth(1)
+					.getByRole('img', { name: 'Highest cleared difficulty: Easy' })
+			)
+			.toBeVisible();
 	});
 });
