@@ -6,6 +6,7 @@
 	import type { CompletionAwards } from '$lib/types/puzzle';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getBestTime, recordLocalCompletion } from '$lib/services/stats';
+	import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
 	import type { TimerState } from '$lib/stores/timer';
 	import type { Puzzle } from '$lib/types/puzzle';
 	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
@@ -490,6 +491,11 @@
 		const originPuzzleId = puzzle.id;
 		try {
 			const awards = await recordCompletion(puzzle.id, completionRequestFromSeal(seal));
+			// The server may now hold clears the loaded account snapshot
+			// predates (e.g. the local stats write failed but this POST
+			// landed). Invalidate so the next Gallery/Bookmarks load()
+			// refetches instead of deduping against the stale snapshot.
+			clearedDifficulties.invalidate();
 			if (puzzle?.id === originPuzzleId && sessionState?.sealedCompletion?.runId === seal.runId) {
 				completionAwards = awards;
 			}

@@ -60,6 +60,8 @@
 - Create: `apps/web/src/lib/services/gameplay/highestClearedDifficulty.test.ts`
 - Create: `apps/web/src/lib/stores/clearedDifficulties.ts`
 - Create: `apps/web/src/lib/stores/clearedDifficulties.test.ts`
+- Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte` (call `invalidate()` after a successful `recordCompletion`)
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 ### 1.1 Write failing resolver tests
 
@@ -82,10 +84,10 @@ Add:
 
 ```ts
 export function resolveHighestClearedDifficulty(
-  family: PuzzleFamilySummary,
-  localClearedVariantIds: ReadonlySet<string>,
-  accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
-): PuzzleDifficulty | null
+	family: PuzzleFamilySummary,
+	localClearedVariantIds: ReadonlySet<string>,
+	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+): PuzzleDifficulty | null;
 ```
 
 Derive the descending order once at module scope, then reuse it for every family:
@@ -94,7 +96,7 @@ Derive the descending order once at module scope, then reuse it for every family
 const CLEAR_RANK_DESC: readonly PuzzleDifficulty[] = [...PUZZLE_DIFFICULTIES].reverse();
 
 for (const difficulty of CLEAR_RANK_DESC) {
-  // hard -> normal -> easy
+	// hard -> normal -> easy
 }
 ```
 
@@ -109,13 +111,13 @@ No inferred lower clears.
 Add a thin helper that reads visible families through existing `getStats`:
 
 ```ts
-readLocalClearedVariantIds(families)
+readLocalClearedVariantIds(families);
 ```
 
 Include a variant only when:
 
 ```ts
-getStats(variant.id)?.totalCompletions > 0
+getStats(variant.id)?.totalCompletions > 0;
 ```
 
 Keep `stats.ts` unchanged.
@@ -123,7 +125,7 @@ Keep `stats.ts` unchanged.
 Add the required route composition helper:
 
 ```ts
-resolveHighestClearedForFamilies(families, accountClearedByFamily)
+resolveHighestClearedForFamilies(families, accountClearedByFamily);
 ```
 
 It returns `ReadonlyMap<familyId, PuzzleDifficulty>`, performs local discovery once for the supplied family list, and calls the pure resolver. Gallery and Bookmarks must use this helper; neither route may inline local discovery + merge logic.
@@ -149,7 +151,10 @@ Cover only observable clear-map/lifecycle behavior:
 13. active request chain is aborted on identity change;
 14. `AbortError` and stale-version completions leave the published map unchanged;
 15. a real failure leaves the map empty and does not mark the account loaded, allowing retry;
-16. transient auth `loading` for the same observed account does not flicker away a valid loaded map.
+16. transient auth `loading` for the same observed account does not flicker away a valid loaded map;
+17. `invalidate()` keeps the published map but marks the account unloaded so the next `load()` refetches;
+18. an in-flight load is aborted and its results dropped on `invalidate()`;
+19. a real current-version failure is logged via `console.error` while abort/stale exits stay silent.
 
 Do not add tests for public loading/error/status fields because the store does not expose them.
 
@@ -160,7 +165,7 @@ Reuse `bookmarks.ts` for identity/version/load-dedupe, but copy abort/signal/err
 Public Svelte store value:
 
 ```ts
-ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>;
 ```
 
 Internal fields:
@@ -188,7 +193,14 @@ Auth subscription:
 - do not call `set()` with partial pages;
 - publish the final map once when pagination is complete and still current;
 - ignore `AbortError` and stale-version completion without mutating the published map;
-- on current non-abort failure keep the published map empty and leave `loadedAccountId` unset so a later `load()` can retry.
+- on current non-abort failure keep the published map empty, log it via `console.error`, and leave `loadedAccountId` unset so a later `load()` can retry.
+
+`invalidate()` (called by the puzzle route after a successful `recordCompletion`, because clear writes bypass the store):
+
+- bump `version` so in-flight results are dropped;
+- clear `loadedAccountId` and `loadPromise`;
+- abort the active controller;
+- leave the published map unchanged as last-known-good until the next `load()` lands.
 
 Keep loading/error bookkeeping private; no HPA-467 UI reads it.
 
@@ -265,8 +277,8 @@ Introduce one top-right container only when either status exists:
 
 ```svelte
 <div data-testid="card-status-stack" class="absolute top-3 right-3 ...">
-  {#if highestClearedDifficulty}...clear badge...{/if}
-  {#if featuredProgress}...existing progress chip...{/if}
+	{#if highestClearedDifficulty}...clear badge...{/if}
+	{#if featuredProgress}...existing progress chip...{/if}
 </div>
 ```
 
@@ -349,8 +361,8 @@ Extend the existing authenticated load effect:
 
 ```ts
 if ($playerAuth.status === 'authenticated') {
-  void bookmarks.load();
-  void clearedDifficulties.load();
+	void bookmarks.load();
+	void clearedDifficulties.load();
 }
 ```
 
@@ -358,7 +370,7 @@ Derive through the required helper so async account results and infinite-scroll 
 
 ```ts
 const highestClearedByFamily = $derived(
-  resolveHighestClearedForFamilies(families, $clearedDifficulties)
+	resolveHighestClearedForFamilies(families, $clearedDifficulties)
 );
 ```
 
@@ -387,7 +399,7 @@ Add the same clear-state load call and derive through the same required helper:
 
 ```ts
 const highestClearedByFamily = $derived(
-  resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
+	resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
 );
 ```
 

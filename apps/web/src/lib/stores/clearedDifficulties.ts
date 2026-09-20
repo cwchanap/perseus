@@ -6,6 +6,12 @@
 // completions are expected control flow, not errors). The published value
 // only ever changes once per completed load: partial pages are accumulated
 // privately and never set().
+//
+// Clear writes bypass this store entirely (the puzzle route POSTs
+// recordCompletion), so a loaded snapshot can fall behind the server
+// mid-session — e.g. when the local stats write fails but the server
+// completion lands. invalidate() drops the loaded marker so the next
+// load() refetches instead of deduping against the stale snapshot.
 
 import { writable } from 'svelte/store';
 import type { Readable } from 'svelte/store';
@@ -76,11 +82,13 @@ export function createClearedDifficultiesStore(auth: Readable<PlayerAuthState> =
 					loadedAccountId = accountId;
 					// Single publish: the map is complete only after pagination.
 					set(cleared);
-				} catch {
+				} catch (error) {
 					// AbortError and stale-version completions are expected control
-					// flow and leave the published map unchanged. A real failure
-					// keeps the map empty and leaves loadedAccountId unset so a
-					// later load() can retry.
+					// flow and leave the published map unchanged.
+					if (at !== version || active.signal.aborted) return;
+					// A real failure keeps the map unchanged and leaves
+					// loadedAccountId unset so a later load() can retry.
+					console.error('Failed to load cleared difficulties', error);
 					return;
 				} finally {
 					if (controller === active) controller = null;
@@ -94,6 +102,17 @@ export function createClearedDifficultiesStore(auth: Readable<PlayerAuthState> =
 				}
 			})();
 			return loadPromise;
+		},
+		// Called after a successful server completion: the account snapshot
+		// may now be stale, so drop the loaded marker and any in-flight
+		// chain. The published map stays — it is last-known-good until the
+		// next load() replaces it.
+		invalidate(): void {
+			version++;
+			loadedAccountId = null;
+			loadPromise = null;
+			controller?.abort();
+			controller = null;
 		}
 	};
 }

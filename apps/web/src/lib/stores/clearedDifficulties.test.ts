@@ -255,17 +255,20 @@ describe('createClearedDifficultiesStore', () => {
 		const abortedPage = deferredPage();
 		vi.mocked(getPlayerStats).mockReturnValue(abortedPage.promise);
 		const abortedLoad = store.load();
+		auth.set(makeAuth(null));
 		abortedPage.reject(new DOMException('Aborted', 'AbortError'));
 		await abortedLoad;
 		expect(get(store)).toEqual(new Map());
 	});
 
 	it('keeps the map empty and unloaded on failure so a later load can retry', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		vi.mocked(getPlayerStats).mockRejectedValueOnce(new Error('offline'));
 		const store = createClearedDifficultiesStore(writable(makeAuth({ id: 'player-1' })));
 
 		await store.load();
 		expect(get(store)).toEqual(new Map());
+		consoleError.mockRestore();
 
 		vi.mocked(getPlayerStats).mockResolvedValueOnce({ stats: [statRow('fam-1', 'easy')] });
 		await store.load();
@@ -290,5 +293,74 @@ describe('createClearedDifficultiesStore', () => {
 
 		await store.load();
 		expect(getPlayerStats).toHaveBeenCalledOnce();
+	});
+
+	it('refetches for the same account after invalidate', async () => {
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [statRow('fam-1', 'easy')] });
+		const store = createClearedDifficultiesStore(writable(makeAuth({ id: 'player-1' })));
+
+		await store.load();
+		expect(getPlayerStats).toHaveBeenCalledOnce();
+
+		store.invalidate();
+		// The last-known-good map stays published until the refetch lands.
+		expect(get(store)).toEqual(new Map([['fam-1', new Set<PuzzleDifficulty>(['easy'])]]));
+
+		vi.mocked(getPlayerStats).mockResolvedValue({
+			stats: [statRow('fam-1', 'easy'), statRow('fam-2', 'hard')]
+		});
+		await store.load();
+
+		expect(getPlayerStats).toHaveBeenCalledTimes(2);
+		expect(get(store)).toEqual(
+			new Map([
+				['fam-1', new Set<PuzzleDifficulty>(['easy'])],
+				['fam-2', new Set<PuzzleDifficulty>(['hard'])]
+			])
+		);
+	});
+
+	it('drops an in-flight load when invalidated', async () => {
+		const pendingPage = deferredPage();
+		vi.mocked(getPlayerStats).mockReturnValue(pendingPage.promise);
+		const store = createClearedDifficultiesStore(writable(makeAuth({ id: 'player-1' })));
+
+		const loadPromise = store.load();
+		store.invalidate();
+		pendingPage.resolve({ stats: [statRow('fam-1', 'easy')] });
+		await loadPromise;
+
+		// The pre-invalidation snapshot predates the server write and must
+		// not publish.
+		expect(get(store)).toEqual(new Map());
+
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [statRow('fam-2', 'hard')] });
+		await store.load();
+		expect(get(store)).toEqual(new Map([['fam-2', new Set<PuzzleDifficulty>(['hard'])]]));
+	});
+
+	it('logs real load failures but stays silent on abort/stale exits', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const auth = writable(makeAuth({ id: 'player-1' }));
+			const store = createClearedDifficultiesStore(auth);
+
+			vi.mocked(getPlayerStats).mockRejectedValueOnce(new Error('offline'));
+			await store.load();
+			expect(consoleError).toHaveBeenCalledOnce();
+
+			// A rejection landing after an identity change is expected control
+			// flow (abort/stale) and must not produce a diagnostic.
+			consoleError.mockClear();
+			const abortedPage = deferredPage();
+			vi.mocked(getPlayerStats).mockReturnValue(abortedPage.promise);
+			const abortedLoad = store.load();
+			auth.set(makeAuth({ id: 'player-2' }));
+			abortedPage.reject(new DOMException('Aborted', 'AbortError'));
+			await abortedLoad;
+			expect(consoleError).not.toHaveBeenCalled();
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 });

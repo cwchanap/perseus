@@ -330,6 +330,17 @@ vi.mock('$lib/stores/timer', () => ({
 	})
 }));
 
+vi.mock('$lib/stores/clearedDifficulties', () => ({
+	clearedDifficulties: {
+		subscribe: (callback: (value: ReadonlyMap<string, ReadonlySet<string>>) => void) => {
+			callback(new Map());
+			return () => {};
+		},
+		load: vi.fn(() => Promise.resolve()),
+		invalidate: vi.fn()
+	}
+}));
+
 import {
 	fetchPuzzle,
 	ApiError,
@@ -339,6 +350,7 @@ import {
 } from '$lib/services/api';
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
+import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
 import { serializeSession } from '@perseus/game-core';
 import { goto } from '$app/navigation';
 
@@ -1910,6 +1922,18 @@ describe('Puzzle route gameplay integration', () => {
 		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
 		// Remote sync should also remain at a single call across undo/redo.
 		expect(recordCompletion).toHaveBeenCalledTimes(1);
+	});
+
+	it('invalidates the account clear snapshot after a successful server submission', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+		// The invalidate lands a microtask after recordCompletion resolves.
+		await expect.poll(() => vi.mocked(clearedDifficulties.invalidate).mock.calls.length).toBe(1);
 	});
 
 	it('clears tray selection when redo re-places the selected piece', async () => {
