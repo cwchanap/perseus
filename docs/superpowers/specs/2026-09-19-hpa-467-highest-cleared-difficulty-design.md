@@ -6,7 +6,7 @@
 
 ## Context
 
-HPA-467 is the next actionable Perseus ticket after HPA-466: it is High priority, unblocked, and the repository currently has no open implementation PR.
+HPA-467 was selected as the next actionable Perseus ticket after HPA-466: it is High priority and unblocked. Draft PR #88 is now the single planning/implementation PR for the ticket.
 
 The requested behavior is deliberately small: show one family-level badge for the highest difficulty the player has actually completed in the web Gallery and Bookmarks.
 
@@ -425,7 +425,7 @@ Prove:
 - clear-only renders;
 - clear + progress render inside the same non-overlapping status stack;
 - the badge uses `data-testid="card-cleared-difficulty"`;
-- at a 390×844 viewport, the two-status stack does not overlap the title/bookmark row **or** the top-left category badge in the existing 343/215 mobile artwork layout;
+- at a 390×844 viewport, the two-status stack does not overlap the title/bookmark row **or** the full 34×34 top-left category-status wrapper in the existing 343/215 mobile artwork layout; add a stable card-level test id to that wrapper rather than measuring only the nested 16px category icon;
 - existing bookmark and difficulty actions remain intact.
 
 ### Gallery route
