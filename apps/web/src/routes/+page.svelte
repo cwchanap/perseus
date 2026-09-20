@@ -16,6 +16,7 @@
 		getDifficultyLabel,
 		type GalleryProgress
 	} from '$lib/services/gameplay/galleryProgress';
+	import { resolveHighestClearedForFamilies } from '$lib/services/gameplay/highestClearedDifficulty';
 	import {
 		createSessionStorageAdapter,
 		listResumableSessionCandidateIds
@@ -24,6 +25,7 @@
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
 	import { bookmarks } from '$lib/stores/bookmarks';
+	import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
 	import { playerAuth } from '$lib/stores/playerAuth';
 
 	const sessionStorageAdapter = createSessionStorageAdapter();
@@ -62,6 +64,12 @@
 	// Auth is observed only to decide bookmark presentation; all bookmark
 	// network/mutation logic lives in the store.
 	const authenticated = $derived($playerAuth.status === 'authenticated');
+	// Cleared difficulty per family from local stats + account clears; the
+	// same shared read model Bookmarks uses. Independent of the saved-progress
+	// discovery above — completion and in-progress are separate states.
+	const highestClearedByFamily = $derived(
+		resolveHighestClearedForFamilies(families, $clearedDifficulties)
+	);
 	const resumeImageUrl = $derived.by(() => {
 		if (!latestProgress) return null;
 		if (latestProgress.source === 'local') {
@@ -83,10 +91,14 @@
 		savedProgressCandidateIds = listResumableSessionCandidateIds();
 	});
 
-	// Load bookmarks once the page renders for an authenticated player;
-	// the store dedupes loads so appended catalog rows never refetch.
+	// Load bookmarks and account clears once the page renders for an
+	// authenticated player; both stores dedupe loads so appended catalog
+	// rows never refetch.
 	$effect(() => {
-		if ($playerAuth.status === 'authenticated') void bookmarks.load();
+		if ($playerAuth.status === 'authenticated') {
+			void bookmarks.load();
+			void clearedDifficulties.load();
+		}
 	});
 
 	$effect(() => {
@@ -563,6 +575,7 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 							progressByVariantId={cardProgressByVariantId}
 							bookmarked={$bookmarks.ids.includes(family.id)}
 							bookmarkPending={$bookmarks.pendingIds.includes(family.id)}
+							highestClearedDifficulty={highestClearedByFamily.get(family.id) ?? null}
 							onBookmarkToggle={authenticated ? bookmarks.toggle : undefined}
 						/>
 					{/each}

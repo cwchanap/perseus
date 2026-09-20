@@ -1,17 +1,28 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
+	import { resolveHighestClearedForFamilies } from '$lib/services/gameplay/highestClearedDifficulty';
 	import { playerAuth } from '$lib/stores/playerAuth';
 	import { bookmarks } from '$lib/stores/bookmarks';
+	import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
 
 	// Auth is observed only to decide presentation; all bookmark
 	// network/mutation logic lives in the store.
 	const authenticated = $derived($playerAuth.status === 'authenticated');
 
-	// Load bookmarks once the page renders for an authenticated player;
-	// the store dedupes repeat loads.
+	// Cleared difficulty per bookmarked family from local stats + account
+	// clears — the same shared read model the Gallery uses.
+	const highestClearedByFamily = $derived(
+		resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
+	);
+
+	// Load bookmarks and account clears once the page renders for an
+	// authenticated player; the stores dedupe repeat loads.
 	$effect(() => {
-		if (authenticated) void bookmarks.load();
+		if (authenticated) {
+			void bookmarks.load();
+			void clearedDifficulties.load();
+		}
 	});
 </script>
 
@@ -63,6 +74,7 @@
 					{family}
 					bookmarked={$bookmarks.ids.includes(family.id)}
 					bookmarkPending={$bookmarks.pendingIds.includes(family.id)}
+					highestClearedDifficulty={highestClearedByFamily.get(family.id) ?? null}
 					onBookmarkToggle={bookmarks.toggle}
 				/>
 			{/each}
