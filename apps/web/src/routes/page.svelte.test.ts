@@ -49,9 +49,29 @@ const statsSpies = vi.hoisted(() => ({
 	getStats: vi.fn<(puzzleId: string) => { totalCompletions: number } | null>()
 }));
 
+const mockStatsRevision = vi.hoisted(() => {
+	const subscribers = new Set<(value: number) => void>();
+	let value = 0;
+
+	return {
+		subscribe(fn: (value: number) => void) {
+			fn(value);
+			subscribers.add(fn);
+			return () => {
+				subscribers.delete(fn);
+			};
+		},
+		set(nextValue: number) {
+			value = nextValue;
+			subscribers.forEach((fn) => fn(value));
+		}
+	};
+});
+
 vi.mock('$lib/services/stats', () => ({
 	getBestTime: statsSpies.getBestTime,
-	getStats: statsSpies.getStats
+	getStats: statsSpies.getStats,
+	statsRevision: mockStatsRevision
 }));
 
 const mockPlayerAuth = vi.hoisted(() => {
@@ -270,6 +290,7 @@ describe('Gallery Page', () => {
 		sessionStorageSpies.listCandidates.mockReturnValue([]);
 		statsSpies.getBestTime.mockReturnValue(null);
 		statsSpies.getStats.mockReturnValue(null);
+		mockStatsRevision.set(0);
 		mockPlayerAuth.set({
 			status: 'anonymous',
 			user: null,
@@ -1761,6 +1782,36 @@ describe('Gallery Page', () => {
 			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Easy' }))
 			.toBeVisible();
 		expect(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }).query()).toBeNull();
+	});
+
+	it('shows the clear badge when a pending local stats write lands after mount', async () => {
+		// recordLocalCompletion() resolves through a Web Lock and BACK TO
+		// ARCADE navigates without awaiting it, so Gallery can mount while
+		// the write is still in flight. For an anonymous player no
+		// account-map fetch will later re-trigger the derived, so the badge
+		// depends on the stats revision bump when the write lands.
+		statsSpies.getStats.mockReturnValue(null);
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
+		expect(page.getByTestId('card-cleared-difficulty').query()).toBeNull();
+
+		// The write lands: getStats now reports the completion and the store
+		// revision bumps, re-running local discovery without a remount.
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'p1-h' ? { totalCompletions: 1 } : null
+		);
+		mockStatsRevision.set(1);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
+			.toBeVisible();
 	});
 
 	it('shows the cleared badge and saved progress together on one card', async () => {

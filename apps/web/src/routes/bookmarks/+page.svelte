@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import { resolveHighestClearedForFamilies } from '$lib/services/gameplay/highestClearedDifficulty';
+	import { statsRevision } from '$lib/services/stats';
 	import { playerAuth } from '$lib/stores/playerAuth';
 	import { bookmarks } from '$lib/stores/bookmarks';
 	import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
@@ -11,9 +12,11 @@
 	const authenticated = $derived($playerAuth.status === 'authenticated');
 
 	// Cleared difficulty per bookmarked family from local stats + account
-	// clears — the same shared read model the Gallery uses.
+	// clears — the same shared read model the Gallery uses. $statsRevision
+	// re-runs local discovery when a recordLocalCompletion write lands while
+	// this page is mounted.
 	const highestClearedByFamily = $derived(
-		resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
+		resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties, $statsRevision)
 	);
 
 	// Load bookmarks and account clears once the page renders for an

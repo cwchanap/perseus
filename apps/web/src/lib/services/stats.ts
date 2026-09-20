@@ -6,6 +6,8 @@
 
 import type { SealedCompletion } from '@perseus/game-core';
 import { isPuzzleRunId } from '@perseus/types';
+import { writable } from 'svelte/store';
+import type { Readable } from 'svelte/store';
 
 export interface PuzzleStatsV1 {
 	schemaVersion: 1;
@@ -189,6 +191,23 @@ export function getBestTime(puzzleId: string): number | null {
 	return getStats(puzzleId)?.standardBestTime ?? null;
 }
 
+const statsRevisionStore = writable(0);
+
+/**
+ * Revision of the local stats records, bumped after every persisted
+ * mutation. `getStats()` reads localStorage synchronously and registers no
+ * reactive dependency, so consumers that resolve clear state inside derived
+ * state (Gallery, Bookmarks) pass this value through to their read model —
+ * a write that lands while the route is already mounted (e.g. the Web-Lock
+ * `recordLocalCompletion` write still in flight when BACK TO ARCADE
+ * navigates home) then re-runs the local read instead of staying stale.
+ */
+export const statsRevision: Readable<number> = { subscribe: statsRevisionStore.subscribe };
+
+function bumpStatsRevision(): void {
+	statsRevisionStore.update((revision) => revision + 1);
+}
+
 function freshStats(puzzleId: string): PuzzleStatsV1 {
 	return {
 		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
@@ -225,9 +244,14 @@ export async function recordLocalCompletion(
 ): Promise<RecordLocalCompletionResult> {
 	if (typeof navigator !== 'undefined' && navigator.locks?.request) {
 		try {
-			return await navigator.locks.request(`perseus-stats-${puzzleId}`, () =>
+			const result = await navigator.locks.request(`perseus-stats-${puzzleId}`, () =>
 				recordLocalCompletionUnsafe(puzzleId, seal)
 			);
+			// Only a persisted write moves the local snapshot; 'replayed' and
+			// the failed fallback leave storage untouched and must not
+			// re-trigger readers.
+			if (result.status === 'recorded') bumpStatsRevision();
+			return result;
 		} catch {
 			// Lock acquisition failed or the callback rejected. Convert to a
 			// retryable failure so the route acknowledges the effect instead
@@ -360,6 +384,7 @@ export function clearStats(puzzleId: string): void {
 	if (typeof window === 'undefined') return;
 	try {
 		localStorage.removeItem(getStorageKey(puzzleId));
+		bumpStatsRevision();
 	} catch {
 		// best-effort
 	}

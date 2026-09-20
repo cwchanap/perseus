@@ -21,6 +21,7 @@
 		createSessionStorageAdapter,
 		listResumableSessionCandidateIds
 	} from '$lib/services/gameplay/session/persistence';
+	import { statsRevision } from '$lib/services/stats';
 	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
@@ -67,8 +68,11 @@
 	// Cleared difficulty per family from local stats + account clears; the
 	// same shared read model Bookmarks uses. Independent of the saved-progress
 	// discovery above — completion and in-progress are separate states.
+	// $statsRevision re-runs local discovery when a recordLocalCompletion
+	// write lands while this page is mounted (the Web-Lock write can still be
+	// in flight when BACK TO ARCADE navigates here — it is never awaited).
 	const highestClearedByFamily = $derived(
-		resolveHighestClearedForFamilies(families, $clearedDifficulties)
+		resolveHighestClearedForFamilies(families, $clearedDifficulties, $statsRevision)
 	);
 	const resumeImageUrl = $derived.by(() => {
 		if (!latestProgress) return null;

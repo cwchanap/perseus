@@ -175,7 +175,7 @@ describe('resolveHighestClearedForFamilies', () => {
 			['fam-3', ['hard']]
 		]);
 
-		expect(resolveHighestClearedForFamilies(families, account)).toEqual(
+		expect(resolveHighestClearedForFamilies(families, account, 0)).toEqual(
 			new Map([
 				['fam-1', 'easy'],
 				['fam-2', 'normal'],
@@ -188,7 +188,7 @@ describe('resolveHighestClearedForFamilies', () => {
 		mockLocalStats({ 'fam-2-hard': 1 });
 		const families = [makeFamily('fam-1'), makeFamily('fam-2')];
 
-		expect(resolveHighestClearedForFamilies(families, new Map())).toEqual(
+		expect(resolveHighestClearedForFamilies(families, new Map(), 0)).toEqual(
 			new Map([['fam-2', 'hard']])
 		);
 	});

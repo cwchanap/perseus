@@ -44,7 +44,12 @@ export function readLocalClearedVariantIds(
 
 export function resolveHighestClearedForFamilies(
 	families: readonly PuzzleFamilySummary[],
-	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>,
+	// Reactive tracking input only — never read for computation. The
+	// getStats() localStorage reads below register no dependency of their
+	// own, so callers pass the statsRevision store value to re-run local
+	// discovery when a completion write lands while the route is mounted.
+	_localStatsRevision: number
 ): ReadonlyMap<string, PuzzleDifficulty> {
 	const localClearedVariantIds = readLocalClearedVariantIds(families);
 	const highestByFamilyId = new Map<string, PuzzleDifficulty>();

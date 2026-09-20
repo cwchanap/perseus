@@ -28,7 +28,13 @@ vi.mock('$lib/services/api', () => {
 
 vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn().mockReturnValue(null),
-	getStats: vi.fn().mockReturnValue(null)
+	getStats: vi.fn().mockReturnValue(null),
+	statsRevision: {
+		subscribe: (run: (value: number) => void) => {
+			run(0);
+			return () => {};
+		}
+	}
 }));
 
 vi.mock('$lib/stores/playerAuth', () => ({
