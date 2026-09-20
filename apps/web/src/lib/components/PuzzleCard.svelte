@@ -1,7 +1,9 @@
 <script lang="ts">
-	import type { PuzzleFamilySummary } from '@perseus/types';
+	import type { PuzzleDifficulty, PuzzleFamilySummary } from '@perseus/types';
 	import { getFamilyThumbnailUrl } from '$lib/services/api';
+	import { getDifficultyLabel } from '$lib/services/gameplay/galleryProgress';
 	import CategoryBadge from './CategoryBadge.svelte';
+	import DifficultyGems from './DifficultyGems.svelte';
 	import PuzzleDifficultyPicker from './PuzzleDifficultyPicker.svelte';
 
 	interface VariantProgress {
@@ -15,6 +17,7 @@
 		playableLinks?: boolean;
 		bookmarked?: boolean;
 		bookmarkPending?: boolean;
+		highestClearedDifficulty?: PuzzleDifficulty | null;
 		onBookmarkToggle?: (family: PuzzleFamilySummary) => void;
 	}
 
@@ -24,6 +27,7 @@
 		playableLinks = true,
 		bookmarked = false,
 		bookmarkPending = false,
+		highestClearedDifficulty,
 		onBookmarkToggle
 	}: Props = $props();
 
@@ -68,19 +72,54 @@
 			<div
 				class="absolute top-3 left-3 flex h-[34px] w-[34px] items-center justify-center rounded-xl
 				bg-[rgba(10,6,32,0.72)] backdrop-blur-[6px]"
+				data-testid="card-category-status"
 			>
 				<CategoryBadge category={family.category} compact showLabel={false} />
 			</div>
 		{/if}
 
-		{#if featuredProgress}
-			<span
-				class="absolute top-3 right-3 rounded-[14px] bg-[rgba(10,6,32,0.72)] px-2.5 py-1
-				text-[0.62rem] font-(--font-mono) tracking-[0.08em] text-(--accent)"
-				data-testid="card-progress"
+		{#if highestClearedDifficulty || featuredProgress}
+			<div
+				class="absolute top-3 right-3 flex flex-col items-end gap-1.5"
+				data-testid="card-status-stack"
 			>
-				{featuredProgress.placedCount}/{featuredProgress.pieceCount}
-			</span>
+				{#if highestClearedDifficulty}
+					<div
+						class="flex items-center rounded-[14px] bg-[rgba(10,6,32,0.72)] px-2.5 py-1
+						text-(--accent) backdrop-blur-[6px]"
+						role="img"
+						aria-label={`Highest cleared difficulty: ${getDifficultyLabel(highestClearedDifficulty)}`}
+						data-testid="card-cleared-difficulty"
+					>
+						<span class="flex items-center gap-1" aria-hidden="true">
+							<svg
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="3"
+								class="h-3 w-3"
+								aria-hidden="true"
+							>
+								<path stroke-linecap="round" stroke-linejoin="round" d="M4 12.5l5 5L20 6.5" />
+							</svg>
+							<DifficultyGems
+								difficulty={highestClearedDifficulty}
+								pieceCount={family.variants[highestClearedDifficulty].pieceCount}
+								showPieceCount={false}
+							/>
+						</span>
+					</div>
+				{/if}
+				{#if featuredProgress}
+					<span
+						class="rounded-[14px] bg-[rgba(10,6,32,0.72)] px-2.5 py-1 text-[0.62rem]
+						font-(--font-mono) tracking-[0.08em] text-(--accent)"
+						data-testid="card-progress"
+					>
+						{featuredProgress.placedCount}/{featuredProgress.pieceCount}
+					</span>
+				{/if}
+			</div>
 		{/if}
 
 		{#if !isReady}

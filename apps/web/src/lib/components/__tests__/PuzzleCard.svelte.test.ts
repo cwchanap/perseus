@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCard from '../PuzzleCard.svelte';
 import { getFamilyThumbnailUrl } from '$lib/services/api';
-import type { PuzzleFamilySummary } from '@perseus/types';
+import type { PuzzleDifficulty, PuzzleFamilySummary } from '@perseus/types';
 
 describe('PuzzleCard', () => {
 	const mockFamily: PuzzleFamilySummary = {
@@ -169,5 +169,105 @@ describe('PuzzleCard', () => {
 		await expect.element(actions.nth(0)).toHaveAttribute('href', '/puzzle/var-e');
 		await expect.element(actions.nth(1)).toHaveAttribute('href', '/puzzle/var-n');
 		await expect.element(actions.nth(2)).toHaveAttribute('href', '/puzzle/var-h');
+	});
+
+	it('renders no cleared badge or status stack without a cleared difficulty', async () => {
+		const { unmount } = render(PuzzleCard, { family: mockFamily });
+		expect(page.getByTestId('card-cleared-difficulty').query()).toBeNull();
+		expect(page.getByTestId('card-status-stack').query()).toBeNull();
+		unmount();
+
+		render(PuzzleCard, { family: mockFamily, highestClearedDifficulty: null });
+		expect(page.getByTestId('card-cleared-difficulty').query()).toBeNull();
+		expect(page.getByTestId('card-status-stack').query()).toBeNull();
+	});
+
+	it.each([
+		['easy', 'Easy', 1, 16],
+		['normal', 'Normal', 2, 49],
+		['hard', 'Hard', 3, 100]
+	] as const)(
+		'renders the %s cleared difficulty badge with matching gems and no piece count',
+		async (difficulty, label, gemCount, pieceCount) => {
+			render(PuzzleCard, { family: mockFamily, highestClearedDifficulty: difficulty });
+
+			await expect
+				.element(page.getByRole('img', { name: `Highest cleared difficulty: ${label}` }))
+				.toBeVisible();
+			const badge = await page.getByTestId('card-cleared-difficulty').element();
+			expect(badge.querySelectorAll('[data-testid="difficulty-gem"]')).toHaveLength(gemCount);
+			expect(
+				badge.querySelector('[data-testid="difficulty-gems"]')?.getAttribute('data-difficulty')
+			).toBe(difficulty);
+			expect(badge.textContent).not.toContain(String(pieceCount));
+		}
+	);
+
+	it('keeps piece counts visible in the picker gems while the badge stays compact', async () => {
+		render(PuzzleCard, { family: mockFamily, highestClearedDifficulty: 'hard' });
+
+		const picker = await page.getByTestId('difficulty-picker').element();
+		expect(picker.textContent).toContain('100');
+		const badge = await page.getByTestId('card-cleared-difficulty').element();
+		expect(badge.textContent).not.toContain('100');
+	});
+
+	it('renders progress-only and clear-only layouts inside the status stack', async () => {
+		const { unmount } = render(PuzzleCard, {
+			family: mockFamily,
+			progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]])
+		});
+		const progressStack = await page.getByTestId('card-status-stack').element();
+		expect(progressStack.querySelector('[data-testid="card-progress"]')).not.toBeNull();
+		expect(progressStack.querySelector('[data-testid="card-cleared-difficulty"]')).toBeNull();
+		unmount();
+
+		render(PuzzleCard, { family: mockFamily, highestClearedDifficulty: 'normal' });
+		await expect.element(page.getByTestId('card-cleared-difficulty')).toBeVisible();
+		const clearStack = await page.getByTestId('card-status-stack').element();
+		expect(clearStack.querySelector('[data-testid="card-cleared-difficulty"]')).not.toBeNull();
+		expect(clearStack.querySelector('[data-testid="card-progress"]')).toBeNull();
+	});
+
+	it('renders clear and progress states together inside one status stack', async () => {
+		render(PuzzleCard, {
+			family: mockFamily,
+			highestClearedDifficulty: 'hard',
+			progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]),
+			onBookmarkToggle: () => {}
+		});
+
+		const stack = await page.getByTestId('card-status-stack').element();
+		expect(stack.querySelector('[data-testid="card-cleared-difficulty"]')).not.toBeNull();
+		expect(stack.querySelector('[data-testid="card-progress"]')).not.toBeNull();
+		await expect
+			.element(page.getByRole('button', { name: 'Add bookmark: Test Puzzle' }))
+			.toBeVisible();
+		await expect.element(page.getByTestId('difficulty-action')).toHaveLength(3);
+	});
+
+	it('keeps the status stack clear of the title row and category badge at 390x844', async () => {
+		const originalWidth = window.innerWidth;
+		const originalHeight = window.innerHeight;
+		try {
+			await page.viewport(390, 844);
+			render(PuzzleCard, {
+				family: { ...mockFamily, category: 'Nature' },
+				highestClearedDifficulty: 'hard',
+				progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]),
+				onBookmarkToggle: () => {}
+			});
+
+			const intersects = (a: DOMRect, b: DOMRect) =>
+				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
+			const stack = rectOf('card-status-stack');
+
+			expect(intersects(stack, rectOf('puzzle-card-title'))).toBe(false);
+			expect(intersects(stack, rectOf('card-bookmark'))).toBe(false);
+			expect(intersects(stack, rectOf('card-category-status'))).toBe(false);
+		} finally {
+			await page.viewport(originalWidth, originalHeight);
+		}
 	});
 });

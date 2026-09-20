@@ -4,6 +4,7 @@
 	interface Props {
 		difficulty: PuzzleDifficulty;
 		pieceCount: number;
+		showPieceCount?: boolean;
 	}
 
 	interface DifficultyPresentation {
@@ -18,7 +19,7 @@
 		hard: { label: 'Hard', gems: 3, accent: 'var(--gold)' }
 	};
 
-	let { difficulty, pieceCount }: Props = $props();
+	let { difficulty, pieceCount, showPieceCount = true }: Props = $props();
 
 	const presentation = $derived(difficultyPresentation[difficulty]);
 	const gemIndexes = $derived(Array.from({ length: presentation.gems }, (_, index) => index));
@@ -46,7 +47,9 @@
 			</svg>
 		{/each}
 	</span>
-	<span aria-hidden="true">{pieceCount}</span>
+	{#if showPieceCount}
+		<span aria-hidden="true">{pieceCount}</span>
+	{/if}
 </span>
 
 <style>
