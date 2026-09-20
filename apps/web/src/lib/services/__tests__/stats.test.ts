@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getStats, getBestTime, recordLocalCompletion, clearStats } from '../stats';
+import { get } from 'svelte/store';
+import { getStats, getBestTime, recordLocalCompletion, clearStats, statsRevision } from '../stats';
 import type { SealedCompletion } from '@perseus/game-core';
 
 function makeSeal(overrides: Partial<SealedCompletion> = {}): SealedCompletion {
@@ -676,5 +677,55 @@ describe('Stats Service - Web Locks rejection', () => {
 			expect(result.reason).toBe('storage_error');
 		}
 		expect(getStats(puzzleId)).toBeNull();
+	});
+});
+
+describe('Stats Service - statsRevision', () => {
+	const puzzleId = 'test-stats-revision';
+
+	beforeEach(() => {
+		localStorage.clear();
+	});
+
+	it('bumps after a persisted completion write', async () => {
+		const before = get(statsRevision);
+		const result = await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+
+		expect(result.status).toBe('recorded');
+		expect(get(statsRevision)).toBe(before + 1);
+	});
+
+	it('does not bump for a replayed run (no write lands)', async () => {
+		await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+		const before = get(statsRevision);
+
+		const result = await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+
+		expect(result.status).toBe('replayed');
+		expect(get(statsRevision)).toBe(before);
+	});
+
+	it('does not bump when the lock request fails and no write lands', async () => {
+		const requestSpy = vi
+			.spyOn(navigator.locks, 'request')
+			.mockRejectedValue(new Error('lock resource exhausted'));
+		try {
+			const before = get(statsRevision);
+			const result = await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+
+			expect(result.status).toBe('failed');
+			expect(get(statsRevision)).toBe(before);
+		} finally {
+			requestSpy.mockRestore();
+		}
+	});
+
+	it('bumps after clearStats removes a record', async () => {
+		await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+		const before = get(statsRevision);
+
+		clearStats(puzzleId);
+
+		expect(get(statsRevision)).toBe(before + 1);
 	});
 });

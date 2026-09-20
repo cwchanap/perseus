@@ -164,7 +164,7 @@ Do not use `standardBestTime`.
 
 This helper is intentionally uncached. Gallery/Bookmarks have bounded visible family lists, and rereading three local records per rendered family is simpler than introducing invalidation infrastructure.
 
-When returning from a completed puzzle, the Gallery route remounts/re-evaluates its family read model and sees the freshly written local stats immediately.
+Mount-time re-evaluation alone is not sufficient, though: `recordLocalCompletion()` resolves through a Web Lock and the BACK TO ARCADE navigation never awaits it, so Gallery can mount while the write is still in flight — and for an anonymous player no account-map fetch will ever re-trigger the derived. `stats.ts` therefore exports `statsRevision`, a `Readable<number>` bumped after every persisted local mutation (`recordLocalCompletion` resolving `recorded`, and `clearStats`). Routes pass its value into the composition helper so the derived re-runs the fresh local read when a write lands mid-view. Replayed and failed results leave storage untouched and do not bump.
 
 ## Pure highest-difficulty resolver
 
@@ -204,11 +204,14 @@ The shared family-list composition helper is **required**, not optional:
 ```ts
 export function resolveHighestClearedForFamilies(
 	families: readonly PuzzleFamilySummary[],
-	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>
+	accountClearedByFamily: ReadonlyMap<string, ReadonlySet<PuzzleDifficulty>>,
+	_localStatsRevision: number
 ): ReadonlyMap<string, PuzzleDifficulty>;
 ```
 
 It performs the fresh local discovery once for the supplied families and calls the pure resolver for each family. Gallery and Bookmarks must call this helper rather than duplicating local discovery + merge logic.
+
+`_localStatsRevision` is a reactive tracking input only — it is never read for computation. The `getStats()` localStorage reads inside the helper register no dependency of their own, so callers pass the `statsRevision` store value to re-run local discovery when a local completion write lands while the route is mounted. The parameter is required so the reactive contract cannot be silently dropped by a caller.
 
 ## Route integration
 
@@ -229,11 +232,11 @@ if ($playerAuth.status === 'authenticated') {
 }
 ```
 
-Keep the family result reactive to both infinite-scroll family changes and the async account snapshot:
+Keep the family result reactive to infinite-scroll family changes, the async account snapshot, and local stats writes landing while the page is mounted:
 
 ```ts
 const highestClearedByFamily = $derived(
-	resolveHighestClearedForFamilies(families, $clearedDifficulties)
+	resolveHighestClearedForFamilies(families, $clearedDifficulties, $statsRevision)
 );
 ```
 
@@ -255,7 +258,7 @@ Use the same required helper reactively:
 
 ```ts
 const highestClearedByFamily = $derived(
-	resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
+	resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties, $statsRevision)
 );
 ```
 
@@ -377,7 +380,7 @@ This keeps the ticket presentation-only from the user's perspective.
 
 **Do not modify by default**
 
-- `apps/web/src/lib/services/stats.ts` completion semantics;
+- `apps/web/src/lib/services/stats.ts` completion semantics (the additive `statsRevision` export is the only permitted change — read-modify-write, eligibility, and failure behavior stay identical);
 - `apps/web/src/lib/services/api.ts` contract;
 - `packages/types/**`;
 - `PuzzleDifficultyPicker.svelte`;
@@ -442,6 +445,7 @@ Prove:
 
 - authenticated route requests clear-state loading;
 - a local completion is reflected on the family card;
+- a local stats write landing after mount updates the badge without a remount (mount with the write pending, then bump `statsRevision`);
 - account-derived clear state reaches the card;
 - mixed local/account state resolves to the highest difficulty;
 - progress chip and clear badge coexist;
@@ -455,6 +459,7 @@ Prove:
 
 - authenticated route requests both bookmark and clear-state loading;
 - bookmarked cards receive the same resolved clear state as Gallery for equivalent inputs;
+- a local stats write landing after mount updates the badge without a remount;
 - account failure does not block bookmark rendering;
 - logout/auth change removes old account-derived badge state through the shared store.
 

@@ -12,7 +12,7 @@
 
 - One implementation PR; keep implementation on this planning branch/PR.
 - No API endpoint, backend, workflow, D1, or completion-write changes.
-- Do not change `getStats` / `recordLocalCompletion` semantics.
+- Do not change `getStats` / `recordLocalCompletion` semantics; the additive `statsRevision` export (bumped only on persisted writes) is permitted so routes can re-run local reads when a write lands mid-view.
 - Use `totalCompletions > 0`; never infer clear state from best-time fields.
 - No generic remote-state/cache framework.
 - No generic progression/account store.
@@ -45,7 +45,7 @@
 **Do not modify by default**
 
 - `apps/web/src/lib/services/api.ts`
-- `apps/web/src/lib/services/stats.ts`
+- `apps/web/src/lib/services/stats.ts` completion semantics (the additive `statsRevision` export is the only permitted change)
 - `packages/types/**`
 - `PuzzleDifficultyPicker.svelte`
 - backend/mobile/generated-asset code.
@@ -125,10 +125,12 @@ Keep `stats.ts` unchanged.
 Add the required route composition helper:
 
 ```ts
-resolveHighestClearedForFamilies(families, accountClearedByFamily);
+resolveHighestClearedForFamilies(families, accountClearedByFamily, _localStatsRevision);
 ```
 
 It returns `ReadonlyMap<familyId, PuzzleDifficulty>`, performs local discovery once for the supplied family list, and calls the pure resolver. Gallery and Bookmarks must use this helper; neither route may inline local discovery + merge logic.
+
+`_localStatsRevision` is a required reactive tracking input — never read for computation. The helper's `getStats()` localStorage reads register no dependency, so routes pass the `statsRevision` store value (`$lib/services/stats`, bumped after every persisted local mutation) to re-run local discovery when a completion write lands while the route is mounted.
 
 ### 1.4 Write failing account-store tests
 
@@ -333,6 +335,7 @@ Cover:
 
 - authenticated Gallery calls `clearedDifficulties.load()`;
 - local completion produces the expected card badge;
+- a local stats write landing after mount updates the badge without a remount (mount while the write is pending, then bump `statsRevision`);
 - account clear map produces the expected card badge;
 - local Easy + account Hard shows Hard;
 - just-remounted Gallery reads current local stats rather than a stale cached local snapshot;
@@ -366,11 +369,11 @@ if ($playerAuth.status === 'authenticated') {
 }
 ```
 
-Derive through the required helper so async account results and infinite-scroll appends both update the cards:
+Derive through the required helper so async account results, infinite-scroll appends, and local stats writes landing mid-view all update the cards:
 
 ```ts
 const highestClearedByFamily = $derived(
-	resolveHighestClearedForFamilies(families, $clearedDifficulties)
+	resolveHighestClearedForFamilies(families, $clearedDifficulties, $statsRevision)
 );
 ```
 
@@ -386,6 +389,7 @@ Cover:
 
 - authenticated Bookmarks calls both `bookmarks.load()` and `clearedDifficulties.load()`;
 - bookmarked family receives local clear state;
+- a local stats write landing after mount updates the badge without a remount;
 - bookmarked family receives account clear state;
 - equivalent input yields the same displayed badge as Gallery;
 - account stats failure does not block bookmark cards;
@@ -399,7 +403,7 @@ Add the same clear-state load call and derive through the same required helper:
 
 ```ts
 const highestClearedByFamily = $derived(
-	resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties)
+	resolveHighestClearedForFamilies($bookmarks.families, $clearedDifficulties, $statsRevision)
 );
 ```
 
@@ -482,7 +486,7 @@ Confirm the implementation does **not** add:
 - **Later-page Hard clear hidden by partial data:** publish account state only after cursor exhaustion.
 - **Old account badges after switch/logout:** clear on identity change, abort, and version-guard results.
 - **Assisted/rotation/relaxed clears missing:** use `totalCompletions`, never best time.
-- **Local completion appears late:** read local stats fresh from visible families; do not cache local clear state.
+- **Local completion appears late:** read local stats fresh from visible families; do not cache local clear state. Because the Web-Lock `recordLocalCompletion` write can still be in flight when the route mounts, routes also track `statsRevision` so a late-landing write re-runs local discovery without a remount — critical for anonymous players, who never trigger an account-map fetch.
 - **Status collision:** the badge omits duplicate piece-count text; a 390×844 browser test checks both vertical collision with the title/bookmark row and horizontal collision with the category badge.
 - **Accessible-name loss:** the badge is `role="img"` and is tested by role + name, not only an attribute.
 - **Mock drift:** both route suites use the same controllable `getStats` mock shape and keep the real clear read-model service.

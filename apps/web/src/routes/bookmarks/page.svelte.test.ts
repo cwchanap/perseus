@@ -14,9 +14,29 @@ const statsSpies = vi.hoisted(() => ({
 	getStats: vi.fn<(puzzleId: string) => { totalCompletions: number } | null>()
 }));
 
+const mockStatsRevision = vi.hoisted(() => {
+	const subscribers = new Set<(value: number) => void>();
+	let value = 0;
+
+	return {
+		subscribe(fn: (value: number) => void) {
+			fn(value);
+			subscribers.add(fn);
+			return () => {
+				subscribers.delete(fn);
+			};
+		},
+		set(nextValue: number) {
+			value = nextValue;
+			subscribers.forEach((fn) => fn(value));
+		}
+	};
+});
+
 vi.mock('$lib/services/stats', () => ({
 	getBestTime: statsSpies.getBestTime,
-	getStats: statsSpies.getStats
+	getStats: statsSpies.getStats,
+	statsRevision: mockStatsRevision
 }));
 
 vi.mock('$app/paths', () => ({
@@ -138,6 +158,7 @@ describe('Bookmarks Page', () => {
 		vi.clearAllMocks();
 		statsSpies.getBestTime.mockReturnValue(null);
 		statsSpies.getStats.mockReturnValue(null);
+		mockStatsRevision.set(0);
 		mockPlayerAuth.set({
 			status: 'anonymous',
 			user: null,
@@ -402,6 +423,37 @@ describe('Bookmarks Page', () => {
 		await expect.element(page.getByTestId('bookmarks-grid')).toBeVisible();
 		await expect
 			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Normal' }))
+			.toBeVisible();
+	});
+
+	it('shows the clear badge when a pending local stats write lands after mount', async () => {
+		// recordLocalCompletion() resolves through a Web Lock and navigation
+		// never awaits it, so Bookmarks can mount while the write is still in
+		// flight. The stats revision bump must re-run local discovery without
+		// a remount — the same coverage the Gallery route has.
+		mockPlayerAuth.set(authenticatedAuth);
+		mockBookmarks.set({
+			accountId: 'player-1',
+			status: 'loaded',
+			families: [makeFamily('f1')],
+			ids: ['f1'],
+			error: null,
+			pendingIds: []
+		});
+
+		render(BookmarksPage);
+		await expect.element(page.getByTestId('bookmarks-grid')).toBeVisible();
+		expect(page.getByTestId('card-cleared-difficulty').query()).toBeNull();
+
+		// The write lands: getStats now reports the completion and the store
+		// revision bumps.
+		statsSpies.getStats.mockImplementation((puzzleId: string) =>
+			puzzleId === 'f1-h' ? { totalCompletions: 1 } : null
+		);
+		mockStatsRevision.set(1);
+
+		await expect
+			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
 			.toBeVisible();
 	});
 
