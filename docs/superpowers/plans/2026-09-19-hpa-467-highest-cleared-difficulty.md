@@ -233,7 +233,7 @@ Cover:
 - clear + progress both render inside one status-stack container;
 - the clear badge is independently queryable as `data-testid="card-cleared-difficulty"`;
 - both states remain independently queryable;
-- at `await page.viewport(390, 844)`, the status-stack bounding box intersects neither the title/bookmark row nor the top-left category badge in the existing narrow `343 / 215` artwork layout;
+- at `await page.viewport(390, 844)`, the status-stack bounding box intersects neither the title/bookmark row nor the full 34×34 top-left category-status wrapper in the existing narrow `343 / 215` artwork layout; add a stable card-level test id to that wrapper so the test measures its real footprint rather than only the nested 16px category icon;
 - restore the default test viewport in `finally`, following `ArcadeShell.svelte.test.ts`;
 - bookmark button and all three difficulty actions remain unchanged.
 
