@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCard from '../PuzzleCard.svelte';
 import { getFamilyThumbnailUrl } from '$lib/services/api';
-import type { PuzzleDifficulty, PuzzleFamilySummary } from '@perseus/types';
+import type { PuzzleFamilySummary } from '@perseus/types';
 
 describe('PuzzleCard', () => {
 	const mockFamily: PuzzleFamilySummary = {
