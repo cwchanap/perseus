@@ -17,4 +17,12 @@ describe('DifficultyGems', () => {
 		await expect.element(page.getByTestId('difficulty-gem')).toHaveLength(gems);
 		await expect.element(page.getByText(String(pieces))).toBeVisible();
 	});
+
+	it('omits only the visible piece count in compact mode', async () => {
+		render(DifficultyGems, { difficulty: 'normal', pieceCount: 48, showPieceCount: false });
+
+		await expect.element(page.getByLabelText('Normal difficulty, 48 pieces')).toBeVisible();
+		await expect.element(page.getByTestId('difficulty-gem')).toHaveLength(2);
+		expect(page.getByText('48').query()).toBeNull();
+	});
 });
