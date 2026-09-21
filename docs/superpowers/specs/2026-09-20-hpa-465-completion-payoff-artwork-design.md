@@ -46,7 +46,7 @@ The smallest correct slice is therefore to add one route-local presentation phas
 
 The current game-core ordering is already sufficient and must remain unchanged.
 
-For a final accepted placement, `PuzzleSession` currently does:
+For the **first** accepted placement that completes a run, `PuzzleSession` currently does:
 
 1. mutate the placed-piece state;
 2. emit `placement_accepted` with `completed: true`;
@@ -56,62 +56,57 @@ For a final accepted placement, `PuzzleSession` currently does:
 6. notify subscribers;
 7. emit pending `completion_effect_request` events for local stats and, when applicable, server submission.
 
-That ordering provides the exact presentation seam HPA-465 needs:
+The retained-seal path is different and is the reason HPA-465 must not coordinate three events with a pending flag. After a completed run is undone and the final piece is placed again, `handleBoardCompletion()` sees the existing `sealedCompletion`, transitions lifecycle back to `completed`, and returns without emitting `completion_sealed` or completion-effect requests again.
 
-- `placement_accepted(completed: true)` identifies a **live final-piece completion** before the lifecycle/seal events arrive;
-- the route may remember that fact locally;
-- the seal event may schedule a UI timer and return immediately;
-- game-core then continues to emit completion-effect requests without waiting for the timer.
+That makes `completion_sealed` itself the precise presentation seam:
 
-No new game-core event is needed.
+- it fires only when a new completion seal is created;
+- redo and undo-then-replace retained-seal completions do not emit it;
+- retry/resume effect paths re-emit effect requests, not a new seal;
+- lifecycle remains the immediate results path for retained-seal recompletion.
+
+On a first seal, lifecycle sets `showCelebration = true` before `completion_sealed`. The `completion_sealed` handler can synchronously set it back to false and start the reveal before game-core calls `notify()`; the transient true -> false state therefore never needs to paint. Game-core then continues into completion-effect requests without waiting for the presentation timer.
+
+No new game-core event or route-level pending coordinator is needed.
 
 ## Selected design
 
 ### 1. Treat the final-board reveal as route-local presentation state
 
-Keep `showCelebration` as the existing “results dialog is open” state and add only the state needed for the short pre-results presentation:
+Keep `showCelebration` as the existing “results dialog is open” state and add only:
 
 - `completionRevealActive`: reactive boolean used by the route/board presentation;
-- `liveCompletionRevealPending`: route-local coordination flag set only by a live `placement_accepted(completed: true)`;
 - one replaceable `completionRevealTimeout`;
 - a `COMPLETION_REVEAL_DURATION_MS = 500` constant.
 
-Do not serialize any of these values.
+Do **not** add a `liveCompletionRevealPending` flag. The engine's first-seal-only `completion_sealed` event already distinguishes the one completion path that should receive the reveal.
 
-A small cleanup helper owns cancellation/reset of the pending flag, active flag, and timeout. Call it when the route tears down/reloads a puzzle, when the run restarts, and from `onDestroy` so a stale timeout cannot open results for a later puzzle/run.
+Do not serialize any reveal state.
+
+Add one small cleanup helper beside the existing placement-feedback timeout/cleanup pattern. It owns cancellation/reset of the reveal timeout and `completionRevealActive`. Call it when the route tears down/reloads a puzzle, when the run restarts, and from `onDestroy` so a stale timeout cannot open results for a later puzzle/run.
 
 Do not fold this into `PuzzleSession` or persistence.
 
-### 2. Consume existing events without delaying completion effects
+### 2. Schedule the reveal only from `completion_sealed`
 
-Update the current route event handling rather than introducing a second controller.
+Keep the route's current lifecycle behavior: a transition into `completed` opens results immediately.
 
-#### Live final placement
+That immediate lifecycle path is required for retained-seal completions:
 
-When `placement_accepted` arrives with `completed: true`:
+- redo of the final move;
+- dismiss -> undo -> place the final piece again.
 
-- set `liveCompletionRevealPending = true`;
-- keep the existing completion announcement;
-- do not open the results dialog yet.
+Neither creates a new completion seal, so neither should schedule the reveal or duplicate completion writes.
 
-#### Lifecycle transition
+When `completion_sealed` arrives for the first seal:
 
-The engine emits lifecycle `completed` before `completion_sealed`.
+- reduced motion: leave/open results immediately and do not activate the reveal;
+- normal motion: synchronously set `showCelebration = false`, set `completionRevealActive = true`, and schedule the 500 ms timer;
+- timer expiry: clear the reveal state/timer and set `showCelebration = true`.
 
-- If `liveCompletionRevealPending` is true, the lifecycle event must **not** open the dialog; the seal handler owns the reveal decision.
-- If it is false, preserve the existing immediate-dialog behavior. This covers completion transitions such as redo/re-completion that are not a fresh final-piece placement and therefore must not replay the reveal.
+Never await in this event branch.
 
-#### Completion seal
-
-When `completion_sealed` arrives:
-
-- if there is no live pending flag, open results immediately as today;
-- if there is a live pending flag, consume it exactly once;
-- if reduced motion is requested, open results immediately;
-- otherwise set `completionRevealActive = true`, keep results closed, and schedule the 500 ms timer;
-- when the timer fires, clear the reveal state and open results.
-
-The handler only schedules presentation work and returns. It never awaits anything, so the subsequent `completion_effect_request` events run immediately.
+This works with the existing engine ordering: lifecycle has just set results true, but `completion_sealed` runs synchronously before `notify()`, so the route suppresses the first results paint while still allowing game-core to continue directly into local/server `completion_effect_request` events.
 
 ### 3. Completed-session restore stays immediate
 
@@ -119,35 +114,31 @@ Keep the existing hydration behavior:
 
 `showCelebration = restored?.lifecycle === 'completed'`
 
-A restored completed snapshot is not created through a live `placement_accepted` event, so it has no pending live reveal and no timer. It opens results immediately and then resumes/retries persisted completion effects exactly as it does today.
+A restored completed snapshot does not emit a new `completion_sealed` event during hydration, so it has no reveal timer. It opens results immediately and then resumes/retries persisted completion effects exactly as it does today.
 
 This also means the reveal is intentionally not persisted or replayed after refresh/relaunch.
 
-### 4. Reduced motion is checked only when a live completion seals
+### 4. Reduced motion is checked only when a new completion seals
 
 Use the platform preference directly at the presentation boundary:
 
 `window.matchMedia('(prefers-reduced-motion: reduce)').matches`
 
-No store or media-query abstraction is needed. The user preference only needs to be sampled when deciding whether to insert the short reveal delay.
+No store or media-query abstraction is needed. The user preference only needs to be sampled when deciding whether to insert the short first-seal reveal delay.
 
 If the API is unavailable, normal-motion behavior is the fallback.
 
-The board CSS should also disable the settle animation under `prefers-reduced-motion: reduce` as a defensive presentation safeguard, even though the route will not activate the timed reveal in that mode.
+The board CSS should also disable the reveal treatment under `prefers-reduced-motion: reduce` as a defensive presentation safeguard.
 
 ### 5. Block interactions during the short reveal
 
 The board should remain visible, but the half-second is a presentation beat, not an extra gameplay state.
 
-Include `completionRevealActive` in the route’s existing interaction/shortcut blocking condition so:
+Include `completionRevealActive` in the route's existing `hasSessionModal` blocking expression without renaming it. That already feeds `interactionBlocked` and shortcut guards.
 
-- no toolbar shortcut or board interaction competes with the reveal;
-- the completed board remains inert while it settles;
-- completion effect handlers still run because they are event-driven and unrelated to input blocking.
+This keeps the completed board inert while it settles without affecting completion-effect handlers, which are event-driven.
 
-Do not broadly rename/refactor the existing dialog-blocking infrastructure for this ticket.
-
-### 6. Put the settle/glow on `PuzzleBoardPanel`, not game-core or piece geometry
+### 6. Put a glow/filter treatment on `PuzzleBoardPanel`
 
 Add one optional prop to `PuzzleBoardPanel.svelte`:
 
@@ -155,69 +146,77 @@ Add one optional prop to `PuzzleBoardPanel.svelte`:
 
 Default it to false so existing component call sites/tests remain unchanged.
 
-Apply a class/data state to the existing `.board-canvas` wrapper. The treatment should be restrained:
+Apply a class/data state to the existing `.board-canvas` wrapper. Use a restrained box-shadow/filter glow for roughly the 500 ms reveal window.
 
-- a small settle scale or glow around the completed board;
+Do not animate `transform: scale(...)`: `ZoomableBoardFrame` already owns translate/scale for the user's zoom/pan, and a second scale would read as an unwanted zoom bump.
+
+Requirements:
+
 - no full-screen overlay;
 - no large flash over the artwork;
-- no per-piece particle system;
-- duration aligned with the route’s roughly 500 ms reveal window.
+- no per-piece VFX;
+- no JS animation loop;
+- reduced-motion disables the animation/filter transition.
 
-`PuzzleBoard.svelte` does not need to change unless implementation proves the wrapper cannot produce the intended visual treatment. Prefer the panel-only seam.
+`PuzzleBoard.svelte` does not need to change.
 
-### 7. Make the completion dialog explicitly non-graded
+### 7. Make the completion dialog visibly non-graded
 
 Delete the local `completionStarCount` derivation, star markup, and star-only CSS.
 
-Replace that area with one consistent completion mark/header for every result class:
+The current full-screen layout clips `.completion-identity` to screen-reader-only content while the stars own grid row 1. Removing stars without reclaiming that slot would leave the visual header empty.
+
+Move/unclip the completion identity into the former star header slot and render one consistent treatment for every result class:
 
 - visible `MISSION COMPLETE`;
-- one simple clear/check visual treatment;
+- one simple clear/check visual;
 - the existing factual result label: `STANDARD TIMED`, `ROTATION TIMED`, `ASSISTED TIMED`, or `RELAXED`;
 - puzzle name.
 
 The clear treatment is celebratory but not a score, rank, tier, or quality judgment.
 
-Relaxed and assisted runs use the same completion framing as standard/rotation runs.
-
 Do not change any domain fields or award calculations.
 
-### 8. Keep results/artwork switching local to `PuzzleCompletionDialog`
+### 8. Keep results/artwork switching local and preserve focus/layout contracts
 
-Add one local closed union/state inside the component:
+Add one local closed union/state inside `PuzzleCompletionDialog`:
 
 `'results' | 'artwork'`
 
 It is reset naturally when the component unmounts and is never stored in the route/session.
 
+Pass the view as the existing focus action key:
+
+`use:modalFocus={completionView}`
+
+`modalFocus.update()` already refocuses the first visible focusable whenever the key changes, matching the existing pause-dialog confirmation pattern.
+
 #### Results view
 
-Keep the current truthful results content and actions:
+Keep the current truthful results content and actions.
 
-- result class;
-- final time where applicable;
-- personal best/record;
-- pieces/hints/incorrect attempts/rotation;
-- points, achievements, mastery, family rank;
-- retry-sync banner/action;
-- Play Again;
-- Back to Arcade;
-- reference-art preview/fallback.
+Preserve the two primary actions and their focus order:
 
-When `referenceImageUrl` is non-null, add `VIEW ARTWORK`.
+1. `PLAY AGAIN`
+2. `BACK TO ARCADE`
 
-When it is null, retain the existing unavailable fallback and do not render the action.
+When `referenceImageUrl` is non-null, add `VIEW ARTWORK` **after** those primaries as a tertiary ghost action. On the small-screen two-column action grid, make it span both columns so the third action does not create an awkward half-row and Play Again remains the initial focus target.
+
+When the URL is null, retain the existing unavailable fallback and do not render the artwork action.
 
 #### Artwork view
 
 Reuse the same `referenceImageUrl`; do not fetch another resource or introduce another image model.
 
-The modal switches to a simple focused presentation:
+The artwork subview should have its own viewport-bounded image class using `object-fit: contain`. Do not reuse the current results preview class, which is capped and uses cover-fit presentation.
 
-- finished image is the primary content;
-- use contain-style sizing so the whole image can be inspected within the viewport;
-- retain accessible puzzle/artwork naming;
-- render one obvious `BACK TO RESULTS` action.
+Render:
+
+- the finished image as the primary content;
+- accessible puzzle/artwork naming;
+- one obvious `BACK TO RESULTS` action.
+
+Because `completionView` is the `modalFocus` update key, switching into artwork refocuses `BACK TO RESULTS`; switching back refocuses the first results action, `PLAY AGAIN`.
 
 Play Again, Back to Arcade, awards, and retry-sync remain in the results view and reappear unchanged when the user returns.
 
@@ -248,17 +247,25 @@ The existing suite has many completion tests that are unrelated to animation tim
 
 The dedicated route tests must prove:
 
-1. after the live final piece, results are still closed during the reveal;
+1. on the first live completion seal, results are suppressed during the reveal;
 2. the board exposes the reveal state;
 3. `recordLocalCompletion` and `recordCompletion` have already started before the reveal timer advances;
 4. at 499 ms results are still closed;
 5. at 500 ms results open and the reveal state clears;
 6. reduced motion opens results immediately without a timed reveal;
 7. a restored `completed` snapshot opens results immediately and does not activate the reveal;
-8. redo/re-completion does not replay the live final-piece reveal and does not duplicate completion writes;
-9. route teardown/restart cancels any pending reveal timer so it cannot reopen stale results.
+8. redo of the final move reopens results immediately, does not replay the reveal, and does not duplicate completion writes;
+9. dismiss -> undo -> place the final piece again also reopens results immediately, does not replay the reveal, and still has only one local/server completion write;
+10. route teardown/restart cancels any pending reveal timer so it cannot reopen stale results.
 
-Keep the existing completion retry, stale-effect, Play Again, navigation, and undo/redo coverage intact.
+Update the existing celebration focus tests for the three-action results view:
+
+- Play Again remains the initial focus target;
+- `VIEW ARTWORK` is after the two primary actions;
+- Tab/Shift+Tab wrap uses the actual first/last focusables;
+- switching views refocuses the first control in the new view.
+
+Keep the existing completion retry, stale-effect, navigation, and undo/redo coverage intact.
 
 ### Board presentation
 
@@ -266,7 +273,7 @@ Extend `PuzzleBoardPanel.svelte.test.ts` with a focused prop/state test:
 
 - default -> no completion-reveal marker;
 - active prop -> marker/class is present;
-- interaction/board rendering remains unchanged.
+- `PuzzleBoard` still renders normally.
 
 Do not test CSS animation frames pixel-by-pixel.
 
@@ -276,15 +283,24 @@ Replace the star-grade assertions in `PuzzleCompletionDialog.svelte.test.ts`.
 
 Cover:
 
-- standard, rotation, assisted, and relaxed all render the same non-graded `MISSION COMPLETE` framing;
+- standard, rotation, assisted, and relaxed all render the same visible non-graded `MISSION COMPLETE` framing;
 - each retains the correct factual result-class label;
 - no completion-star markup or star aria label remains;
 - all existing result facts/awards/retry actions remain visible when applicable;
-- reference URL present -> `VIEW ARTWORK` exists;
-- clicking it shows the focused art using the same source and hides result controls;
-- `BACK TO RESULTS` restores the unchanged results/actions;
+- Play Again is still the first results focusable;
+- reference URL present -> tertiary `VIEW ARTWORK` exists after the two primaries;
+- on the small-screen action grid, the artwork action spans the full row;
+- clicking it shows a separate contain-fit focused-art image using the same source;
+- switching to artwork focuses `BACK TO RESULTS`;
+- `BACK TO RESULTS` restores results and focus returns to Play Again;
 - missing reference URL -> fallback stays visible and `VIEW ARTWORK` is absent;
-- modal focus containment, Escape dismissal, Play Again, Back to Arcade, and retry callbacks remain intact.
+- modal focus containment and Escape dismissal remain intact.
+
+### E2E / accessibility contracts
+
+`apps/web/e2e/gameplay-interactions.spec.ts` currently asserts three completion stars. Replace that assertion with the new visible non-graded completion framing and keep the existing initial-focus assertion on Play Again.
+
+The accessibility completion test should continue to pass without source changes because Play Again remains the first focusable. Run it explicitly as part of the final verification so the new view-switch focus behavior and visible header do not regress the modal scan.
 
 ## File scope
 
@@ -299,6 +315,7 @@ Expected test changes:
 - `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`
 - `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
+- `apps/web/e2e/gameplay-interactions.spec.ts`
 
 Do not modify by default:
 
