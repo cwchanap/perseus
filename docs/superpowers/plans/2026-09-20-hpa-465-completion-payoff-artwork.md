@@ -4,7 +4,7 @@
 
 **Goal:** Add a short live final-board reveal, remove the misleading star grade, and let players inspect the existing finished artwork without changing completion semantics or progression.
 
-**Architecture:** Keep all new state in existing presentation owners. The puzzle route coordinates one live-completion reveal timer using existing session events; `PuzzleBoardPanel` receives one optional presentation flag for a restrained settle/glow; `PuzzleCompletionDialog` owns a local `results | artwork` view toggle and removes its local star-grade derivation. Game-core, persistence, scoring, APIs, and assets stay unchanged.
+**Architecture:** Keep all new state in existing presentation owners. The puzzle route uses the engine's first-seal-only `completion_sealed` event to schedule one reveal timer while lifecycle completion remains the immediate path for retained-seal redo/re-placement; `PuzzleBoardPanel` receives one optional presentation flag for a restrained glow; `PuzzleCompletionDialog` owns a local `results | artwork` view toggle, visible non-graded header, and focus-key update. Game-core, persistence, scoring, APIs, and assets stay unchanged.
 
 **Tech stack:** Svelte 5, TypeScript, existing `@perseus/game-core` events, Vitest + vitest-browser-svelte.
 
@@ -18,7 +18,7 @@
 - No generated images, audio, haptics, particles, or confetti.
 - No NativeScript/mobile parity.
 - The reveal may delay only the **dialog presentation**. Timer finalization, sealing, local stats, server submission, awards, retries, and persistence must remain immediate.
-- Only a live final-piece placement gets the reveal. Restored completed sessions and redo/re-completion do not replay it.
+- Only the first live completion that creates a new completion seal gets the reveal. Restored completed sessions and retained-seal redo/undo-then-replace completions open results immediately.
 - Missing reference artwork keeps the current fallback and never exposes a broken `VIEW ARTWORK` action.
 
 ## File map
@@ -31,6 +31,7 @@
 - `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`
 - `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
 - `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
+- `apps/web/e2e/gameplay-interactions.spec.ts`
 
 **Do not modify by default**
 
@@ -45,7 +46,7 @@
 
 ---
 
-## Task 1: Add the live final-board reveal at the route event boundary
+## Task 1: Add the first-seal final-board reveal at the route event boundary
 
 ### Files
 
@@ -60,17 +61,17 @@ Add a small helper for `window.matchMedia('(prefers-reduced-motion: reduce)')`.
 
 Default the existing integration suite to reduced motion so unrelated completion tests keep their immediate behavior and do not each wait 500 ms.
 
-Dedicated HPA-465 reveal tests will explicitly switch to normal motion.
+Dedicated HPA-465 reveal tests explicitly opt into normal motion.
 
 Do not add a production media-query store just to make tests injectable.
 
-### 1.2 Write the failing normal-motion ordering test
+### 1.2 Write the failing first-seal ordering test
 
-Use fake timers.
+Use fake timers and normal motion.
 
-Arrange a normal-motion environment, render the two-piece fixture, place the first piece, then place the final piece.
+Render the two-piece fixture and place the final piece.
 
-Immediately after final placement assert:
+Immediately after the first completion seal assert:
 
 - the results dialog is absent;
 - the board/reveal presentation state is active;
@@ -87,31 +88,33 @@ Advance the final 1 ms:
 - results visible;
 - reveal state cleared.
 
-This test is the hard guardrail: presentation timing must never delay completion effects.
+This is the hard guardrail: presentation timing must never delay completion effects.
 
-### 1.3 Add route-local reveal state
+### 1.3 Add only the route-local reveal state the engine does not already provide
 
-Near the existing `showCelebration` and presentation timers add:
+Near `showCelebration` and the existing presentation timers add:
 
 `const COMPLETION_REVEAL_DURATION_MS = 500;`
 
-and route-local state equivalent to:
+plus:
 
 - `completionRevealActive`;
-- `liveCompletionRevealPending`;
 - `completionRevealTimeout`.
 
-Keep `showCelebration` as the existing result-dialog flag.
+Do **not** add `liveCompletionRevealPending`.
 
-Do not add these fields to `PuzzleSession` or serialized snapshots.
+`completion_sealed` already fires only when a new seal is created. The retained-seal undo/re-complete path intentionally does not emit it.
 
-### 1.4 Add one cleanup helper
+Keep `showCelebration` as the existing results-dialog flag.
 
-Add a small helper that:
+### 1.4 Add one reveal cleanup helper beside the existing placement-feedback cleanup
 
-- clears the timeout if present;
+Follow the existing `placementFeedbackTimeout` / `clearPlacementFeedback()` teardown shape without sharing the timer itself.
+
+The reveal helper:
+
+- clears `completionRevealTimeout` if present;
 - nulls the timeout;
-- clears `liveCompletionRevealPending`;
 - clears `completionRevealActive`.
 
 Call it from:
@@ -120,54 +123,47 @@ Call it from:
 - `restartWithCurrentChoices()`;
 - `onDestroy()`.
 
-The helper must **not** touch completion facts or effect state.
+It must not touch completion facts/effects.
 
-### 1.5 Mark only a live final placement
+### 1.5 Leave lifecycle completion opening results immediately
 
-In `handleSessionEvent`:
+Do not gate the lifecycle handler with a pending flag.
 
-- on `placement_accepted`, preserve current hint clearing/announcement;
-- when `event.completed === true`, first set `liveCompletionRevealPending = true`.
+Keep the current behavior for `event.type === 'lifecycle' && event.to === 'completed'`:
 
-Do not start the timer from `placement_accepted`; the seal event owns the presentation decision so the completed session snapshot already exists.
+- open results immediately.
 
-### 1.6 Prevent the lifecycle event from opening results too early
+This is required for:
 
-The engine transitions lifecycle to `completed` before emitting `completion_sealed`.
+- redo of the final move;
+- dismiss -> undo -> place the final piece again.
 
-Keep the current lifecycle fallback for non-live completion transitions, but change it to:
+Those paths retain the existing seal and emit lifecycle completion without a new `completion_sealed`.
 
-- open results immediately when there is no live pending reveal;
-- do nothing when `liveCompletionRevealPending` is true.
-
-This preserves immediate results for redo/re-completion and any non-final-placement completion transition.
-
-### 1.7 Start or skip the reveal from `completion_sealed`
+### 1.6 Schedule or skip the reveal only from `completion_sealed`
 
 On `completion_sealed`:
 
-1. if there is no live pending reveal, open results immediately;
-2. otherwise consume the pending flag once;
-3. check `prefers-reduced-motion`;
-4. reduced motion -> open results immediately;
-5. normal motion -> set `completionRevealActive = true`, keep `showCelebration = false`, and schedule the 500 ms timeout;
-6. timeout -> clear active/timer state and set `showCelebration = true`.
+1. sample `prefers-reduced-motion`;
+2. reduced motion -> leave/open results immediately and do not activate the reveal;
+3. normal motion -> synchronously set `showCelebration = false`, set `completionRevealActive = true`, and schedule the 500 ms timeout;
+4. timeout -> clear reveal/timer state and set `showCelebration = true`.
 
-Never `await` in this event branch.
+Never `await` in this branch.
 
-The engine must be free to continue synchronously into its `completion_effect_request` emissions.
+Why the true -> false sequence is safe: the engine has just emitted lifecycle completed but has not called `notify()` yet. `completion_sealed` runs in the same synchronous event turn, so the intermediate dialog-open state does not paint. Game-core then calls `notify()` and emits the existing completion-effect requests; nothing waits on the timer.
 
-### 1.8 Include the reveal in existing input blocking
+### 1.7 Include the reveal in existing input blocking
 
-Extend the route’s current dialog/interaction blocking expression to treat `completionRevealActive` as blocked presentation time.
+Extend `hasSessionModal` to include `completionRevealActive`.
 
-Do not perform a broad rename/refactor of every `hasSessionModal` use solely because the legacy name becomes slightly wider in meaning.
+Do not rename the existing derived just because it now also covers the half-second reveal.
 
-The completed board remains visible but inert for the half-second.
+Its existing `interactionBlocked={hasSessionModal}` and shortcut guards keep the completed board inert during the reveal.
 
-### 1.9 Preserve completed-session hydration
+### 1.8 Preserve completed-session hydration
 
-Add a focused test that restores:
+Add a focused restored-completion test with:
 
 - lifecycle `completed`;
 - all pieces placed;
@@ -175,39 +171,69 @@ Add a focused test that restores:
 
 Assert:
 
-- results are visible immediately after route load;
-- reveal presentation is not active;
-- no 500 ms advancement is required;
-- pending completion effects still follow the existing resume/retry path.
+- results are visible immediately;
+- reveal state is not active;
+- no timer advancement is required;
+- existing resume/retry completion-effect behavior is unchanged.
 
 Do not change the production hydration assignment that already opens results from `restored?.lifecycle === 'completed'`.
 
-### 1.10 Prove reduced motion skips the timer
+### 1.9 Prove reduced motion skips the reveal
 
-With the test helper returning `matches: true`:
+With `matchMedia` returning reduced motion:
 
-- finish the live puzzle;
-- assert results are visible without advancing timers;
-- assert the board reveal marker is not active;
-- assert completion effect calls still happened once.
+- finish a fresh puzzle;
+- results are immediately visible;
+- reveal state is not active;
+- local/server effects were each started once.
 
-### 1.11 Keep redo and stale-timer behavior pinned
+### 1.10 Pin both retained-seal completion paths
 
-Update/extend the existing undo/redo completion test so redo:
+Keep/update the existing redo test:
 
-- reopens results immediately;
-- does not activate the live reveal;
-- does not call local/server completion writes a second time.
+- dismiss results;
+- undo final piece;
+- redo;
+- results reopen immediately;
+- no reveal state;
+- still one local/server write.
 
-Add one cleanup regression covering restart or direct puzzle navigation while a reveal timer exists; after advancing past 500 ms, the stale timer must not open results for the new run/puzzle.
+Add a distinct **undo-then-replace** regression:
 
-### 1.12 Run the focused route suite
+- dismiss results;
+- undo the final piece;
+- place that final piece again through normal placement;
+- results reopen immediately;
+- no reveal state/timer;
+- still one local/server write.
+
+This is required because normal re-placement emits `placement_accepted(completed: true)` but no new `completion_sealed`.
+
+### 1.11 Pin stale-timer cleanup
+
+Start a normal-motion first-seal reveal, then restart or navigate directly to another puzzle before 500 ms.
+
+Advance beyond 500 ms and assert the stale timeout cannot open results for the new run/puzzle.
+
+### 1.12 Update the existing results focus contract in the route tests
+
+Task 3 adds a third results action only when reference art exists; the default route fixture has one.
+
+Update the existing celebration Tab-wrap coverage so:
+
+- Play Again remains the initial/first focusable;
+- Back to Arcade remains the second primary;
+- View Artwork is the tertiary last action for this fixture;
+- Tab from View Artwork wraps to Play Again;
+- Shift+Tab from Play Again wraps to View Artwork.
+
+View-switch refocus itself is pinned in the dialog component test.
+
+### 1.13 Run the focused route suite
 
 `bun run --cwd apps/web test:unit -- 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
 Expected: pass.
-
----
 
 ## Task 2: Add the restrained completed-board settle treatment
 
@@ -243,11 +269,11 @@ Do not add another callback, event, or board model.
 
 Apply the state to `.board-canvas`, not individual puzzle pieces.
 
-Use one restrained CSS animation/state, for example:
+Use one restrained CSS glow/filter state:
 
-- tiny settle scale;
-- modest accent/gold glow around the board;
-- roughly the same 500 ms duration.
+- modest accent/gold box-shadow and/or filter;
+- roughly the same 500 ms duration;
+- no transform/scale animation because `ZoomableBoardFrame` already owns translate/scale and a second scale would look like a zoom bump.
 
 Requirements:
 
@@ -280,6 +306,8 @@ Expected: pass.
 
 - Modify: `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
+- Modify: `apps/web/e2e/gameplay-interactions.spec.ts`
 
 ### 3.1 Replace the star-count matrix with non-graded result tests
 
@@ -294,13 +322,13 @@ Add a parameterized matrix for:
 
 For every row assert:
 
-- the same `MISSION COMPLETE` clear framing is present;
+- the same visible `MISSION COMPLETE` framing is present;
 - the factual label is correct;
 - no completion-star markup/aria label exists.
 
-Do not invent a replacement grade assertion.
+Do not invent a replacement grade.
 
-### 3.2 Delete the local star derivation and star markup
+### 3.2 Delete the local star derivation and reclaim its visual slot
 
 Remove:
 
@@ -308,87 +336,112 @@ Remove:
 - star SVG loop;
 - star-specific sizing/layout rules that become dead.
 
-Keep `competitiveTimedResult` if it is still needed by record presentation.
+The current full-screen layout hides `.completion-identity` with screen-reader-only clipping while `.completion-stars` owns the first grid row.
 
-### 3.3 Add one consistent clear header
+Move/unclip the completion identity into that former header slot; otherwise star removal leaves the results screen with no visible completion header.
 
-Use the space formerly owned by stars for a simple celebratory clear treatment:
+Keep `competitiveTimedResult` if it remains needed by record presentation.
+
+### 3.3 Render one consistent visible completion header
+
+The reclaimed header slot contains:
 
 - visible `MISSION COMPLETE`;
-- simple existing-theme CSS/SVG clear/check mark;
-- factual result label;
+- a simple clear/check visual using existing theme/CSS;
+- the factual result label;
 - puzzle name.
 
 Do not add a numeric score, letter grade, medal tier, or quality wording.
 
-Make sure the result identity is actually visible in the current full-screen results layout rather than remaining only screen-reader text.
+### 3.4 Add local `results | artwork` state and use it as the focus key
 
-### 3.4 Add local `results | artwork` state
-
-Inside `PuzzleCompletionDialog.svelte` only:
+Inside `PuzzleCompletionDialog.svelte`:
 
 `let completionView = $state<'results' | 'artwork'>('results');`
 
-No route prop and no persisted field.
+Change the existing action to:
 
-### 3.5 Add `VIEW ARTWORK` only for a real reference URL
+`use:modalFocus={completionView}`
 
-In the results actions:
+`modalFocus.update()` already refocuses the first visible focusable when the key changes; no new focus helper is needed.
 
-- when `referenceImageUrl !== null`, render `VIEW ARTWORK`;
-- clicking it sets `completionView = 'artwork'`;
-- when the URL is null, render no artwork action.
+### 3.5 Preserve the two primary actions and add View Artwork as tertiary
 
-Keep the existing reference fallback in results.
+Results action DOM/focus order must be:
 
-### 3.6 Render the focused artwork view
+1. `PLAY AGAIN`
+2. `BACK TO ARCADE`
+3. optional `VIEW ARTWORK`
+
+Only render `VIEW ARTWORK` when `referenceImageUrl !== null`.
+
+Style it as a tertiary ghost action. On the existing mobile two-column action grid, make it `grid-column: 1 / -1` so the third button spans the row instead of creating an awkward half-row.
+
+This preserves Play Again as initial focus in unit/E2E/a11y tests.
+
+### 3.6 Render a dedicated contain-fit artwork view
 
 When `completionView === 'artwork'` and the URL exists:
 
 - keep the same modal/backdrop/focus action;
-- render the same image source as the primary content;
-- use `object-fit: contain` / viewport-bounded sizing so the full art can be inspected;
-- retain an accessible title/alt tied to `puzzleName`;
-- render one prominent `BACK TO RESULTS` button.
+- render the same URL as the primary image;
+- use a **separate** artwork-view class with viewport-bounded sizing and `object-fit: contain`;
+- retain accessible puzzle/artwork naming;
+- render one `BACK TO RESULTS` action.
 
-Do not render Play Again, Back to Arcade, awards, run summary, or retry controls in the artwork subview; they return unchanged when switching back.
+Do not reuse the current `.completion-reference-art` results-preview class, which is capped and uses cover-fit presentation.
 
-Do not add zoom/pan/download/share controls.
+Do not render Play Again, Back to Arcade, awards, run summary, or retry controls in the artwork subview; they return unchanged after Back to Results.
 
-### 3.7 Preserve modal dismissal/focus semantics
+No zoom/pan/download/share controls.
+
+### 3.7 Preserve dismissal and explicitly refocus on view changes
 
 Keep:
 
 - `role="dialog"`;
 - `aria-modal="true"`;
-- `modalFocus`;
-- existing backdrop Escape -> `onDismiss`.
+- backdrop Escape -> `onDismiss`.
 
-`BACK TO RESULTS` is explicit subview navigation. Escape remains whole-modal dismissal rather than becoming a second back-navigation rule.
+Because `completionView` is the modal-focus update key:
 
-### 3.8 Extend dialog tests
+- results -> artwork focuses `BACK TO RESULTS`;
+- artwork -> results focuses `PLAY AGAIN`.
 
-Cover:
+Escape still dismisses the whole completion modal; it is not an alternate Back action.
 
-- all result facts and awards remain truthful in results view;
-- reference URL -> `VIEW ARTWORK` visible;
-- click -> focused image uses the same `src` and accessible name;
-- result controls are absent while focused art is shown;
-- `BACK TO RESULTS` restores results, Play Again, Back to Arcade, and retry action;
-- null URL -> fallback visible and no `VIEW ARTWORK`;
-- Escape, focus containment, and callback tests continue passing.
+### 3.8 Extend dialog and route focus tests
 
-### 3.9 Run focused dialog tests
+Dialog component tests cover:
 
-`bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
+- all result facts/awards remain truthful;
+- Play Again is the first results focusable;
+- reference URL -> View Artwork exists after the primaries;
+- switch -> focused artwork uses the same `src` with contain-view marker/class;
+- Back to Results receives focus on artwork entry;
+- returning restores results and focus returns to Play Again;
+- null URL -> fallback visible and View Artwork absent;
+- Escape and focus containment remain intact.
+
+Update the route's existing two-button Tab-wrap test to the three-action default fixture as described in Task 1.12.
+
+### 3.9 Update the interaction E2E that asserts stars
+
+`apps/web/e2e/gameplay-interactions.spec.ts` currently expects exactly three `completion-star` nodes.
+
+Replace that assertion with the new visible `MISSION COMPLETE` framing.
+
+Keep the existing initial-focus assertion on Play Again. This is not optional/manual coverage; the old assertion will fail on this PR once stars are removed.
+
+### 3.10 Run focused dialog and route tests
+
+`bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
 Expected: pass.
 
----
-
 ## Task 4: Integration gate and scope review
 
-### 4.1 Run focused HPA-465 suites together
+### 4.1 Run focused HPA-465 unit suites together
 
 `bun run --cwd apps/web test:unit -- 'src/routes/puzzle/[id]/page.svelte.test.ts' src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
 
@@ -400,34 +453,50 @@ Expected: pass.
 
 Expected: pass.
 
-### 4.3 Run repository type/lint checks
+### 4.3 Run the completion interaction E2E and accessibility completion lane
+
+Run at minimum:
+
+`bun run --cwd apps/web test:e2e -- apps/web/e2e/gameplay-interactions.spec.ts`
+
+and the existing accessibility lane:
+
+`bun run --cwd apps/web test:e2e:a11y`
+
+The interaction E2E must validate the new non-star completion framing while Play Again remains initial focus. The a11y completion scan should continue passing without source changes.
+
+If Playwright's path handling for the package-local command requires the path relative to `apps/web`, use the equivalent `e2e/gameplay-interactions.spec.ts` invocation; do not broaden implementation scope over command syntax.
+
+### 4.4 Run repository type/lint checks
 
 `bun run check`
 
 Expected: pass.
 
-If this repository’s current main has a known unrelated failure, record the exact baseline and prove HPA-465’s focused suites remain green rather than broadening scope.
+If current `main` has a known unrelated failure, record the exact baseline and prove HPA-465's focused suites remain green rather than broadening scope.
 
-### 4.4 Manual browser smoke
+### 4.5 Manual browser smoke
 
 Using an existing puzzle/reference asset:
 
-1. normal motion: place final piece -> completed board visibly settles -> results;
-2. confirm results data and awards appear;
-3. confirm there is no 1/2/3-star grade;
-4. open `VIEW ARTWORK` -> full artwork is primary;
-5. `BACK TO RESULTS` -> same results/actions remain;
-6. Play Again still restarts;
-7. complete/restore a persisted completed run -> results immediately, no reveal replay;
-8. reduced-motion mode -> results immediately;
-9. puzzle with unavailable reference -> fallback only, no artwork button;
-10. retry-sync state remains actionable.
+1. normal motion: first completion seal -> completed board glow -> results;
+2. completion effects/result data and awards are intact;
+3. there is no 1/2/3-star grade;
+4. Play Again remains the first results action/focus target;
+5. View Artwork is tertiary and full-width on the phone action grid;
+6. open View Artwork -> contain-fit artwork is primary and Back to Results receives focus;
+7. Back to Results -> same results/actions return and Play Again is focused;
+8. dismiss -> undo -> re-place final piece -> results immediately, no second reveal/write;
+9. restore a persisted completed run -> results immediately, no reveal replay;
+10. reduced motion -> results immediately;
+11. unavailable reference -> fallback only, no artwork button;
+12. retry-sync state remains actionable.
 
 No new image or audio asset verification is needed.
 
-### 4.5 Final scope check
+### 4.6 Final scope check
 
-The implementation diff should stay within the six planned source/test files plus these planning documents.
+The implementation diff should stay within the planned web source/test files plus these planning documents.
 
 Reject scope creep into:
 
