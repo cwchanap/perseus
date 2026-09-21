@@ -130,13 +130,28 @@ If the API is unavailable, normal-motion behavior is the fallback.
 
 The board CSS should also disable the reveal treatment under `prefers-reduced-motion: reduce` as a defensive presentation safeguard.
 
-### 5. Block interactions during the short reveal
+The E2E harness needs the same default explicitly. Several existing smoke tests install and pause Playwright's clock before navigation; under a paused clock, a normal `setTimeout(500)` reveal never expires unless the test advances the clock. Rather than coupling unrelated completion tests to this presentation duration, set top-level Playwright `use.reducedMotion = 'reduce'` in `apps/web/playwright.config.ts`.
 
-The board should remain visible, but the half-second is a presentation beat, not an extra gameplay state.
+That keeps existing E2E completion semantics immediate across all projects while preserving normal-motion reveal coverage in focused route unit tests and manual browser smoke. Do not add `page.clock.runFor(500)` to every completion spec.
 
-Include `completionRevealActive` in the route's existing `hasSessionModal` blocking expression without renaming it. That already feeds `interactionBlocked` and shortcut guards.
+### 5. Block gameplay input without hiding the reveal
 
-This keeps the completed board inert while it settles without affecting completion-effect handlers, which are event-driven.
+The board should remain visible and accessible during the half-second reveal, but gameplay mutations must be blocked.
+
+Do **not** fold `completionRevealActive` into `hasSessionModal`. That derived also drives `inert` and `aria-hidden` on the entire `.puzzle-page`; widening it would hide the completed board from assistive technology during the very presentation beat HPA-465 is adding, with no dialog open to receive focus.
+
+Keep `hasSessionModal` for actual dialog/focus-containment surfaces only, and add one narrower derived:
+
+`const gameplayInputBlocked = $derived(hasSessionModal || completionRevealActive);`
+
+Use `gameplayInputBlocked` for:
+
+- the global gameplay-shortcut guard in `handleWindowKeyDown`, so Ctrl/Cmd+Z cannot undo the final piece while the reveal timer is pending;
+- `PuzzleBoardPanel interactionBlocked`, so board pan/input stays inert during the reveal.
+
+Keep `.puzzle-page inert={hasSessionModal} aria-hidden={hasSessionModal}` unchanged.
+
+Add a regression proving Ctrl/Cmd+Z during the reveal does not make the board incomplete while the timer still opens results.
 
 ### 6. Put a glow/filter treatment on `PuzzleBoardPanel`
 
@@ -247,23 +262,19 @@ The existing suite has many completion tests that are unrelated to animation tim
 
 The dedicated route tests must prove:
 
-1. on the first live completion seal, results are suppressed during the reveal;
-2. the board exposes the reveal state;
-3. `recordLocalCompletion` and `recordCompletion` have already started before the reveal timer advances;
-4. at 499 ms results are still closed;
-5. at 500 ms results open and the reveal state clears;
-6. reduced motion opens results immediately without a timed reveal;
-7. a restored `completed` snapshot opens results immediately and does not activate the reveal;
-8. redo of the final move reopens results immediately, does not replay the reveal, and does not duplicate completion writes;
-9. dismiss -> undo -> place the final piece again also reopens results immediately, does not replay the reveal, and still has only one local/server completion write;
-10. route teardown/restart cancels any pending reveal timer so it cannot reopen stale results.
+1. on the first live completion seal, results are suppressed while local/server completion effects have already started;
+2. at 499 ms results are still closed;
+3. at 500 ms results open;
+4. reduced motion opens results immediately without a timed reveal;
+5. a restored `completed` snapshot opens results immediately and does not activate the reveal;
+6. redo of the final move reopens results immediately, does not replay the reveal, and does not duplicate completion writes;
+7. dismiss -> undo -> place the final piece again also reopens results immediately, does not replay the reveal, and still has only one local/server completion write;
+8. Ctrl/Cmd+Z during the first-seal reveal is blocked so the timer cannot later open results over an incomplete board;
+9. route teardown/restart cancels any pending reveal timer so it cannot reopen stale results.
 
-Update the existing celebration focus tests for the three-action results view:
+Task 1 does not depend on the Task 2 board marker or the Task 3 artwork button. The reveal timing test should use the route-observable contract — results absent/present plus immediate completion-effect calls — so Task 1 ends green on its own.
 
-- Play Again remains the initial focus target;
-- `VIEW ARTWORK` is after the two primary actions;
-- Tab/Shift+Tab wrap uses the actual first/last focusables;
-- switching views refocuses the first control in the new view.
+Fake-timer reveal tests should not assert modal focus on the exact 500 ms tick: `modalFocus` schedules its own `setTimeout(..., 0)`. Focus assertions stay in the reduced-motion/non-fake-timer dialog tests, or explicitly advance one additional zero-delay tick if a fake-timer focus assertion is ever added.
 
 Keep the existing completion retry, stale-effect, navigation, and undo/redo coverage intact.
 
@@ -298,17 +309,26 @@ Cover:
 
 ### E2E / accessibility contracts
 
+Set `reducedMotion: 'reduce'` in top-level `apps/web/playwright.config.ts use` so every existing E2E completion test bypasses the presentation timer, including specs that run with a paused Playwright clock.
+
 `apps/web/e2e/gameplay-interactions.spec.ts` currently asserts three completion stars. Replace that assertion with the new visible non-graded completion framing and keep the existing initial-focus assertion on Play Again.
 
-The accessibility completion test should continue to pass without source changes because Play Again remains the first focusable. Run it explicitly as part of the final verification so the new view-switch focus behavior and visible header do not regress the modal scan.
+Run the **full smoke lane**, not only the touched interaction spec, because the timing behavior affects every E2E that completes a puzzle. The accessibility completion test should also continue to pass with Play Again first focusable.
+
+## Risks
+
+- **Paused E2E clock:** existing smoke tests can freeze browser timers; default E2E contexts to reduced motion so the 500 ms presentation timer is never a hidden CI dependency.
+- **Dialog blocking vs reveal accessibility:** `hasSessionModal` owns `inert`/`aria-hidden`; keep reveal-only blocking in `gameplayInputBlocked` so the glowing board remains accessible while keyboard mutations are blocked.
+- **Stale timeout across route reuse/restart:** the puzzle route component is reused across puzzle ids, so reveal cleanup must run on route teardown, restart, and destroy before an old timer can reopen results.
 
 ## File scope
 
-Expected production changes:
+Expected production/config changes:
 
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 - `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
+- `apps/web/playwright.config.ts`
 
 Expected test changes:
 
