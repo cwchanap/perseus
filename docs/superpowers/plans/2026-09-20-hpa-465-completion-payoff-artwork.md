@@ -457,7 +457,7 @@ Expected: pass.
 
 Run at minimum:
 
-`bun run --cwd apps/web test:e2e -- apps/web/e2e/gameplay-interactions.spec.ts`
+`bun run --cwd apps/web test:e2e -- e2e/gameplay-interactions.spec.ts`
 
 and the existing accessibility lane:
 
@@ -465,7 +465,6 @@ and the existing accessibility lane:
 
 The interaction E2E must validate the new non-star completion framing while Play Again remains initial focus. The a11y completion scan should continue passing without source changes.
 
-If Playwright's path handling for the package-local command requires the path relative to `apps/web`, use the equivalent `e2e/gameplay-interactions.spec.ts` invocation; do not broaden implementation scope over command syntax.
 
 ### 4.4 Run repository type/lint checks
 
@@ -508,7 +507,7 @@ Reject scope creep into:
 - generated art/SFX;
 - unrelated puzzle-route cleanup.
 
-### 4.6 Keep the same PR
+### 4.7 Keep the same PR
 
 After planning review, continue Tasks 1-4 on this branch and update this same draft PR’s description/checklist as implementation lands.
 
