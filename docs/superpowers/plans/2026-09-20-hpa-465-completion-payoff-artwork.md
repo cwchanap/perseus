@@ -59,6 +59,7 @@
 
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
+- Modify: `apps/web/playwright.config.ts`
 
 ### 1.1 Add a reduced-motion test helper before changing production behavior
 
@@ -71,6 +72,12 @@ Default the existing integration suite to reduced motion so unrelated completion
 Dedicated HPA-465 reveal tests explicitly opt into normal motion.
 
 Do not add a production media-query store just to make tests injectable.
+
+In the same Task 1 setup, add top-level Playwright:
+
+`reducedMotion: 'reduce'`
+
+under `apps/web/playwright.config.ts use` **before** the production reveal timer lands. Several existing smoke tests pause Playwright's clock; this keeps Task 1/CI green without teaching unrelated tests the 500 ms presentation duration. All Playwright projects inherit the top-level setting.
 
 ### 1.2 Write the failing first-seal ordering test
 
@@ -448,17 +455,7 @@ Replace that assertion with the new visible `MISSION COMPLETE` framing.
 
 Keep the existing initial-focus assertion on Play Again. This is not optional/manual coverage; the old assertion will fail on this PR once stars are removed.
 
-### 3.10 Default Playwright E2E to reduced motion
-
-Modify `apps/web/playwright.config.ts` top-level `use`:
-
-`reducedMotion: 'reduce'`
-
-Keep it global so all existing projects inherit the same immediate-completion presentation behavior, including paused-clock smoke tests.
-
-Do not patch individual specs with `page.clock.runFor(500)`.
-
-### 3.11 Run focused dialog and route tests
+### 3.10 Run focused dialog and route tests
 
 `bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
@@ -478,19 +475,23 @@ Expected: pass.
 
 Expected: pass.
 
-### 4.3 Run the full smoke lane and accessibility lane
+### 4.3 Run the full smoke lane, changed interaction spec, and accessibility lane
 
 Run:
 
 `bun run --cwd apps/web test:e2e:smoke`
 
+then the changed completion-interaction spec:
+
+`bun run --cwd apps/web test:e2e -- e2e/gameplay-interactions.spec.ts`
+
 and:
 
 `bun run --cwd apps/web test:e2e:a11y`
 
-The smoke lane is required because the reveal changes completion-dialog timing globally, including existing specs that use a paused Playwright clock. Top-level `reducedMotion: 'reduce'` keeps those existing tests immediate without coupling them to the 500 ms presentation constant.
+The full smoke lane is required because reveal timing affects multiple existing specs, including paused-clock completion tests. Top-level `reducedMotion: 'reduce'` keeps those existing tests immediate without coupling them to the 500 ms presentation constant.
 
-The interaction E2E inside the smoke lane must validate the new non-star completion framing while Play Again remains initial focus. The a11y completion scan must remain green.
+The targeted interaction run is still required because its completion-dialog test owns the star -> MISSION COMPLETE assertion and is tagged `@webkit-critical`, not `@smoke`; the smoke grep does not exercise that assertion. The a11y completion scan must also remain green.
 
 
 ### 4.4 Run repository type/lint checks
