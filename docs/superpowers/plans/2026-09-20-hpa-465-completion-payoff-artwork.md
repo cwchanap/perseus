@@ -32,6 +32,7 @@
 - `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
 - `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
 - `apps/web/e2e/gameplay-interactions.spec.ts`
+- `apps/web/playwright.config.ts`
 
 **Do not modify by default**
 
@@ -43,6 +44,12 @@
 - backend/workflows/database
 - `apps/mobile/**`
 - image/audio assets
+
+## Risks
+
+- **Paused Playwright clock:** multiple smoke tests freeze browser timers before navigation; the reveal timer would never expire unless E2E defaults to reduced motion.
+- **Modal containment vs reveal:** `hasSessionModal` also drives page `inert`/`aria-hidden`; do not reuse it for reveal-only blocking. Use the narrower `gameplayInputBlocked`.
+- **Stale reveal timeout:** direct puzzle-to-puzzle route reuse/restart can outlive a timer; cleanup must run before constructing the next session and on restart/destroy.
 
 ---
 
@@ -74,21 +81,22 @@ Render the two-piece fixture and place the final piece.
 Immediately after the first completion seal assert:
 
 - the results dialog is absent;
-- the board/reveal presentation state is active;
 - `recordLocalCompletion` has already been called once;
 - `recordCompletion` has already been called once for API-backed fixtures.
 
 Advance to 499 ms:
 
-- results still absent;
-- reveal still active.
+- results are still absent.
 
 Advance the final 1 ms:
 
-- results visible;
-- reveal state cleared.
+- results are visible.
+
+Task 1 deliberately does not assert the panel-level reveal class/marker; Task 2 owns that UI seam. This keeps Task 1 independently green.
 
 This is the hard guardrail: presentation timing must never delay completion effects.
+
+Do not add a focus assertion to this fake-timer test at the exact 500 ms boundary. `modalFocus` schedules a separate zero-delay timeout when the dialog mounts; focus behavior is covered later under reduced-motion/non-fake-timer tests.
 
 ### 1.3 Add only the route-local reveal state the engine does not already provide
 
@@ -153,13 +161,26 @@ Never `await` in this branch.
 
 Why the true -> false sequence is safe: the engine has just emitted lifecycle completed but has not called `notify()` yet. `completion_sealed` runs in the same synchronous event turn, so the intermediate dialog-open state does not paint. Game-core then calls `notify()` and emits the existing completion-effect requests; nothing waits on the timer.
 
-### 1.7 Include the reveal in existing input blocking
+### 1.7 Split dialog containment from reveal-time gameplay blocking
 
-Extend `hasSessionModal` to include `completionRevealActive`.
+Do not widen `hasSessionModal`: it also drives `inert` and `aria-hidden` on the whole puzzle page, which must remain visible/accessibility-exposed during the reveal.
 
-Do not rename the existing derived just because it now also covers the half-second reveal.
+Add:
 
-Its existing `interactionBlocked={hasSessionModal}` and shortcut guards keep the completed board inert during the reveal.
+`const gameplayInputBlocked = $derived(hasSessionModal || completionRevealActive);`
+
+Use `gameplayInputBlocked` for:
+
+- the `handleWindowKeyDown` early return;
+- `PuzzleBoardPanel interactionBlocked`.
+
+Leave:
+
+`<div class="puzzle-page" inert={hasSessionModal} aria-hidden={hasSessionModal}>`
+
+unchanged.
+
+Add a regression: during a normal-motion reveal, dispatch Ctrl/Cmd+Z before 500 ms and prove the final placement remains intact; after 500 ms the results dialog opens over a still-complete board.
 
 ### 1.8 Preserve completed-session hydration
 
@@ -215,21 +236,7 @@ Start a normal-motion first-seal reveal, then restart or navigate directly to an
 
 Advance beyond 500 ms and assert the stale timeout cannot open results for the new run/puzzle.
 
-### 1.12 Update the existing results focus contract in the route tests
-
-Task 3 adds a third results action only when reference art exists; the default route fixture has one.
-
-Update the existing celebration Tab-wrap coverage so:
-
-- Play Again remains the initial/first focusable;
-- Back to Arcade remains the second primary;
-- View Artwork is the tertiary last action for this fixture;
-- Tab from View Artwork wraps to Play Again;
-- Shift+Tab from Play Again wraps to View Artwork.
-
-View-switch refocus itself is pinned in the dialog component test.
-
-### 1.13 Run the focused route suite
+### 1.12 Run the focused route suite
 
 `bun run --cwd apps/web test:unit -- 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
@@ -282,7 +289,7 @@ Requirements:
 - no particle nodes;
 - no JS animation loop.
 
-Add a `prefers-reduced-motion: reduce` rule that disables the transform/animation defensively.
+Add a `prefers-reduced-motion: reduce` rule that disables the glow/filter transition defensively.
 
 ### 2.4 Pass the route state into the panel
 
@@ -375,7 +382,7 @@ Results action DOM/focus order must be:
 
 Only render `VIEW ARTWORK` when `referenceImageUrl !== null`.
 
-Style it as a tertiary ghost action. On the existing mobile two-column action grid, make it `grid-column: 1 / -1` so the third button spans the row instead of creating an awkward half-row.
+Style it as a tertiary ghost action. Scope `grid-column: 1 / -1` to the existing narrow-viewport media block where `.modal-actions` actually becomes a two-column CSS grid. Do not add the span rule at base flex layout.
 
 This preserves Play Again as initial focus in unit/E2E/a11y tests.
 
@@ -423,7 +430,15 @@ Dialog component tests cover:
 - null URL -> fallback visible and View Artwork absent;
 - Escape and focus containment remain intact.
 
-Update the route's existing two-button Tab-wrap test to the three-action default fixture as described in Task 1.12.
+Update the route's existing two-button Tab-wrap test here, after the artwork action exists:
+
+- Play Again remains first/initial focus;
+- Back to Arcade remains the second primary;
+- View Artwork is the tertiary last action for the default reference fixture;
+- Tab from View Artwork wraps to Play Again;
+- Shift+Tab from Play Again wraps to View Artwork.
+
+This is the single owner of that route focus-contract update.
 
 ### 3.9 Update the interaction E2E that asserts stars
 
@@ -433,7 +448,17 @@ Replace that assertion with the new visible `MISSION COMPLETE` framing.
 
 Keep the existing initial-focus assertion on Play Again. This is not optional/manual coverage; the old assertion will fail on this PR once stars are removed.
 
-### 3.10 Run focused dialog and route tests
+### 3.10 Default Playwright E2E to reduced motion
+
+Modify `apps/web/playwright.config.ts` top-level `use`:
+
+`reducedMotion: 'reduce'`
+
+Keep it global so all existing projects inherit the same immediate-completion presentation behavior, including paused-clock smoke tests.
+
+Do not patch individual specs with `page.clock.runFor(500)`.
+
+### 3.11 Run focused dialog and route tests
 
 `bun run --cwd apps/web test:unit -- src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts 'src/routes/puzzle/[id]/page.svelte.test.ts'`
 
@@ -453,17 +478,19 @@ Expected: pass.
 
 Expected: pass.
 
-### 4.3 Run the completion interaction E2E and accessibility completion lane
+### 4.3 Run the full smoke lane and accessibility lane
 
-Run at minimum:
+Run:
 
-`bun run --cwd apps/web test:e2e -- e2e/gameplay-interactions.spec.ts`
+`bun run --cwd apps/web test:e2e:smoke`
 
-and the existing accessibility lane:
+and:
 
 `bun run --cwd apps/web test:e2e:a11y`
 
-The interaction E2E must validate the new non-star completion framing while Play Again remains initial focus. The a11y completion scan should continue passing without source changes.
+The smoke lane is required because the reveal changes completion-dialog timing globally, including existing specs that use a paused Playwright clock. Top-level `reducedMotion: 'reduce'` keeps those existing tests immediate without coupling them to the 500 ms presentation constant.
+
+The interaction E2E inside the smoke lane must validate the new non-star completion framing while Play Again remains initial focus. The a11y completion scan must remain green.
 
 
 ### 4.4 Run repository type/lint checks
@@ -476,20 +503,14 @@ If current `main` has a known unrelated failure, record the exact baseline and p
 
 ### 4.5 Manual browser smoke
 
-Using an existing puzzle/reference asset:
+Keep the manual pass only for visual behavior automated tests cannot judge well:
 
-1. normal motion: first completion seal -> completed board glow -> results;
-2. completion effects/result data and awards are intact;
-3. there is no 1/2/3-star grade;
-4. Play Again remains the first results action/focus target;
-5. View Artwork is tertiary and full-width on the phone action grid;
-6. open View Artwork -> contain-fit artwork is primary and Back to Results receives focus;
-7. Back to Results -> same results/actions return and Play Again is focused;
-8. dismiss -> undo -> re-place final piece -> results immediately, no second reveal/write;
-9. restore a persisted completed run -> results immediately, no reveal replay;
-10. reduced motion -> results immediately;
-11. unavailable reference -> fallback only, no artwork button;
-12. retry-sync state remains actionable.
+1. normal motion: the completed-board glow is restrained, readable, and does not feel like a zoom bump;
+2. at a phone-sized viewport, View Artwork is a clear full-width tertiary row below the two primary actions;
+3. the focused artwork uses contain-fit sizing so the full image remains inspectable without obvious cropping at small and desktop viewports;
+4. the visible MISSION COMPLETE header has a sensible hierarchy after the stars are removed.
+
+Restore/reduced-motion/undo-replace/retry behavior stays automated rather than duplicated manually.
 
 No new image or audio asset verification is needed.
 
