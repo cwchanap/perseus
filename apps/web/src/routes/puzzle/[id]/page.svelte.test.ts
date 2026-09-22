@@ -90,6 +90,14 @@ const restoredModeState = vi.hoisted(() => ({
 	value: 'timed' as 'timed' | 'relaxed'
 }));
 
+// HPA-465: when a completion seals, the route samples
+// window.matchMedia('(prefers-reduced-motion: reduce)') to decide whether to
+// hold the finished board for a short reveal before opening results. This
+// suite defaults to reduced motion so the many completion tests that expect
+// immediate results keep their existing timing; the dedicated reveal tests
+// opt into normal motion via setPrefersReducedMotion(false).
+const reducedMotionPreference = vi.hoisted(() => ({ value: true }));
+
 const testRunId = (index: number) =>
 	`223e4567-e89b-42d3-a456-${String(426614174000 + index).padStart(12, '0')}`;
 const TEST_RUN_ID = testRunId(0);
@@ -354,6 +362,36 @@ import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
 import { serializeSession } from '@perseus/game-core';
 import { goto } from '$app/navigation';
 
+// Minimal MediaQueryList stand-in: the route only reads `.matches` for the
+// reduced-motion query at seal time, so listeners are inert stubs.
+function installMatchMediaStub(): void {
+	window.matchMedia = ((query: string): MediaQueryList => {
+		return {
+			matches: query === '(prefers-reduced-motion: reduce)' ? reducedMotionPreference.value : false,
+			media: query,
+			onchange: null,
+			addListener: () => undefined,
+			removeListener: () => undefined,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+			dispatchEvent: () => false
+		} as MediaQueryList;
+	}) as typeof window.matchMedia;
+}
+
+installMatchMediaStub();
+
+function setPrefersReducedMotion(reduced: boolean): void {
+	reducedMotionPreference.value = reduced;
+}
+
+// File-scope default: every test starts under reduced motion so existing
+// completion assertions keep their immediate behavior (HPA-465). Reveal
+// tests opt into normal motion inside the test body.
+beforeEach(() => {
+	setPrefersReducedMotion(true);
+});
+
 function createPiece(
 	id: number,
 	correctX: number,
@@ -480,6 +518,12 @@ async function expectPiecesRemaining(remaining: number): Promise<void> {
 	await expect
 		.poll(() => document.querySelector<HTMLElement>('.hud-pieces .stat-value')?.textContent?.trim())
 		.toBe(String(remaining));
+}
+
+// Synchronous variant for fake-timer tests, where an expect.poll first-check
+// failure would retry on faked timers and hang instead of failing.
+function remainingPiecesText(): string | undefined {
+	return document.querySelector<HTMLElement>('.hud-pieces .stat-value')?.textContent?.trim();
 }
 
 async function expectMissionName(name: string): Promise<void> {
@@ -1896,32 +1940,272 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('does not re-record completion on undo/redo of the final move', async () => {
-		await renderPuzzlePage();
+		// Normal motion + fake timers pin the HPA-465 retained-seal contract:
+		// the first seal holds results for the reveal window, while redo
+		// reopens results immediately (no completion_sealed, no replay).
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
 
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
 
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
-		expect(recordCompletion).toHaveBeenCalledTimes(1);
+			// First seal: results are suppressed for the reveal while the
+			// completion effects have already run once.
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 
-		// Close the celebration modal via Escape on the modal element
-		const modal = await page.getByTestId('celebration-modal').element();
-		modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+			// Close the celebration modal via Escape on the modal element
+			const modal = await page.getByTestId('celebration-modal').element();
+			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
 
-		// Undo the last piece — should transition from complete to incomplete
-		await page.getByLabelText('Undo').click();
-		await expectPiecesRemaining(1);
-		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+			// Undo the last piece — should transition from complete to incomplete
+			await page.getByLabelText('Undo').click();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(remainingPiecesText()).toBe('1');
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
 
-		// Redo — should re-show celebration but NOT call recordLocalCompletion again
-		await openMoreActions();
-		await page.getByLabelText('Redo').click();
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
-		// Remote sync should also remain at a single call across undo/redo.
-		expect(recordCompletion).toHaveBeenCalledTimes(1);
+			// Redo — results reopen immediately (the retained seal emits no new
+			// completion_sealed, so no reveal replays) and the completion writes
+			// are not duplicated.
+			await openMoreActions();
+			await page.getByLabelText('Redo').click();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('celebration-modal').query()).not.toBeNull();
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('holds the results dialog for the 500 ms final-board reveal on the first seal while effects start immediately', async () => {
+		// HPA-465: the first completion seal suppresses results for a short
+		// reveal of the finished board under normal motion. Presentation
+		// timing must never delay completion effects — both writes have
+		// already been dispatched before the reveal timer expires.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+			await vi.advanceTimersByTimeAsync(499);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			await vi.advanceTimersByTimeAsync(1);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('blocks gameplay shortcuts during the reveal so results open over a still-complete board', async () => {
+		// HPA-465: the reveal window blocks gameplay mutations (Ctrl/Cmd+Z
+		// must not undo the final placement) without hiding the board — the
+		// page stays accessibility-exposed because hasSessionModal is not
+		// widened.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(remainingPiecesText()).toBe('0');
+
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(remainingPiecesText()).toBe('0');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('reopens results immediately when the final piece is re-placed after an undo (retained seal)', async () => {
+		// HPA-465: dismiss -> undo -> place the final piece again emits
+		// placement_accepted(completed: true) and lifecycle->completed but no
+		// new completion_sealed, so results reopen immediately with no reveal
+		// and no duplicate completion writes.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+			// Dismiss results, then undo the final piece.
+			const modal = await page.getByTestId('celebration-modal').element();
+			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			await page.getByLabelText('Undo').click();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(remainingPiecesText()).toBe('1');
+
+			// Re-place the final piece through a normal placement: results
+			// reopen immediately — no 500 ms reveal replays.
+			await placePiece(1, 1, 0);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('celebration-modal').query()).not.toBeNull();
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('opens results immediately when prefers-reduced-motion is set', async () => {
+		// HPA-465: reduced motion skips the timed reveal entirely — results
+		// open on the seal with no timer and both effects start once.
+		setPrefersReducedMotion(true);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+			// No reveal is pending: after dismissal, gameplay shortcuts operate
+			// on the completed board again.
+			const modal = await page.getByTestId('celebration-modal').element();
+			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(remainingPiecesText()).toBe('1');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('opens results immediately for a restored completed session without scheduling a reveal', async () => {
+		// HPA-465: hydration of a completed snapshot opens results directly —
+		// no new completion_sealed is emitted, so no reveal timer exists —
+		// while resume/retry of persisted completion effects is unchanged.
+		setPrefersReducedMotion(false);
+		restoredLifecycleState.value = 'completed';
+		sealedCompletionOverride.value = {
+			runId: TEST_RUN_ID,
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 42,
+			completedAt: Date.now(),
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'pending' }
+		};
+		setSavedProgress({
+			placedPieces: [
+				{ pieceId: 0, x: 0, y: 0 },
+				{ pieceId: 1, x: 1, y: 0 }
+			]
+		});
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+
+			// Results are already open — synchronously present with no timer
+			// advance (a scheduled reveal would have suppressed them for
+			// 500 ms). The synchronous query pins immediacy: polling assertions
+			// could advance the fake clock past a wrongly-scheduled reveal.
+			expect(page.getByTestId('celebration-modal').query()).not.toBeNull();
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			// The persisted pending server submission is resumed on hydration.
+			expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+			// No reveal state/timer is pending: after dismissing results,
+			// advancing well past the reveal window must not reopen them over
+			// the still-complete board.
+			const modal = await page.getByTestId('celebration-modal').element();
+			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			expect(remainingPiecesText()).toBe('0');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('cancels a pending reveal when navigating directly to another puzzle', async () => {
+		// HPA-465: the route component is reused across puzzle ids, so the
+		// teardown before loading the next puzzle must cancel a pending
+		// reveal timer — a stale timeout must not open results over the new
+		// puzzle's fresh run.
+		setPrefersReducedMotion(false);
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: 'next-puzzle',
+			name: 'Next Mission',
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
+				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+			]
+		};
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
+			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+		);
+		vi.useFakeTimers();
+		try {
+			render(PuzzlePage);
+			await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			// SvelteKit reuses the route component for the new puzzle id; the
+			// reveal timer is still pending at the moment of the switch.
+			mockPageStore.set({
+				url: { pathname: '/puzzle/next-puzzle' },
+				params: { id: 'next-puzzle' },
+				route: { id: '/puzzle/[id]' },
+				status: 200,
+				error: null
+			});
+			// Flush the async loadPuzzle chain (fetch -> state -> render)
+			// without advancing the clock.
+			await vi.advanceTimersByTimeAsync(0);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(document.querySelector<HTMLElement>('.mission-name')?.textContent?.trim()).toBe(
+				'NEXT MISSION'
+			);
+
+			// Beyond the original reveal window: the stale timer must not open
+			// results for the new puzzle.
+			await vi.advanceTimersByTimeAsync(600);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('invalidates the account clear snapshot after a successful server submission', async () => {

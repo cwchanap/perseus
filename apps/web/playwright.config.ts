@@ -2,7 +2,13 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
 	use: {
-		baseURL: 'http://localhost:4173'
+		baseURL: 'http://localhost:4173',
+		// HPA-465: the puzzle route holds a 500 ms final-board reveal before
+		// results on the first completion seal. Several smoke tests pause
+		// Playwright's clock, under which the reveal timer would never expire;
+		// a top-level reduced-motion default bypasses it so existing E2E
+		// completion semantics stay immediate across every project.
+		reducedMotion: 'reduce'
 	},
 	webServer: [
 		{

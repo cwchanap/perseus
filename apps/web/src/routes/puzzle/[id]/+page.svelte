@@ -64,6 +64,10 @@
 
 	const REJECTED_DURATION_MS = 500;
 	const CHECKPOINT_INTERVAL_MS = 5_000;
+	// First-seal final-board reveal: under normal motion the route holds the
+	// finished board for this long before opening results. Presentation only —
+	// completion effects are dispatched immediately by the engine's events.
+	const COMPLETION_REVEAL_DURATION_MS = 500;
 
 	const sessionStorageAdapter = createSessionStorageAdapter();
 	const clock = createDefaultClock();
@@ -74,6 +78,11 @@
 	let error: string | null = $state(null);
 	let errorStatus: number | null = $state(null);
 	let showCelebration = $state(false);
+	// True while the first-seal final-board reveal is holding the completed
+	// board before results open. Route-local presentation state: it is never
+	// serialized and does not gate completion effects — only the timed
+	// suppression of the results dialog and gameplay input.
+	let completionRevealActive = $state(false);
 	// Single route-owned placement feedback for both accepted and rejected
 	// outcomes: rendered on the board overlay via PuzzleBoardPanel and
 	// derived into the tray rejection shake below. One replaceable timer
@@ -158,6 +167,7 @@
 	let sessionUnsubscribe: (() => void) | null = null;
 	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
 	let placementFeedbackTimeout: ReturnType<typeof setTimeout> | null = null;
+	let completionRevealTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Track the previous player-auth status so a transition to authenticated
 	// (login or session restore) triggers a one-shot retry of any unauthorized
@@ -222,6 +232,7 @@
 		}
 
 		clearPlacementFeedback();
+		clearCompletionReveal();
 
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('pointerup', handleWindowPointerUp, true);
@@ -295,6 +306,14 @@
 	const hasSessionModal = $derived(
 		sessionDialog !== null || showCelebration || showFamilyLeaderboard
 	);
+
+	// Reveal-time gameplay blocking is deliberately narrower than dialog
+	// containment: hasSessionModal also drives inert/aria-hidden on the whole
+	// puzzle page, which must stay visible and accessibility-exposed while the
+	// finished board is revealed (no dialog is open to receive focus). This
+	// derived only gates gameplay mutations — keyboard shortcuts and board
+	// input — for the duration of the reveal.
+	const gameplayInputBlocked = $derived(hasSessionModal || completionRevealActive);
 
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
@@ -531,7 +550,30 @@
 
 	function handleSessionEvent(event: PuzzleSessionEvent) {
 		if (event.type === 'completion_sealed') {
-			showCelebration = true;
+			// The lifecycle->completed event in this same synchronous turn has
+			// already opened results, and the engine has not called notify()
+			// yet — so suppressing them here never paints an intermediate
+			// state. The motion preference is sampled once at the seal
+			// boundary (no store needed): reduced motion keeps results
+			// immediate; normal motion holds the finished board for a short
+			// reveal. If matchMedia is unavailable, normal motion is the
+			// fallback. This branch never awaits — game-core continues
+			// directly into the completion-effect requests, which run
+			// independently of the presentation timer.
+			const prefersReducedMotion =
+				typeof window !== 'undefined' &&
+				typeof window.matchMedia === 'function' &&
+				window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+			if (prefersReducedMotion) {
+				showCelebration = true;
+			} else {
+				showCelebration = false;
+				completionRevealActive = true;
+				completionRevealTimeout = setTimeout(() => {
+					clearCompletionReveal();
+					showCelebration = true;
+				}, COMPLETION_REVEAL_DURATION_MS);
+			}
 		} else if (event.type === 'completion_effect_request') {
 			if (event.effect === 'local_stats') {
 				void handleLocalStatsEffect(event.seal);
@@ -622,6 +664,10 @@
 			sessionDialog = null;
 			restartConfirmation = false;
 			showCelebration = false;
+			// A pending first-seal reveal timer belongs to the torn-down run:
+			// cancel it before the next puzzle fetch so it cannot open results
+			// over the new puzzle's fresh session.
+			clearCompletionReveal();
 			showFamilyLeaderboard = false;
 			completionAwards = undefined;
 			referencePointerId = null;
@@ -821,6 +867,18 @@
 		placementFeedback = null;
 	}
 
+	// Reveal teardown mirrors the placement-feedback cleanup shape without
+	// sharing its timer: cancel the pending timeout, null the handle, and
+	// clear the active flag. It never touches completion facts/effects —
+	// only the presentation hold on the results dialog.
+	function clearCompletionReveal(): void {
+		if (completionRevealTimeout !== null) {
+			clearTimeout(completionRevealTimeout);
+			completionRevealTimeout = null;
+		}
+		completionRevealActive = false;
+	}
+
 	function showPlacementFeedback(
 		pieceId: number,
 		x: number,
@@ -1011,8 +1069,10 @@
 	function handleWindowKeyDown(event: KeyboardEvent) {
 		// Any open modal — the celebration overlay or a session dialog
 		// (pause/discard/setup) — blocks gameplay shortcuts so undo/redo cannot
-		// mutate placements behind the dialog while it is open.
-		if (hasSessionModal) return;
+		// mutate placements behind the dialog while it is open. The first-seal
+		// reveal blocks them too: Ctrl/Cmd+Z must not undo the final piece
+		// while the completed board is being presented.
+		if (gameplayInputBlocked) return;
 		// Escape closes exactly the highest-priority gameplay layer: the
 		// persistent reference overlay first (it visually obscures the board
 		// and traps focus on its Close control), then a reference hold, then
@@ -1180,6 +1240,7 @@
 
 		clearTransientGameplayState();
 		showCelebration = false;
+		clearCompletionReveal();
 		isNewBest = false;
 		localStatsFailed = false;
 		// The prior run's awards must not survive into the next run's
@@ -1429,7 +1490,7 @@
 							referenceImageUrl={source.resolveReferenceImage() ?? null}
 							{referenceActive}
 							{referenceToggled}
-							interactionBlocked={hasSessionModal}
+							interactionBlocked={gameplayInputBlocked}
 							viewResetVersion={boardViewResetVersion}
 							onPiecePlaced={handlePiecePlaced}
 							onReferenceToggle={handleReferenceToggle}
