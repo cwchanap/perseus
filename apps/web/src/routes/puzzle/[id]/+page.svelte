@@ -1492,6 +1492,7 @@
 							{referenceToggled}
 							interactionBlocked={gameplayInputBlocked}
 							viewResetVersion={boardViewResetVersion}
+							{completionRevealActive}
 							onPiecePlaced={handlePiecePlaced}
 							onReferenceToggle={handleReferenceToggle}
 						/>
