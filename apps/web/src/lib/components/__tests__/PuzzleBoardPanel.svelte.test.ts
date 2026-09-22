@@ -483,4 +483,29 @@ describe('PuzzleBoardPanel', () => {
 		// Restore for cleanup.
 		viewport.style.display = '';
 	});
+
+	it('omits the completion-reveal marker when the reveal prop is unset or false', async () => {
+		const input = props();
+		const view = render(PuzzleBoardPanel, input);
+		const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
+		expect(boardCanvas).not.toBeNull();
+
+		// Prop omitted -> no completion-reveal marker on the board canvas.
+		expect(boardCanvas!.classList.contains('completion-reveal')).toBe(false);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		// Explicit false stays unmarked.
+		await view.rerender({ ...input, completionRevealActive: false });
+		await expect.poll(() => boardCanvas!.classList.contains('completion-reveal')).toBe(false);
+	});
+
+	it('marks the board canvas with the completion-reveal treatment while active', async () => {
+		render(PuzzleBoardPanel, props({ completionRevealActive: true }));
+		const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
+		expect(boardCanvas).not.toBeNull();
+
+		await expect.poll(() => boardCanvas!.classList.contains('completion-reveal')).toBe(true);
+		// The PuzzleBoard itself still renders normally under the treatment.
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+	});
 });
