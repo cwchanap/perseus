@@ -196,7 +196,8 @@ test.describe('Gameplay interactions', () => {
 			await expect(dialog).toHaveAttribute('role', 'dialog');
 			await expect(dialog).toHaveAttribute('aria-modal', 'true');
 			await expect(dialog.getByTestId('completion-reference-art')).toBeVisible();
-			await expect(dialog.getByTestId('completion-star')).toHaveCount(3);
+			// Non-graded completion framing: no star rating, just MISSION COMPLETE.
+			await expect(dialog.getByText('MISSION COMPLETE')).toBeVisible();
 
 			// manageModalFocus moves focus to the first focusable element
 			// (PLAY AGAIN) after a 100 ms timeout.
