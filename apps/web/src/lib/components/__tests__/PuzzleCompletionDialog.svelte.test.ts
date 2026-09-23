@@ -27,34 +27,29 @@ function standardTimedProps() {
 
 describe('PuzzleCompletionDialog', () => {
 	it.each([
-		[
-			'standard timed, no hints or misses',
-			{ resultClass: 'standard_timed', hintsUsed: 0, incorrectAttempts: 0 },
-			3
-		],
-		[
-			'rotation timed, no hints or misses',
-			{ resultClass: 'rotation_timed', hintsUsed: 0, incorrectAttempts: 0 },
-			3
-		],
-		[
-			'standard timed, one hint',
-			{ resultClass: 'standard_timed', hintsUsed: 1, incorrectAttempts: 0 },
-			2
-		],
-		[
-			'standard timed, one miss',
-			{ resultClass: 'standard_timed', hintsUsed: 0, incorrectAttempts: 1 },
-			2
-		],
-		['assisted timed', { resultClass: 'assisted_timed', hintsUsed: 1, incorrectAttempts: 1 }, 2],
-		['relaxed', { resultClass: 'relaxed', elapsedSeconds: null }, 1]
-	] as const)('renders %s completion stars', async (_label, overrides, expectedStars) => {
-		render(PuzzleCompletionDialog, { ...standardTimedProps(), ...overrides });
+		['standard_timed', 'STANDARD TIMED'],
+		['rotation_timed', 'ROTATION TIMED'],
+		['assisted_timed', 'ASSISTED TIMED'],
+		['relaxed', 'RELAXED']
+	] as const)(
+		'renders %s as a non-graded completion with the same framing',
+		async (resultClass, expectedLabel) => {
+			render(PuzzleCompletionDialog, {
+				...standardTimedProps(),
+				resultClass,
+				elapsedSeconds: resultClass === 'relaxed' ? null : 75
+			});
 
-		const dialog = await page.getByTestId('celebration-modal').element();
-		expect(dialog.querySelectorAll('[data-testid="completion-star"]')).toHaveLength(expectedStars);
-	});
+			const dialog = await page.getByTestId('celebration-modal').element();
+			await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
+			await expect
+				.element(page.getByTestId('completion-result-label'))
+				.toHaveTextContent(expectedLabel);
+			expect(dialog.querySelector('[data-testid="completion-star"]')).toBeNull();
+			expect(dialog.querySelector('.completion-stars')).toBeNull();
+			expect(dialog.querySelector('[aria-label*="star" i]')).toBeNull();
+		}
+	);
 
 	it('renders finished reference art and keeps completion affordances', async () => {
 		render(PuzzleCompletionDialog, {
@@ -78,6 +73,14 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'PLAY AGAIN' })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'BACK TO ARCADE' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'VIEW ARTWORK' })).toBeVisible();
+
+		// Action DOM order: primaries first, View Artwork as the tertiary action.
+		const dialog = await page.getByTestId('celebration-modal').element();
+		const actionLabels = Array.from(
+			dialog.querySelectorAll<HTMLButtonElement>('.modal-actions button')
+		).map((button) => button.textContent);
+		expect(actionLabels).toEqual(['PLAY AGAIN', 'BACK TO ARCADE', 'VIEW ARTWORK']);
 	});
 
 	it('renders a graceful fallback when finished reference art is unavailable', async () => {
@@ -85,6 +88,70 @@ describe('PuzzleCompletionDialog', () => {
 
 		await expect.element(page.getByTestId('completion-reference-fallback')).toBeVisible();
 		expect(page.getByTestId('completion-reference-art').query()).toBeNull();
+		expect(page.getByRole('button', { name: 'VIEW ARTWORK' }).query()).toBeNull();
+	});
+
+	it('opens a contained artwork view and restores results with focus', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference',
+			awards: {
+				clearPoints: 200,
+				achievements: ['first_clear'],
+				mastery: ['hintless'],
+				puzzleRank: 3
+			}
+		});
+
+		// Results view keeps Play Again as the first/initial focusable.
+		const playAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
+		await expect.poll(() => document.activeElement).toBe(playAgain);
+
+		await page.getByRole('button', { name: 'VIEW ARTWORK' }).click();
+
+		// The artwork view renders the same URL with a contain-fit marker class.
+		const artwork = await page.getByTestId('completion-artwork-image').element();
+		expect(artwork.getAttribute('src')).toBe('/api/puzzles/test-puzzle/reference');
+		expect(artwork.classList.contains('completion-artwork-image')).toBe(true);
+		expect(getComputedStyle(artwork).objectFit).toBe('contain');
+		await expect.element(page.getByTestId('completion-artwork-view')).toBeVisible();
+
+		// Results-only affordances are absent from the artwork subview.
+		expect(page.getByRole('button', { name: 'PLAY AGAIN' }).query()).toBeNull();
+		expect(page.getByRole('button', { name: 'BACK TO ARCADE' }).query()).toBeNull();
+		expect(page.getByRole('button', { name: 'VIEW ARTWORK' }).query()).toBeNull();
+		expect(page.getByTestId('completion-run-summary').query()).toBeNull();
+		expect(page.getByTestId('completion-clear-points').query()).toBeNull();
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+
+		// Entering the artwork view focuses its single action.
+		const backToResults = await page.getByRole('button', { name: 'BACK TO RESULTS' }).element();
+		await expect.poll(() => document.activeElement).toBe(backToResults);
+
+		await page.getByRole('button', { name: 'BACK TO RESULTS' }).click();
+
+		// Results content returns unchanged and focus lands back on Play Again.
+		await expect.element(page.getByTestId('completion-run-summary')).toBeVisible();
+		await expect.element(page.getByTestId('completion-clear-points')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+		expect(page.getByTestId('completion-artwork-image').query()).toBeNull();
+		const playAgainAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
+		await expect.poll(() => document.activeElement).toBe(playAgainAgain);
+	});
+
+	it('dismisses the whole modal on Escape from the artwork view', async () => {
+		const input = {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
+		};
+		render(PuzzleCompletionDialog, input);
+
+		await page.getByRole('button', { name: 'VIEW ARTWORK' }).click();
+		await expect.element(page.getByTestId('completion-artwork-view')).toBeVisible();
+
+		const backdrop = await page.getByTestId('celebration-modal').element();
+		backdrop.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		expect(input.onDismiss).toHaveBeenCalledOnce();
 	});
 
 	it('preserves backdrop Escape, inner dialog focus, and current actions', async () => {
@@ -96,6 +163,10 @@ describe('PuzzleCompletionDialog', () => {
 		expect(dialog).not.toBeNull();
 		expect(dialog?.getAttribute('aria-modal')).toBe('true');
 		await expect.poll(() => dialog?.contains(document.activeElement)).toBe(true);
+
+		// Play Again is the first focusable control in the results view.
+		const playAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
+		await expect.poll(() => document.activeElement).toBe(playAgain);
 
 		await expect
 			.element(page.getByTestId('completion-result-label'))

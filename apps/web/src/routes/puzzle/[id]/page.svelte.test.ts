@@ -2486,18 +2486,35 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 
+		// The default fixture resolves a reference image, so the results view
+		// ends with the tertiary VIEW ARTWORK action after the two primaries.
 		const playAgainBtn = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
 		const backToArcadeBtn = await page.getByRole('button', { name: 'BACK TO ARCADE' }).element();
+		const viewArtworkBtn = await page.getByRole('button', { name: 'VIEW ARTWORK' }).element();
 
-		backToArcadeBtn.focus();
-		expect(document.activeElement).toBe(backToArcadeBtn);
+		const modal = await page.getByTestId('celebration-modal').element();
+		const actionButtons = Array.from(
+			modal.querySelectorAll<HTMLButtonElement>('.modal-actions button')
+		);
+		expect(actionButtons).toHaveLength(3);
+		expect(actionButtons[0]).toBe(playAgainBtn);
+		expect(actionButtons[1]).toBe(backToArcadeBtn);
+		expect(actionButtons[2]).toBe(viewArtworkBtn);
+
+		// Play Again remains the first/initial focusable control.
+		await expect.poll(() => document.activeElement).toBe(playAgainBtn);
+
+		// Tab from the last action (View Artwork) wraps to Play Again.
+		viewArtworkBtn.focus();
+		expect(document.activeElement).toBe(viewArtworkBtn);
 		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
 		expect(document.activeElement).toBe(playAgainBtn);
 
+		// Shift+Tab from Play Again wraps to View Artwork.
 		playAgainBtn.focus();
 		expect(document.activeElement).toBe(playAgainBtn);
 		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
-		expect(document.activeElement).toBe(backToArcadeBtn);
+		expect(document.activeElement).toBe(viewArtworkBtn);
 	});
 
 	it('moves focus into the celebration modal when it opens', async () => {
