@@ -128,6 +128,13 @@ describe('PuzzleCompletionDialog', () => {
 		const backToResults = await page.getByRole('button', { name: 'BACK TO RESULTS' }).element();
 		await expect.poll(() => document.activeElement).toBe(backToResults);
 
+		// BACK TO RESULTS is the only focusable in the subview, so Tab and
+		// Shift+Tab both wrap onto it and focus stays contained.
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+		expect(document.activeElement).toBe(backToResults);
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
+		expect(document.activeElement).toBe(backToResults);
+
 		await page.getByRole('button', { name: 'BACK TO RESULTS' }).click();
 
 		// Results content returns unchanged and focus lands back on Play Again.
