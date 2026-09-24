@@ -51,6 +51,22 @@ describe('PuzzleCompletionDialog', () => {
 		}
 	);
 
+	it('treats an empty reference URL as unavailable: fallback art, no artwork entry', async () => {
+		// An empty string is not a usable artwork URL — the preview and the
+		// VIEW ARTWORK entry must agree it is unavailable, instead of showing
+		// fallback art next to a button that opens a broken <img src="">.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: ''
+		});
+
+		await expect.element(page.getByTestId('completion-reference-fallback')).toBeVisible();
+		await expect.element(page.getByText('REFERENCE UNAVAILABLE')).toBeVisible();
+		const dialog = await page.getByTestId('celebration-modal').element();
+		expect(dialog.querySelector('[data-testid="completion-reference-art"]')).toBeNull();
+		expect(dialog.querySelector('[data-testid="view-artwork"]')).toBeNull();
+	});
+
 	it('renders finished reference art and keeps completion affordances', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),

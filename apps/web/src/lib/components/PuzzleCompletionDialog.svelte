@@ -76,6 +76,19 @@
 	// focusable control (PLAY AGAIN on results, BACK TO RESULTS on artwork).
 	let completionView = $state<'results' | 'artwork'>('results');
 
+	// Normalize empty-string URLs to null so the preview, the VIEW ARTWORK
+	// entry, and the artwork subview all agree on one availability check (an
+	// unchecked '' used to render fallback art next to a VIEW ARTWORK button
+	// that opened a broken <img src="">).
+	const artworkUrl = $derived(referenceImageUrl || null);
+
+	// If the reference disappears while the artwork subview is open, fall
+	// back to results; otherwise the focused BACK control is destroyed, focus
+	// drops to body, and the backdrop's delegated Escape handler goes dead.
+	$effect(() => {
+		if (completionView === 'artwork' && artworkUrl === null) completionView = 'results';
+	});
+
 	const resultLabel = $derived(RESULT_LABELS[resultClass]);
 	const timedResult = $derived(resultClass !== 'relaxed');
 	const competitiveTimedResult = $derived(
@@ -108,18 +121,20 @@
 		aria-labelledby="modal-title"
 		use:modalFocus={completionView}
 	>
-		{#if completionView === 'artwork' && referenceImageUrl !== null}
+		{#if completionView === 'artwork' && artworkUrl !== null}
 			<div class="completion-artwork-view" data-testid="completion-artwork-view">
 				<div class="artwork-identity">
 					<div class="modal-tag">// FINISHED ARTWORK</div>
 					<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 				</div>
-				<img
-					class="completion-artwork-image"
-					data-testid="completion-artwork-image"
-					src={referenceImageUrl}
-					alt={`${puzzleName} finished artwork`}
-				/>
+				<div class="artwork-image-wrap">
+					<img
+						class="completion-artwork-image"
+						data-testid="completion-artwork-image"
+						src={artworkUrl}
+						alt={`${puzzleName} finished artwork`}
+					/>
+				</div>
 				<div class="artwork-actions">
 					<button
 						type="button"
@@ -134,11 +149,11 @@
 		{:else}
 			<div class="completion-layout">
 				<div class="completion-art-column">
-					{#if referenceImageUrl}
+					{#if artworkUrl}
 						<img
 							class="completion-reference-art"
 							data-testid="completion-reference-art"
-							src={referenceImageUrl}
+							src={artworkUrl}
 							alt={`${puzzleName} finished artwork`}
 						/>
 					{:else}
@@ -261,7 +276,7 @@
 						<div class="modal-actions">
 							<button onclick={onPlayAgain} class="arcade-btn">PLAY AGAIN</button>
 							<button onclick={onBackToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
-							{#if referenceImageUrl !== null}
+							{#if artworkUrl !== null}
 								<button
 									type="button"
 									onclick={() => (completionView = 'artwork')}
@@ -346,6 +361,10 @@
 		padding: clamp(1.25rem, 3vw, 3.5rem);
 		width: min(calc(100% - 2rem), 84rem);
 		max-height: calc(100vh - 2rem);
+		/* Shared gold frame for the reference art and the artwork subview. */
+		--gold-frame:
+			0 0 0 2px rgba(255, 204, 0, 0.7), 0 0 35px rgba(255, 178, 58, 0.3),
+			0 14px 32px rgba(0, 0, 0, 0.5);
 		box-shadow:
 			0 0 60px var(--accent-glow-strong),
 			0 0 120px var(--accent-glow),
@@ -462,6 +481,7 @@
 		letter-spacing: 0.15em;
 		color: var(--text-1);
 		margin: 0.5rem 0 0;
+		max-width: 100%;
 		text-overflow: ellipsis;
 		overflow: hidden;
 		white-space: nowrap;
@@ -650,16 +670,6 @@
 		.completion-result-column {
 			text-align: left;
 		}
-
-		.completion-identity {
-			align-items: flex-start;
-			text-align: left;
-		}
-
-		.modal-stats,
-		.modal-actions {
-			justify-content: flex-start;
-		}
 	}
 
 	@media (min-width: 1440px) {
@@ -753,10 +763,7 @@
 	.completion-reference-fallback {
 		width: min(100%, 235px);
 		border-radius: 1.2rem;
-		box-shadow:
-			0 0 0 2px rgba(255, 204, 0, 0.7),
-			0 0 35px rgba(255, 178, 58, 0.3),
-			0 14px 32px rgba(0, 0, 0, 0.5);
+		box-shadow: var(--gold-frame);
 	}
 
 	.completion-result-column {
@@ -1114,23 +1121,38 @@
 		max-width: 1128px;
 		height: 100%;
 		margin: 0 auto;
+		/* The ≥900px modal has no padding of its own; keep the framed artwork
+		   off the viewport edges without shrinking the results layout. */
+		padding: clamp(0.75rem, 3vh, 2rem) 0;
 	}
 
 	.artwork-identity {
 		text-align: center;
+		max-width: 100%;
+	}
+
+	/* The wrapper absorbs the flex stretch; the img inside sizes to its own
+	   aspect ratio (max-width/max-height contain-fit), so a wide image is
+	   never letterboxed with dark bars inside the gold frame. */
+	.artwork-image-wrap {
+		flex: 1 1 auto;
+		min-height: 0;
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.completion-artwork-image {
-		flex: 1 1 auto;
-		min-height: 0;
 		max-width: 100%;
+		max-height: 100%;
+		width: auto;
+		height: auto;
+		/* No-op with the auto-dimension contain-fit sizing above, but keeps the
+		   image undistorted if any future constraint clamps the element box. */
 		object-fit: contain;
 		border-radius: 1.2rem;
-		background: var(--bg-2);
-		box-shadow:
-			0 0 0 2px rgba(255, 204, 0, 0.7),
-			0 0 35px rgba(255, 178, 58, 0.3),
-			0 14px 32px rgba(0, 0, 0, 0.5);
+		box-shadow: var(--gold-frame);
 	}
 
 	.artwork-actions {

@@ -2011,6 +2011,28 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('cancels the pending reveal when exiting to the arcade mid-reveal', async () => {
+		// HPA-465 review fix: exitToArcade must cancel the reveal timer — a
+		// gallery load slower than 500 ms would otherwise let results flash
+		// open (and steal focus via the modal's focus management) during
+		// navigation.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			await page.getByTestId('back-to-arcade-link').click();
+			await vi.advanceTimersByTimeAsync(500);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			expect(goto).toHaveBeenCalledWith('/');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('blocks gameplay shortcuts during the reveal so results open over a still-complete board', async () => {
 		// HPA-465: the reveal window blocks gameplay mutations (Ctrl/Cmd+Z
 		// must not undo the final placement) without hiding the board — the

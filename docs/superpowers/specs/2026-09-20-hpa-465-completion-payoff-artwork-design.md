@@ -130,7 +130,9 @@ If the API is unavailable, normal-motion behavior is the fallback.
 
 The board CSS should also disable the reveal treatment under `prefers-reduced-motion: reduce` as a defensive presentation safeguard.
 
-The E2E harness needs the same default explicitly. Several existing smoke tests install and pause Playwright's clock before navigation; under a paused clock, a normal `setTimeout(500)` reveal never expires unless the test advances the clock. Rather than coupling unrelated completion tests to this presentation duration, set top-level Playwright `use.reducedMotion = 'reduce'` in `apps/web/playwright.config.ts`.
+The E2E harness needs the same treatment, scoped to paused-clock runs. Several existing smoke tests install and pause Playwright's clock before navigation; under a paused clock, a normal `setTimeout(500)` reveal never expires unless the test advances the clock. Rather than coupling unrelated completion tests to this presentation duration, `GameplayPage.gotoFixture` calls `page.emulateMedia({ reducedMotion: 'reduce' })` whenever it installs a paused clock, so those tests keep immediate results while real-clock lanes keep normal motion (and still exercise the reveal end to end).
+
+Do not set a top-level config default instead: Playwright 1.57 silently ignores a bare `use.reducedMotion` key (the working config key is `use.contextOptions.reducedMotion`, passed through to `browser.newContext()`), and a global default disables every animation and transition the app CSS gates on `prefers-reduced-motion` for every lane.
 
 That keeps existing E2E completion semantics immediate across all projects while preserving normal-motion reveal coverage in focused route unit tests and manual browser smoke. Do not add `page.clock.runFor(500)` to every completion spec.
 
@@ -171,7 +173,7 @@ Requirements:
 - no large flash over the artwork;
 - no per-piece VFX;
 - no JS animation loop;
-- reduced-motion disables the animation/filter transition.
+- reduced-motion disables the glow fade (it snaps to its settled opacity).
 
 `PuzzleBoard.svelte` does not need to change.
 
@@ -309,7 +311,7 @@ Cover:
 
 ### E2E / accessibility contracts
 
-Set `reducedMotion: 'reduce'` in top-level `apps/web/playwright.config.ts use` so every existing E2E completion test bypasses the presentation timer, including specs that run with a paused Playwright clock.
+Reduce motion only for paused-clock fixture loads — `page.emulateMedia({ reducedMotion: 'reduce' })` inside `GameplayPage.gotoFixture`'s clock branch — so existing E2E completion tests that run with a paused Playwright clock bypass the presentation timer, while real-clock specs keep normal motion and wait out the reveal via auto-waiting locators.
 
 `apps/web/e2e/gameplay-interactions.spec.ts` currently asserts three completion stars. Replace that assertion with the new visible non-graded completion framing and keep the existing initial-focus assertion on Play Again.
 
