@@ -2108,6 +2108,52 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('blocks the family leaderboard control during the reveal so only the completion dialog opens', async () => {
+		// HPA-465 final-review fix (continuation): the leaderboard button is
+		// not a gameplay mutation, but opening it mid-reveal stacks it under
+		// the completion dialog the pending timer mounts at 500 ms — two
+		// modal surfaces over a page that then goes inert. The route gates
+		// the open on gameplayInputBlocked; outside the reveal the control
+		// works exactly as before.
+		setPrefersReducedMotion(false);
+		vi.mocked(fetchPuzzle).mockResolvedValue({
+			...createMockPuzzle(),
+			familyId: 'family-1'
+		});
+		vi.useFakeTimers();
+		try {
+			render(PuzzlePage);
+			await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			await openMoreActions();
+			await page.getByTestId('open-family-leaderboard').click();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('family-leaderboard-modal').query()).toBeNull();
+
+			// At the reveal boundary exactly the completion dialog opens over
+			// a still-complete board — no stacked leaderboard surface.
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(remainingPiecesText()).toBe('0');
+			expect(page.getByTestId('family-leaderboard-modal').query()).toBeNull();
+
+			// Once the reveal has resolved and results are dismissed, the
+			// same control opens the leaderboard normally.
+			const modal = await page.getByTestId('celebration-modal').element();
+			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			await openMoreActions();
+			await page.getByTestId('open-family-leaderboard').click();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(page.getByTestId('family-leaderboard-modal').query()).not.toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('reopens results immediately when the final piece is re-placed after an undo (retained seal)', async () => {
 		// HPA-465: dismiss -> undo -> place the final piece again emits
 		// placement_accepted(completed: true) and lifecycle->completed but no
