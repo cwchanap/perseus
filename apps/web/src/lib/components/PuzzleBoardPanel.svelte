@@ -29,6 +29,8 @@
 			kind: 'accepted' | 'rejected';
 		} | null;
 		completionRevealActive?: boolean;
+		/** Settle-animation length in ms; the route passes its reveal constant so the CSS cannot drift from it. */
+		completionRevealDurationMs?: number;
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onReferenceToggle: () => void;
 	}
@@ -47,6 +49,7 @@
 		referenceToggled,
 		placementFeedback = null,
 		completionRevealActive = false,
+		completionRevealDurationMs = 500,
 		onPiecePlaced,
 		onReferenceToggle
 	}: Props = $props();
@@ -261,9 +264,11 @@
 				<div
 					class="board-canvas mx-auto"
 					class:completion-reveal={completionRevealActive}
-					style={boardMetrics
-						? `--board-width: ${boardMetrics.boardWidth}px; --board-height: ${boardMetrics.boardHeight}px; --board-cell-size: ${boardMetrics.cellSize}px; width: var(--board-width); height: var(--board-height);`
-						: `width: ${puzzle.imageWidth}px;`}
+					style={`--completion-reveal-duration: ${completionRevealDurationMs}ms; ${
+						boardMetrics
+							? `--board-width: ${boardMetrics.boardWidth}px; --board-height: ${boardMetrics.boardHeight}px; --board-cell-size: ${boardMetrics.cellSize}px; width: var(--board-width); height: var(--board-height);`
+							: `width: ${puzzle.imageWidth}px;`
+					}`}
 				>
 					<PuzzleBoard
 						{puzzle}
@@ -305,33 +310,42 @@
 	}
 
 	.board-canvas {
+		position: relative;
 		width: var(--board-width);
 		height: var(--board-height);
-		/* Completed-board settle: the glow/filter ease in over roughly the
-		   same 500 ms window the route holds results back. No transform —
-		   ZoomableBoardFrame owns translate/scale, so a scale here would
-		   read as a zoom bump. */
-		transition:
-			box-shadow 500ms ease-out,
-			filter 500ms ease-out;
 	}
 
-	/* One restrained state: a hairline gold edge plus a soft halo and a
-	   faint lift in saturation/brightness keep the finished artwork fully
-	   readable — no overlay, no particles, no JS loop. */
-	.board-canvas.completion-reveal {
+	/* Completed-board settle: a ::after halo whose opacity eases in over
+	   the same window the route holds results back (the route passes the
+	   duration as a custom property so the CSS cannot drift from the route
+	   constant). Fading only opacity keeps the settle compositor-cheap —
+	   transitioning a 3-layer box-shadow or a filter on the whole board
+	   repaints every piece each frame. No transform — ZoomableBoardFrame
+	   owns translate/scale, so a scale here would read as a zoom bump. */
+	.board-canvas::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		opacity: 0;
 		box-shadow:
 			0 0 0 1px var(--gold-dim),
 			0 0 24px var(--gold-glow),
 			0 0 48px var(--accent-glow);
-		filter: brightness(1.04) saturate(1.08);
+		transition: opacity var(--completion-reveal-duration, 500ms) ease-out;
+	}
+
+	/* One restrained state: a hairline gold edge plus a soft halo keep the
+	   finished artwork fully readable — no overlay, no particles, no JS loop. */
+	.board-canvas.completion-reveal::after {
+		opacity: 1;
 	}
 
 	/* Defensive: the route never enables the reveal under reduced motion,
-	   but if the class is ever applied there, the glow/filter must snap
-	   rather than transition. */
+	   but if the class is ever applied there, the glow must snap rather than
+	   transition. */
 	@media (prefers-reduced-motion: reduce) {
-		.board-canvas {
+		.board-canvas::after {
 			transition: none;
 		}
 	}

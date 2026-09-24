@@ -318,6 +318,14 @@
 	// pending.
 	const gameplayInputBlocked = $derived(hasSessionModal || completionRevealActive);
 
+	// The board's settle treatment spans the reveal window AND the completed
+	// lifecycle afterwards — dismissing results must not strip the glow from
+	// the finished board at its peak. It leaves when Play Again / restart
+	// leaves 'completed'.
+	const boardCompletionTreatment = $derived(
+		completionRevealActive || sessionState?.lifecycle === 'completed'
+	);
+
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
 	);
@@ -590,7 +598,13 @@
 			event.to === 'completed' &&
 			event.from !== 'completed'
 		) {
-			showCelebration = true;
+			// game-core currently emits lifecycle→completed BEFORE
+			// completion_sealed in this same synchronous turn (the seal handler
+			// then suppresses results for the reveal before anything paints),
+			// but the route must not depend on that order: if the seal ever
+			// arrived first, unconditionally opening here would cancel the
+			// reveal. A pending reveal timer is the single source of truth.
+			if (completionRevealTimeout === null) showCelebration = true;
 		} else if (event.type === 'placement_accepted') {
 			if (activeHintPieceId === event.pieceId) {
 				clearHintTarget();
@@ -1295,6 +1309,10 @@
 	}
 
 	function exitToArcade(): void {
+		// Cancel a pending first-seal reveal: a gallery load slower than the
+		// 500 ms timer would otherwise let results flash open (and steal
+		// focus) mid-navigation.
+		clearCompletionReveal();
 		clearTransientGameplayState();
 		if (sessionState?.lifecycle === 'active') {
 			sessionStore?.dispatch({ type: 'pause' });
@@ -1508,7 +1526,8 @@
 							{referenceToggled}
 							interactionBlocked={gameplayInputBlocked}
 							viewResetVersion={boardViewResetVersion}
-							{completionRevealActive}
+							completionRevealActive={boardCompletionTreatment}
+							completionRevealDurationMs={COMPLETION_REVEAL_DURATION_MS}
 							onPiecePlaced={handlePiecePlaced}
 							onReferenceToggle={handleReferenceToggle}
 						/>

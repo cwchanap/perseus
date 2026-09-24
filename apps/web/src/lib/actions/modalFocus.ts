@@ -14,7 +14,11 @@ export function modalFocus(node: HTMLElement, focusKey: unknown = true) {
 
 	const focusFirst = () => {
 		if (focusTimer !== null) clearTimeout(focusTimer);
-		focusTimer = setTimeout(() => focusable()[0]?.focus(), 0);
+		// preventScroll: focusing the first control must not scroll it into
+		// view on open — for dialogs taller than the viewport (the completion
+		// results on phones) that jump pushes the dialog's header out of view
+		// the moment it opens. Keyboard traversal still scrolls normally.
+		focusTimer = setTimeout(() => focusable()[0]?.focus({ preventScroll: true }), 0);
 	};
 
 	const trap = (event: KeyboardEvent) => {

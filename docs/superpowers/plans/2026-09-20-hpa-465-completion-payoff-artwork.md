@@ -67,17 +67,13 @@ The route suite already has many tests that finish puzzles and expect the comple
 
 Add a small helper for `window.matchMedia('(prefers-reduced-motion: reduce)')`.
 
-Default the existing integration suite to reduced motion so unrelated completion tests keep their immediate behavior and do not each wait 500 ms.
+Default the paused-clock harness path to reduced motion so unrelated completion tests keep their immediate behavior and do not each wait 500 ms.
 
 Dedicated HPA-465 reveal tests explicitly opt into normal motion.
 
 Do not add a production media-query store just to make tests injectable.
 
-In the same Task 1 setup, add top-level Playwright:
-
-`reducedMotion: 'reduce'`
-
-under `apps/web/playwright.config.ts use` **before** the production reveal timer lands. Several existing smoke tests pause Playwright's clock; this keeps Task 1/CI green without teaching unrelated tests the 500 ms presentation duration. All Playwright projects inherit the top-level setting.
+In the same Task 1 setup, make `GameplayPage.gotoFixture` call `page.emulateMedia({ reducedMotion: 'reduce' })` whenever it installs a paused clock — **before** the production reveal timer lands. Several existing smoke tests pause Playwright's clock, under which a `setTimeout(500)` reveal never expires; this keeps Task 1/CI green without teaching unrelated tests the 500 ms presentation duration. Real-clock tests keep normal motion and simply wait out the reveal. Do NOT add a top-level `reducedMotion` config default: Playwright 1.57 silently ignores a bare `use.reducedMotion` key (the working key is `use.contextOptions.reducedMotion`), and any global default also disables every animation/transition the app CSS gates on `prefers-reduced-motion`.
 
 ### 1.2 Write the failing first-seal ordering test
 
@@ -489,10 +485,9 @@ and:
 
 `bun run --cwd apps/web test:e2e:a11y`
 
-The full smoke lane is required because reveal timing affects multiple existing specs, including paused-clock completion tests. Top-level `reducedMotion: 'reduce'` keeps those existing tests immediate without coupling them to the 500 ms presentation constant.
+The full smoke lane is required because reveal timing affects multiple existing specs, including paused-clock completion tests. Those keep immediate results via the harness's scoped `page.emulateMedia({ reducedMotion: 'reduce' })` on the paused-clock path; real-clock specs keep normal motion and wait out the 500 ms reveal via auto-waiting locators.
 
 The targeted interaction run is still required because its completion-dialog test owns the star -> MISSION COMPLETE assertion and is tagged `@webkit-critical`, not `@smoke`; the smoke grep does not exercise that assertion. The a11y completion scan must also remain green.
-
 
 ### 4.4 Run repository type/lint checks
 
