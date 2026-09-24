@@ -311,8 +311,11 @@
 	// containment: hasSessionModal also drives inert/aria-hidden on the whole
 	// puzzle page, which must stay visible and accessibility-exposed while the
 	// finished board is revealed (no dialog is open to receive focus). This
-	// derived only gates gameplay mutations — keyboard shortcuts and board
-	// input — for the duration of the reveal.
+	// derived gates every gameplay-mutation input for the duration of the
+	// reveal: the keyboard shortcut handler, board input, and the route
+	// handlers behind the toolbar/inventory pointer controls — the enabled
+	// Undo button must not un-complete the board while the results timer is
+	// pending.
 	const gameplayInputBlocked = $derived(hasSessionModal || completionRevealActive);
 
 	const placedPieceIds = $derived.by(
@@ -392,6 +395,7 @@
 	}
 
 	function handleSelectPiece(id: number) {
+		if (gameplayInputBlocked) return;
 		const outcome = sessionStore?.dispatch({ type: 'select_piece', pieceId: id });
 		if (outcome?.type === 'selection_changed' && outcome.pieceId === id) {
 			announceGameplay(`Puzzle piece ${id} selected.`);
@@ -399,6 +403,7 @@
 	}
 
 	function handleCancelSelection() {
+		if (gameplayInputBlocked) return;
 		const hadSelection = currentSelectedPieceId !== null;
 		const outcome = sessionStore?.dispatch({ type: 'cancel_selection' });
 		if (hadSelection && outcome?.type === 'selection_changed' && outcome.pieceId === null) {
@@ -840,7 +845,7 @@
 	}
 
 	function handlePiecePlaced(pieceId: number, x: number, y: number) {
-		if (!sessionStore) return;
+		if (!sessionStore || gameplayInputBlocked) return;
 
 		const result = sessionStore.dispatch({
 			type: 'attempt_placement',
@@ -904,27 +909,27 @@
 	}
 
 	function handleHint() {
-		if (!sessionStore) return;
+		if (!sessionStore || gameplayInputBlocked) return;
 		sessionStore.dispatch({ type: 'use_hint' });
 		checkpointSession();
 	}
 
 	function handleUndo() {
-		if (!sessionStore) return;
+		if (!sessionStore || gameplayInputBlocked) return;
 		sessionStore.dispatch({ type: 'undo' });
 		clearPlacementFeedback();
 		checkpointSession();
 	}
 
 	function handleRedo() {
-		if (!sessionStore) return;
+		if (!sessionStore || gameplayInputBlocked) return;
 		sessionStore.dispatch({ type: 'redo' });
 		clearPlacementFeedback();
 		checkpointSession();
 	}
 
 	function handleInventoryFilterChange(filter: InventoryFilter) {
-		if (!sessionStore) return;
+		if (!sessionStore || gameplayInputBlocked) return;
 		sessionStore.dispatch({
 			type: 'update_tray_organization',
 			update: { type: 'set_filter', filter }
@@ -933,7 +938,7 @@
 	}
 
 	function handleInventoryShuffle() {
-		if (!sessionStore || !sessionState) return;
+		if (!sessionStore || !sessionState || gameplayInputBlocked) return;
 		const unplacedPieceIds = sessionState.trayOrder.filter((id) => !placedPieceIds.has(id));
 		if (unplacedPieceIds.length <= 1) return;
 		sessionStore.dispatch({
@@ -948,6 +953,7 @@
 	}
 
 	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
+		if (gameplayInputBlocked) return;
 		const isPointerEvent = event instanceof PointerEvent;
 		referenceHoldSource = isPointerEvent ? 'pointer' : 'keyboard';
 		referencePointerId = isPointerEvent ? event.pointerId : null;
@@ -979,7 +985,7 @@
 	}
 
 	function handleReferenceToggle(): void {
-		if (!sessionStore || sessionState?.lifecycle !== 'active') return;
+		if (!sessionStore || gameplayInputBlocked || sessionState?.lifecycle !== 'active') return;
 		const wasInactive = sessionState.activeReferenceMode === null;
 		const nextMode = sessionState.activeReferenceMode === 'toggle' ? null : 'toggle';
 		referencePointerId = null;
@@ -989,13 +995,13 @@
 	}
 
 	function handleRotationToggle() {
-		if (!sessionStore || isRotationToggleLocked()) return;
+		if (!sessionStore || gameplayInputBlocked || isRotationToggleLocked()) return;
 		sessionStore.dispatch({ type: 'set_rotation_mode', enabled: !rotationEnabled });
 		checkpointSession();
 	}
 
 	function handlePieceRotate(pieceId: number) {
-		if (!sessionStore || !rotationEnabled || isPiecePlaced(pieceId)) return;
+		if (!sessionStore || gameplayInputBlocked || !rotationEnabled || isPiecePlaced(pieceId)) return;
 		const outcome = sessionStore.dispatch({ type: 'rotate_piece', pieceId });
 		if (outcome.type === 'piece_rotated') {
 			announceGameplay(`Puzzle piece ${pieceId} rotated.`);
