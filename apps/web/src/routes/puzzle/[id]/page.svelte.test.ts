@@ -2038,6 +2038,76 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('blocks the enabled toolbar Undo control during the reveal so results open over a still-complete board', async () => {
+		// HPA-465 final-review fix: the keyboard guard does not cover pointer
+		// activation — the toolbar Undo button stays enabled during the
+		// reveal (canUndo is session-derived, and the engine intentionally
+		// allows undo on a completed lifecycle for the retained-seal path),
+		// so the route handler itself must refuse while gameplayInputBlocked.
+		// A pointer click must not make the board incomplete ahead of the
+		// pending results timer.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			// The control stays enabled — the block lives in the route
+			// handler, not the button state — so the click reaches it and is
+			// refused: the final placement must survive the reveal window.
+			const undoButton = await page.getByLabelText('Undo').element();
+			expect(undoButton).not.toHaveAttribute('disabled');
+			await page.getByLabelText('Undo').click();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(remainingPiecesText()).toBe('0');
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(remainingPiecesText()).toBe('0');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('blocks the inventory filter controls during the reveal', async () => {
+		// HPA-465 final-review fix: update_tray_organization is not gated on
+		// the completed lifecycle in the engine (only setup is rejected), so
+		// a filter click during the reveal is a real session mutation. The
+		// route handler must refuse it while gameplayInputBlocked, matching
+		// the keyboard/toolbar blocking contract.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			// Direct DOM query + dispatch: the disclosure may render the
+			// filter group hidden at this viewport, but the route handler is
+			// the contract under test (same technique as the pause-overlay
+			// tests above).
+			const cornersFilter = document.querySelector<HTMLButtonElement>(
+				'button[aria-label^="Corner pieces,"]'
+			);
+			expect(cornersFilter).not.toBeNull();
+			expect(cornersFilter?.getAttribute('aria-pressed')).toBe('false');
+			cornersFilter?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(cornersFilter?.getAttribute('aria-pressed')).toBe('false');
+			expect(remainingPiecesText()).toBe('0');
+
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(remainingPiecesText()).toBe('0');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('reopens results immediately when the final piece is re-placed after an undo (retained seal)', async () => {
 		// HPA-465: dismiss -> undo -> place the final piece again emits
 		// placement_accepted(completed: true) and lifecycle->completed but no
