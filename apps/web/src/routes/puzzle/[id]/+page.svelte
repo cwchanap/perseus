@@ -1192,6 +1192,16 @@
 		openPauseDialog('paused');
 	}
 
+	// Opening the leaderboard is a dialog surface, not a gameplay mutation —
+	// but during the first-seal reveal it would stack under the completion
+	// dialog the pending timer mounts at 500 ms. Gate it on the same input
+	// block; outside the reveal (and its modal containment) it behaves as
+	// before.
+	function handleOpenLeaderboard(): void {
+		if (gameplayInputBlocked) return;
+		showFamilyLeaderboard = true;
+	}
+
 	// --- Pause / resume / restart / exit composition ---------------------------
 
 	// Consolidated route-local cleanup of transient gameplay presentation
@@ -1385,7 +1395,7 @@
 						hasReference={currentPuzzle.hasReference === true}
 						canOpenLeaderboard={currentPuzzle.familyId !== undefined &&
 							puzzleSource?.source === 'api'}
-						onOpenLeaderboard={() => (showFamilyLeaderboard = true)}
+						onOpenLeaderboard={handleOpenLeaderboard}
 						onUndo={handleUndo}
 						onRedo={handleRedo}
 						onHint={handleHint}
