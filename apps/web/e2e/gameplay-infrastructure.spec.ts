@@ -78,6 +78,12 @@ test.describe('gameplay smoke @smoke', () => {
 
 		await expect(gameplayPage.page.getByTestId('puzzle-board')).toBeVisible();
 		await expect(gameplayPage.page.locator('[data-testid^="piece-slot-"]')).toHaveCount(4);
+		// The HUD header keeps a visible arcade back link during gameplay
+		// (previously a stale bare-page spec navigated to an invalid id, which
+		// UUID-validates to the error panel before the header ever renders).
+		await expect(
+			gameplayPage.page.locator('header').getByTestId('back-to-arcade-link')
+		).toBeVisible();
 	});
 
 	test('keyboard placement places a piece on the board @smoke', async ({ gameplayPage }) => {
