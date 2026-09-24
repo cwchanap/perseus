@@ -20,11 +20,10 @@ test.describe('Puzzle Solving Page', () => {
 		await expect(errorMessage).toBeVisible();
 	});
 
-	test('should have back navigation link', async ({ page }) => {
-		await page.goto('/puzzle/any-puzzle');
-
-		// Should have navigation back to main page
-		const backLink = page.locator('header').getByTestId('back-to-arcade-link');
-		await expect(backLink).toBeVisible();
-	});
+	// The former "should have back navigation link" spec navigated to
+	// `/puzzle/any-puzzle`, which the route UUID-validates to the 404 error
+	// panel before any header renders, so it could never pass. HUD back-link
+	// visibility is covered by the fixture-load smoke test in
+	// gameplay-infrastructure.spec.ts; its exit interaction by
+	// gameplay-session-controls.spec.ts.
 });
