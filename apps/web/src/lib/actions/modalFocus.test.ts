@@ -79,17 +79,121 @@ describe('modalFocus action', () => {
 		controller.destroy();
 	});
 
-	it('refocuses the first element when update receives a different key', async () => {
+	it('makes the container focusable and focuses it on mount', async () => {
+		// The container takes initial focus rather than its first control: in
+		// a dialog taller than the viewport, the first control can sit below
+		// the fold and be armed for Enter without ever being seen.
+		const dialog = createDialogWithButtons(2);
+		const controller = modalFocus(dialog);
+		expect(dialog.tabIndex).toBe(-1);
+
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		controller.destroy();
+	});
+
+	it('does not overwrite a tabindex the host already declared', () => {
+		// Most dialogs declare tabindex="-1" in markup; the action only fills
+		// it in when absent, so an explicit value must be preserved.
+		const dialog = createDialogWithButtons(1);
+		dialog.setAttribute('tabindex', '0');
+		const controller = modalFocus(dialog);
+		expect(dialog.tabIndex).toBe(0);
+		controller.destroy();
+	});
+
+	it('wraps Shift+Tab from the container to the last control', async () => {
+		const dialog = createDialogWithButtons(2);
+		const controller = modalFocus(dialog);
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		const buttons = Array.from(dialog.querySelectorAll('button'));
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true
+		});
+		dialog.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+
+		controller.destroy();
+	});
+
+	it('wraps Shift+Tab from the first control to the last control', () => {
+		const dialog = createDialogWithButtons(2);
+		const controller = modalFocus(dialog);
+		const buttons = Array.from(dialog.querySelectorAll('button'));
+		buttons[0].focus();
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true
+		});
+		dialog.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+
+		controller.destroy();
+	});
+
+	it('lets forward Tab from the container pass through to the first control', async () => {
+		// Synthetic keydown events do not trigger native Tab navigation, so
+		// this asserts non-prevention: the browser moves focus to the first
+		// control itself.
+		const dialog = createDialogWithButtons(2);
+		const controller = modalFocus(dialog);
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+		dialog.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(false);
+
+		controller.destroy();
+	});
+
+	it('pins focus to the container when the dialog has no focusable elements', async () => {
+		const dialog = createDialogWithButtons(0);
+		const controller = modalFocus(dialog);
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		for (const shiftKey of [false, true]) {
+			const event = new KeyboardEvent('keydown', {
+				key: 'Tab',
+				shiftKey,
+				bubbles: true,
+				cancelable: true
+			});
+			dialog.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(true);
+			expect(document.activeElement).toBe(dialog);
+		}
+
+		controller.destroy();
+	});
+
+	it('refocuses the container when update receives a different key', async () => {
 		const dialog = createDialogWithButtons(2);
 		const controller = modalFocus(dialog, 'key-a');
 
-		const firstButton = dialog.querySelectorAll('button')[0];
-		firstButton.blur();
+		// Move focus into the dialog so the refocus to the container is visible.
+		dialog.querySelectorAll('button')[0].focus();
 
 		controller.update('key-b');
 		// The refocus runs inside setTimeout(0).
 		await vi.waitFor(() => {
-			expect(document.activeElement).toBe(firstButton);
+			expect(document.activeElement).toBe(dialog);
 		});
 
 		controller.destroy();

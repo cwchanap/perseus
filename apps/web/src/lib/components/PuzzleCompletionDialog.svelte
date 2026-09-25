@@ -72,8 +72,8 @@
 	}: Props = $props();
 
 	// Local subview switch: the results sheet or the dedicated artwork view.
-	// It doubles as the modalFocus key so entering a view refocuses its first
-	// focusable control (PLAY AGAIN on results, BACK TO RESULTS on artwork).
+	// It doubles as the modalFocus key so entering a view refocuses the
+	// dialog container (the first Tab then reaches that view's controls).
 	let completionView = $state<'results' | 'artwork'>('results');
 
 	// Normalize empty-string URLs to null so the preview, the VIEW ARTWORK
@@ -119,6 +119,7 @@
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="modal-title"
+		tabindex="-1"
 		use:modalFocus={completionView}
 	>
 		{#if completionView === 'artwork' && artworkUrl !== null}

@@ -199,10 +199,10 @@ test.describe('Gameplay interactions', () => {
 			// Non-graded completion framing: no star rating, just MISSION COMPLETE.
 			await expect(dialog.getByText('MISSION COMPLETE')).toBeVisible();
 
-			// manageModalFocus moves focus to the first focusable element
-			// (PLAY AGAIN) after a 100 ms timeout.
-			const playAgain = dialog.getByRole('button', { name: 'PLAY AGAIN' });
-			await gameplayPage.expectDialogInitialFocus(dialog, playAgain);
+			// modalFocus moves focus to the dialog container itself on open so a
+			// below-fold control is never armed unseen; the first Tab reaches the
+			// first control.
+			await gameplayPage.expectDialogInitialFocus(dialog);
 
 			// Activate an action — Play Again restarts and closes the dialog.
 			await gameplayPage.activateDialogAction(dialog, 'PLAY AGAIN');

@@ -69,9 +69,8 @@ describe('PuzzleCompletionDialog', () => {
 
 	it('falls back to results with restored focus when the reference URL disappears mid-artwork', async () => {
 		// If the artwork URL is withdrawn while the artwork subview is open,
-		// the focused BACK control would be destroyed and focus would drop to
-		// body (killing the delegated backdrop Escape). The route must return
-		// to results and refocus its first control instead.
+		// the route must return to results; the modalFocus key change
+		// refocuses the dialog container so focus never drops to body.
 		const rendered = render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
@@ -85,8 +84,8 @@ describe('PuzzleCompletionDialog', () => {
 		const dialog = await page.getByTestId('celebration-modal').element();
 		expect(dialog.querySelector('[data-testid="completion-artwork-view"]')).toBeNull();
 		expect(dialog.querySelector('[data-testid="view-artwork"]')).toBeNull();
-		const playAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
-		await expect.poll(() => document.activeElement).toBe(playAgain);
+		const dialogBox = await page.getByRole('dialog').element();
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
 	});
 
 	it('renders finished reference art and keeps completion affordances', async () => {
@@ -141,9 +140,10 @@ describe('PuzzleCompletionDialog', () => {
 			}
 		});
 
-		// Results view keeps Play Again as the first/initial focusable.
-		const playAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
-		await expect.poll(() => document.activeElement).toBe(playAgain);
+		// The dialog container holds initial focus rather than a control that
+		// may sit below the fold.
+		const dialogBox = await page.getByRole('dialog').element();
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
 
 		await page.getByRole('button', { name: 'VIEW ARTWORK' }).click();
 
@@ -162,12 +162,14 @@ describe('PuzzleCompletionDialog', () => {
 		expect(page.getByTestId('completion-clear-points').query()).toBeNull();
 		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
 
-		// Entering the artwork view focuses its single action.
+		// Entering the artwork view refocuses the dialog container; BACK TO
+		// RESULTS stays the only focusable control in the subview.
 		const backToResults = await page.getByRole('button', { name: 'BACK TO RESULTS' }).element();
-		await expect.poll(() => document.activeElement).toBe(backToResults);
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
 
 		// BACK TO RESULTS is the only focusable in the subview, so Tab and
 		// Shift+Tab both wrap onto it and focus stays contained.
+		backToResults.focus();
 		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
 		expect(document.activeElement).toBe(backToResults);
 		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
@@ -175,13 +177,12 @@ describe('PuzzleCompletionDialog', () => {
 
 		await page.getByRole('button', { name: 'BACK TO RESULTS' }).click();
 
-		// Results content returns unchanged and focus lands back on Play Again.
+		// Results content returns unchanged and focus returns to the container.
 		await expect.element(page.getByTestId('completion-run-summary')).toBeVisible();
 		await expect.element(page.getByTestId('completion-clear-points')).toBeVisible();
 		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
 		expect(page.getByTestId('completion-artwork-image').query()).toBeNull();
-		const playAgainAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
-		await expect.poll(() => document.activeElement).toBe(playAgainAgain);
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
 	});
 
 	it('dismisses the whole modal on Escape from the artwork view', async () => {
@@ -209,9 +210,9 @@ describe('PuzzleCompletionDialog', () => {
 		expect(dialog?.getAttribute('aria-modal')).toBe('true');
 		await expect.poll(() => dialog?.contains(document.activeElement)).toBe(true);
 
-		// Play Again is the first focusable control in the results view.
-		const playAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
-		await expect.poll(() => document.activeElement).toBe(playAgain);
+		// Initial focus lands on the dialog container itself; the first Tab
+		// then reaches Play Again, the first focusable control.
+		await expect.poll(() => document.activeElement).toBe(dialog);
 
 		await expect
 			.element(page.getByTestId('completion-result-label'))

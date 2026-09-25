@@ -216,9 +216,9 @@ test.describe('mission session controls', () => {
 		const setup = gameplayPage.missionSetupDialog();
 		await expect(setup).toBeVisible();
 
-		// Focus lands on the first control; Shift+Tab wraps to the last
+		// Focus lands on the dialog container; Shift+Tab wraps to the last
 		// focusable (Start Mission) instead of escaping the dialog.
-		await expect(setup.getByLabel('Timed')).toBeFocused();
+		await expect(setup).toBeFocused();
 		await page.keyboard.press('Shift+Tab');
 		await expect(setup.getByRole('button', { name: 'Start Mission' })).toBeFocused();
 

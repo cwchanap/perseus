@@ -59,10 +59,10 @@ describe('MissionSetupDialog', () => {
 		expect(setupProps.onExit).not.toHaveBeenCalled();
 	});
 
-	it('moves initial focus to the first focusable control', async () => {
+	it('moves initial focus to the dialog container', async () => {
 		render(MissionSetupDialog, { ...setupProps, mandatory: true });
-		const timedRadio = await page.getByLabelText('Timed').element();
-		await expect.poll(() => document.activeElement).toBe(timedRadio);
+		const dialog = await page.getByRole('dialog', { name: 'Mission Setup' }).element();
+		await expect.poll(() => document.activeElement).toBe(dialog);
 	});
 
 	it('wraps Tab focus within the dialog', async () => {

@@ -2709,8 +2709,9 @@ describe('Puzzle route gameplay integration', () => {
 		expect(actionButtons[1]).toBe(backToArcadeBtn);
 		expect(actionButtons[2]).toBe(viewArtworkBtn);
 
-		// Play Again remains the first/initial focusable control.
-		await expect.poll(() => document.activeElement).toBe(playAgainBtn);
+		// The dialog container itself holds initial focus.
+		const dialogEl = modal.querySelector('[role="dialog"]');
+		await expect.poll(() => document.activeElement).toBe(dialogEl);
 
 		// Tab from the last action (View Artwork) wraps to Play Again.
 		viewArtworkBtn.focus();
@@ -2732,9 +2733,11 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 
-		// The first focusable control in the modal receives focus on open.
-		const playAgainBtn = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
-		await expect.poll(() => document.activeElement).toBe(playAgainBtn);
+		// The dialog container receives focus on open, keeping the header in
+		// view instead of scrolling to a below-fold control.
+		const modalEl = await page.getByTestId('celebration-modal').element();
+		const dialogEl = modalEl.querySelector('[role="dialog"]');
+		await expect.poll(() => document.activeElement).toBe(dialogEl);
 	});
 
 	it('hides the Pause control once the session is completed', async () => {
