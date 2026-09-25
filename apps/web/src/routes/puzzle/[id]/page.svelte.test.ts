@@ -229,11 +229,56 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 // The page imports serializeSession from @perseus/game-core. Default to the
 // real serializer so checkpoint paths persist real snapshots; individual
 // tests may still override with mockReturnValue.
+// When true, the game-core mock below replays each dispatch's session
+// events with completion_sealed FIRST — the opposite of the engine's
+// current lifecycle→completed-then-seal order. The route must present the
+// same 500 ms reveal under either order (HPA-465 review: the reveal must
+// not depend on game-core's event ordering).
+const reorderCompletionEvents = vi.hoisted(() => ({ enabled: false }));
+
 vi.mock('@perseus/game-core', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/game-core')>();
+	type SessionEvent = Parameters<
+		NonNullable<Parameters<typeof actual.createPuzzleSession>[0]['onEvent']>
+	>[0];
 	return {
 		...actual,
-		serializeSession: vi.fn((state) => actual.serializeSession(state))
+		serializeSession: vi.fn((state) => actual.serializeSession(state)),
+		createPuzzleSession: (options: Parameters<typeof actual.createPuzzleSession>[0]) => {
+			if (!reorderCompletionEvents.enabled) return actual.createPuzzleSession(options);
+			// Buffer events emitted synchronously inside dispatch(), then replay
+			// them with completion_sealed moved to the front. Events emitted
+			// outside a dispatch pass through untouched.
+			const buffered: SessionEvent[] = [];
+			let inDispatch = false;
+			const engine = actual.createPuzzleSession({
+				...options,
+				onEvent: (event) => {
+					if (inDispatch) buffered.push(event);
+					else options.onEvent?.(event);
+				}
+			});
+			return new Proxy(engine, {
+				get(target, prop, receiver) {
+					if (prop !== 'dispatch') {
+						const value = Reflect.get(target, prop, receiver);
+						return typeof value === 'function' ? value.bind(target) : value;
+					}
+					return (action: Parameters<typeof engine.dispatch>[0]) => {
+						buffered.length = 0;
+						inDispatch = true;
+						try {
+							return engine.dispatch(action);
+						} finally {
+							inDispatch = false;
+							const sealed = buffered.filter((e) => e.type === 'completion_sealed');
+							const rest = buffered.filter((e) => e.type !== 'completion_sealed');
+							for (const event of [...sealed, ...rest]) options.onEvent?.(event);
+						}
+					};
+				}
+			});
+		}
 	};
 });
 
@@ -2030,6 +2075,31 @@ describe('Puzzle route gameplay integration', () => {
 			expect(goto).toHaveBeenCalledWith('/');
 		} finally {
 			vi.useRealTimers();
+		}
+	});
+
+	it('holds the same 500 ms reveal when completion_sealed is emitted before lifecycle→completed', async () => {
+		// HPA-465 review item: the route must not depend on game-core's event
+		// order. With the seal delivered first (reorder mock), the reveal timer
+		// starts; the lifecycle→completed that follows must NOT cancel it by
+		// opening results early — nor may the earlier lifecycle handler branch
+		// leave a second modal open queued at the timer.
+		reorderCompletionEvents.enabled = true;
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			await vi.advanceTimersByTimeAsync(499);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			await vi.advanceTimersByTimeAsync(1);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		} finally {
+			vi.useRealTimers();
+			reorderCompletionEvents.enabled = false;
 		}
 	});
 

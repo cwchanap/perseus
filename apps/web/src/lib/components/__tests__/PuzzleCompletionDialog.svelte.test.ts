@@ -67,6 +67,28 @@ describe('PuzzleCompletionDialog', () => {
 		expect(dialog.querySelector('[data-testid="view-artwork"]')).toBeNull();
 	});
 
+	it('falls back to results with restored focus when the reference URL disappears mid-artwork', async () => {
+		// If the artwork URL is withdrawn while the artwork subview is open,
+		// the focused BACK control would be destroyed and focus would drop to
+		// body (killing the delegated backdrop Escape). The route must return
+		// to results and refocus its first control instead.
+		const rendered = render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
+		});
+
+		await page.getByTestId('view-artwork').click();
+		await expect.element(page.getByTestId('completion-artwork-view')).toBeVisible();
+
+		await rendered.rerender({ referenceImageUrl: null });
+
+		const dialog = await page.getByTestId('celebration-modal').element();
+		expect(dialog.querySelector('[data-testid="completion-artwork-view"]')).toBeNull();
+		expect(dialog.querySelector('[data-testid="view-artwork"]')).toBeNull();
+		const playAgain = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
+		await expect.poll(() => document.activeElement).toBe(playAgain);
+	});
+
 	it('renders finished reference art and keeps completion affordances', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
