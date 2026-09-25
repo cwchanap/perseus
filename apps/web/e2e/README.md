@@ -377,7 +377,8 @@ reliable touch methods stay in `@webkit-critical` coverage (the
 To extend the **completion dialog** (new action, new focus rule):
 
 1. Reuse the dialog helpers: `waitForDialog(name)`,
-   `expectDialogInitialFocus(dialog, target)`, `activateDialogAction(dialog,
+   `expectDialogInitialFocus(dialog)` (focus lands on the dialog container,
+   not a control), `activateDialogAction(dialog,
 name)`, `dismissDialog(dialog, 'escape' | 'visible-close-button')`.
 2. Assert role + focus together via the a11y helpers
    (`expectRoleFocused`, `expectContainedIn`) — a control that keeps its visual

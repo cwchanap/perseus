@@ -470,18 +470,11 @@ export class GameplayPage {
 		await this.celebrationModal().getByRole('button', { name: 'PLAY AGAIN' }).click();
 	}
 
-	/** Assert the dialog's initial focus landed on the target element. */
-	async expectDialogInitialFocus(dialog: Locator, target: Locator): Promise<void> {
-		await expect(target).toBeFocused();
-		// The focused element must be a descendant of the dialog under test: a
-		// stale locator that resolves to an element inside a different dialog
-		// (e.g. one left open by an earlier step) would otherwise satisfy the
-		// focus assertion.
-		const contained = await dialog.evaluate(
-			(dialogEl, focusedEl) => dialogEl.contains(focusedEl),
-			await target.elementHandle()
-		);
-		expect(contained).toBe(true);
+	/** Assert the dialog's initial focus landed on the dialog container itself. */
+	async expectDialogInitialFocus(dialog: Locator): Promise<void> {
+		// modalFocus lands focus on the dialog container (tabindex="-1"), not a
+		// control that may sit below the fold when the dialog overflows.
+		await expect(dialog).toBeFocused();
 	}
 
 	/** Click a visible action button inside the dialog by accessible name. */
