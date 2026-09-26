@@ -108,6 +108,8 @@ Never await in this event branch.
 
 This works with the existing engine ordering: lifecycle has just set results true, but `completion_sealed` runs synchronously before `notify()`, so the route suppresses the first results paint while still allowing game-core to continue directly into local/server `completion_effect_request` events.
 
+Because the route must not depend on that event order, the lifecycle→completed handler opens results only when no reveal timer is pending (`completionRevealTimeout === null`) — the pending-timer check, not arrival order, is the single source of truth, so a seal-first ordering can neither double-open results nor cancel the reveal.
+
 ### 3. Completed-session restore stays immediate
 
 Keep the existing hydration behavior:
@@ -128,7 +130,7 @@ No store or media-query abstraction is needed. The user preference only needs to
 
 If the API is unavailable, normal-motion behavior is the fallback.
 
-The board CSS should also disable the reveal treatment under `prefers-reduced-motion: reduce` as a defensive presentation safeguard.
+The board CSS should also snap the settle under `prefers-reduced-motion: reduce`: the transition is disabled, not the treatment — the completed lifecycle still applies the settle class, so the glow simply appears at its settled opacity without animating.
 
 The E2E harness needs the same treatment, scoped to paused-clock runs. Several existing smoke tests install and pause Playwright's clock before navigation; under a paused clock, a normal `setTimeout(500)` reveal never expires unless the test advances the clock. Rather than coupling unrelated completion tests to this presentation duration, `GameplayPage.gotoFixture` calls `page.emulateMedia({ reducedMotion: 'reduce' })` whenever it installs a paused clock, so those tests keep immediate results while real-clock lanes keep normal motion (and still exercise the reveal end to end).
 
@@ -163,7 +165,7 @@ Add one optional prop to `PuzzleBoardPanel.svelte`:
 
 Default it to false so existing component call sites/tests remain unchanged.
 
-Apply a class/data state to the existing `.board-canvas` wrapper. Use a restrained box-shadow/filter glow for roughly the 500 ms reveal window.
+Apply a class/data state to the existing `.board-canvas` wrapper. Use a restrained box-shadow glow — an inset 1 px gold ring plus soft outer blurs — that spans the reveal window AND the rest of the completed lifecycle (the route passes a wider derived, `boardCompletionTreatment = completionRevealActive || lifecycle === 'completed'`), dropping only when Play Again/restart leaves `completed`. The ring is inset because the board viewport is `overflow-hidden`: when the fitted/zoomed board fills it, any outward shadow — the ring included — is clipped into invisibility, while an inner ring always reads; the outer blurs are best-effort halo wherever the board is smaller than the viewport.
 
 Do not animate `transform: scale(...)`: `ZoomableBoardFrame` already owns translate/scale for the user's zoom/pan, and a second scale would read as an unwanted zoom bump.
 
@@ -206,7 +208,7 @@ Pass the view as the existing focus action key:
 
 `use:modalFocus={completionView}`
 
-`modalFocus.update()` already refocuses the first visible focusable whenever the key changes, matching the existing pause-dialog confirmation pattern.
+`modalFocus.update()` refocuses the dialog **container** whenever the key changes (the same focusDialog path as mount). Focusing the container rather than the first control keeps the completion header in view on short phone viewports, where the first control can sit below the fold; the first Tab then reaches the subview's first control.
 
 #### Results view
 
@@ -217,7 +219,7 @@ Preserve the two primary actions and their focus order:
 1. `PLAY AGAIN`
 2. `BACK TO ARCADE`
 
-When `referenceImageUrl` is non-null, add `VIEW ARTWORK` **after** those primaries as a tertiary ghost action. On the small-screen two-column action grid, make it span both columns so the third action does not create an awkward half-row and Play Again remains the initial focus target.
+When `referenceImageUrl` is non-null, add `VIEW ARTWORK` **after** those primaries as a tertiary ghost action. On the small-screen two-column action grid, make it span both columns so the third action does not create an awkward half-row and `PLAY AGAIN` remains the first focusable (initial focus goes to the dialog container, which keeps the header on screen).
 
 When the URL is null, retain the existing unavailable fallback and do not render the artwork action.
 
@@ -233,7 +235,7 @@ Render:
 - accessible puzzle/artwork naming;
 - one obvious `BACK TO RESULTS` action.
 
-Because `completionView` is the `modalFocus` update key, switching into artwork refocuses `BACK TO RESULTS`; switching back refocuses the first results action, `PLAY AGAIN`.
+Because `completionView` is the `modalFocus` update key, switching views refocuses the dialog container in both directions; the first Tab then reaches the subview's first control (`BACK TO RESULTS` in artwork, `PLAY AGAIN` in results).
 
 Play Again, Back to Arcade, awards, and retry-sync remain in the results view and reappear unchanged when the user returns.
 
@@ -304,8 +306,8 @@ Cover:
 - reference URL present -> tertiary `VIEW ARTWORK` exists after the two primaries;
 - on the small-screen action grid, the artwork action spans the full row;
 - clicking it shows a separate contain-fit focused-art image using the same source;
-- switching to artwork focuses `BACK TO RESULTS`;
-- `BACK TO RESULTS` restores results and focus returns to Play Again;
+- switching views refocuses the dialog container (first Tab reaches the subview's first control);
+- `BACK TO RESULTS` restores results with focus back on the container;
 - missing reference URL -> fallback stays visible and `VIEW ARTWORK` is absent;
 - modal focus containment and Escape dismissal remain intact.
 
@@ -313,9 +315,9 @@ Cover:
 
 Reduce motion only for paused-clock fixture loads — `page.emulateMedia({ reducedMotion: 'reduce' })` inside `GameplayPage.gotoFixture`'s clock branch — so existing E2E completion tests that run with a paused Playwright clock bypass the presentation timer, while real-clock specs keep normal motion and wait out the reveal via auto-waiting locators.
 
-`apps/web/e2e/gameplay-interactions.spec.ts` currently asserts three completion stars. Replace that assertion with the new visible non-graded completion framing and keep the existing initial-focus assertion on Play Again.
+`apps/web/e2e/gameplay-interactions.spec.ts` currently asserts three completion stars. Replace that assertion with the new visible non-graded completion framing and keep the existing dialog-action navigation coverage.
 
-Run the **full smoke lane**, not only the touched interaction spec, because the timing behavior affects every E2E that completes a puzzle. The accessibility completion test should also continue to pass with Play Again first focusable.
+Run the **full smoke lane**, not only the touched interaction spec, because the timing behavior affects every E2E that completes a puzzle. The accessibility completion test asserts focus on the dialog container (not `PLAY AGAIN`) — the container takes initial focus with `preventScroll`, and the first Tab reaches Play Again.
 
 ## Risks
 
