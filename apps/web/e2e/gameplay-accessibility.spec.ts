@@ -169,10 +169,10 @@ test.describe('accessibility @a11y', () => {
 		await expect(dialog).toBeVisible();
 		await expect(dialog).toHaveAttribute('aria-modal', 'true');
 
-		// manageModalFocus moves focus to the first action (PLAY AGAIN) after a
-		// short timeout; expectRoleFocused auto-waits for that focus to land.
-		const playAgain = dialog.getByRole('button', { name: 'PLAY AGAIN' });
-		await expectRoleFocused(playAgain, 'button');
+		// modalFocus focuses the dialog container (preventScroll) so the
+		// completion header stays in view on short viewports; expectRoleFocused
+		// auto-waits for that focus to land.
+		await expectRoleFocused(dialog, 'dialog');
 
 		// Scan with the modal open so its markup is covered too.
 		const results = await scanAccessibility(page, { label: 'completion' });

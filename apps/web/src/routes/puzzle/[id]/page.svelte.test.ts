@@ -2042,6 +2042,20 @@ describe('Puzzle route gameplay integration', () => {
 			await placePiece(0, 0, 0);
 			await placePiece(1, 1, 0);
 
+			// The reveal must not hide the page: with no dialog open, the puzzle
+			// page stays free of inert/aria-hidden so the finished board remains
+			// accessibility-exposed, and the settle glow is already on.
+			const puzzlePage = () => document.querySelector<HTMLElement>('.puzzle-page')!;
+			const settleOn = () =>
+				document
+					.querySelector<HTMLElement>('.board-canvas')
+					?.classList.contains('completion-reveal') === true;
+			expect(puzzlePage().inert).toBe(false);
+			// Svelte renders aria-hidden="false" rather than dropping it; the
+			// contract is that the page is never hidden while no dialog is open.
+			expect(puzzlePage().getAttribute('aria-hidden')).not.toBe('true');
+			expect(settleOn()).toBe(true);
+
 			expect(page.getByTestId('celebration-modal').query()).toBeNull();
 			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
 			expect(recordCompletion).toHaveBeenCalledTimes(1);
@@ -2051,6 +2065,15 @@ describe('Puzzle route gameplay integration', () => {
 
 			await vi.advanceTimersByTimeAsync(1);
 			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+			// Once the results dialog is open, dialog containment does apply.
+			expect(puzzlePage().inert).toBe(true);
+			expect(puzzlePage().getAttribute('aria-hidden')).toBe('true');
+
+			// Play Again leaves 'completed', so the settle drops with it.
+			await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
+			await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+			expect(settleOn()).toBe(false);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -2304,12 +2327,26 @@ describe('Puzzle route gameplay integration', () => {
 			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 			await vi.advanceTimersByTimeAsync(0);
 			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+			// Dismissed results leave the finished board exposed — the settle
+			// stays on through the completed lifecycle (it drops only when
+			// Play Again/restart leaves 'completed').
+			expect(
+				document
+					.querySelector<HTMLElement>('.board-canvas')
+					?.classList.contains('completion-reveal')
+			).toBe(true);
 
 			window.dispatchEvent(
 				new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })
 			);
 			await vi.advanceTimersByTimeAsync(0);
 			expect(remainingPiecesText()).toBe('1');
+
+			// A seal that wrongly scheduled a reveal timer alongside the
+			// immediate results would reopen the dialog here — advancing well
+			// past the 500 ms window pins that no second open is queued.
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
 		} finally {
 			vi.useRealTimers();
 		}

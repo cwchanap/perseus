@@ -24,14 +24,40 @@ afterEach(() => {
 });
 
 describe('modalFocus action', () => {
-	it('does nothing on Tab when the dialog has no focusable elements', () => {
+	it('leaves Tab to the browser while focus has not yet reached the dialog', () => {
 		const dialog = createDialogWithButtons(0);
 		const controller = modalFocus(dialog);
 
-		// Tab on the empty dialog must not throw and must not preventDefault.
+		// Focus is still on body (the container focus is zero-delay), so the
+		// trap has nothing to pin and must not intercept the key.
 		const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true });
 		dialog.dispatchEvent(event);
 		expect(event.defaultPrevented).toBe(false);
+
+		controller.destroy();
+	});
+
+	it('pins Tab in both directions when the empty dialog holds focus', async () => {
+		const dialog = createDialogWithButtons(0);
+		const controller = modalFocus(dialog);
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		// With no focusable children, focus rests on the container; native Tab
+		// would escape to the page behind the dialog, so the trap pins both
+		// directions (preventDefault, no focus move).
+		for (const shiftKey of [false, true]) {
+			const event = new KeyboardEvent('keydown', {
+				key: 'Tab',
+				shiftKey,
+				bubbles: true,
+				cancelable: true
+			});
+			dialog.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(true);
+			expect(document.activeElement).toBe(dialog);
+		}
 
 		controller.destroy();
 	});
