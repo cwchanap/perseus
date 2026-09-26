@@ -183,14 +183,17 @@
 	}
 
 	export function zoomIn(): void {
+		if (interactionBlocked) return;
 		handleZoomIn();
 	}
 
 	export function zoomOut(): void {
+		if (interactionBlocked) return;
 		handleZoomOut();
 	}
 
 	function handleBoardWheel(event: WheelEvent) {
+		if (interactionBlocked) return;
 		event.preventDefault();
 		const zoomFactor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
 		setView(zoom * zoomFactor);
@@ -321,7 +324,12 @@
 	   constant). Fading only opacity keeps the settle compositor-cheap —
 	   transitioning a 3-layer box-shadow or a filter on the whole board
 	   repaints every piece each frame. No transform — ZoomableBoardFrame
-	   owns translate/scale, so a scale here would read as a zoom bump. */
+	   owns translate/scale, so a scale here would read as a zoom bump.
+	   The 1 px gold ring is INSET: the viewport below is overflow-hidden,
+	   and when the board fills it any outward shadow — ring included — is
+	   clipped into invisibility. An inner ring always reads; the soft
+	   outer blurs are best-effort (visible whenever the fitted board is
+	   smaller than the viewport). */
 	.board-canvas::after {
 		content: '';
 		position: absolute;
@@ -329,7 +337,7 @@
 		pointer-events: none;
 		opacity: 0;
 		box-shadow:
-			0 0 0 1px var(--gold-dim),
+			inset 0 0 0 1px var(--gold-dim),
 			0 0 24px var(--gold-glow),
 			0 0 48px var(--accent-glow);
 		transition: opacity var(--completion-reveal-duration, 500ms) ease-out;
@@ -341,9 +349,9 @@
 		opacity: 1;
 	}
 
-	/* Defensive: the route never enables the reveal under reduced motion,
-	   but if the class is ever applied there, the glow must snap rather than
-	   transition. */
+	/* Under reduced motion the route skips the timed fade (results open
+	   immediately) but the completed lifecycle still applies the class,
+	   so this rule is the live snap for the settle, not a hypothetical. */
 	@media (prefers-reduced-motion: reduce) {
 		.board-canvas::after {
 			transition: none;
