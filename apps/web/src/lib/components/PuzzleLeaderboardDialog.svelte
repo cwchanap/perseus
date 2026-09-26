@@ -72,6 +72,7 @@
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="leaderboard-title"
+		tabindex="-1"
 		use:modalFocus
 	>
 		<div class="modal-tag">// FAMILY LEADERBOARD</div>

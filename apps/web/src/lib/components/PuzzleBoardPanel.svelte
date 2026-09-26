@@ -28,6 +28,9 @@
 			y: number;
 			kind: 'accepted' | 'rejected';
 		} | null;
+		completionRevealActive?: boolean;
+		/** Settle-animation length in ms; the route passes its reveal constant so the CSS cannot drift from it. */
+		completionRevealDurationMs?: number;
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onReferenceToggle: () => void;
 	}
@@ -45,6 +48,8 @@
 		viewResetVersion,
 		referenceToggled,
 		placementFeedback = null,
+		completionRevealActive = false,
+		completionRevealDurationMs = 500,
 		onPiecePlaced,
 		onReferenceToggle
 	}: Props = $props();
@@ -178,14 +183,17 @@
 	}
 
 	export function zoomIn(): void {
+		if (interactionBlocked) return;
 		handleZoomIn();
 	}
 
 	export function zoomOut(): void {
+		if (interactionBlocked) return;
 		handleZoomOut();
 	}
 
 	function handleBoardWheel(event: WheelEvent) {
+		if (interactionBlocked) return;
 		event.preventDefault();
 		const zoomFactor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
 		setView(zoom * zoomFactor);
@@ -258,9 +266,12 @@
 			<ZoomableBoardFrame scale={zoom} {panX} {panY} {isPanning} onWheel={handleBoardWheel}>
 				<div
 					class="board-canvas mx-auto"
-					style={boardMetrics
-						? `--board-width: ${boardMetrics.boardWidth}px; --board-height: ${boardMetrics.boardHeight}px; --board-cell-size: ${boardMetrics.cellSize}px; width: var(--board-width); height: var(--board-height);`
-						: `width: ${puzzle.imageWidth}px;`}
+					class:completion-reveal={completionRevealActive}
+					style={`--completion-reveal-duration: ${completionRevealDurationMs}ms; ${
+						boardMetrics
+							? `--board-width: ${boardMetrics.boardWidth}px; --board-height: ${boardMetrics.boardHeight}px; --board-cell-size: ${boardMetrics.cellSize}px; width: var(--board-width); height: var(--board-height);`
+							: `width: ${puzzle.imageWidth}px;`
+					}`}
 				>
 					<PuzzleBoard
 						{puzzle}
@@ -302,8 +313,49 @@
 	}
 
 	.board-canvas {
+		position: relative;
 		width: var(--board-width);
 		height: var(--board-height);
+	}
+
+	/* Completed-board settle: a ::after halo whose opacity eases in over
+	   the same window the route holds results back (the route passes the
+	   duration as a custom property so the CSS cannot drift from the route
+	   constant). Fading only opacity keeps the settle compositor-cheap —
+	   transitioning a 3-layer box-shadow or a filter on the whole board
+	   repaints every piece each frame. No transform — ZoomableBoardFrame
+	   owns translate/scale, so a scale here would read as a zoom bump.
+	   The 1 px gold ring is INSET: the viewport below is overflow-hidden,
+	   and when the board fills it any outward shadow — ring included — is
+	   clipped into invisibility. An inner ring always reads; the soft
+	   outer blurs are best-effort (visible whenever the fitted board is
+	   smaller than the viewport). */
+	.board-canvas::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		opacity: 0;
+		box-shadow:
+			inset 0 0 0 1px var(--gold-dim),
+			0 0 24px var(--gold-glow),
+			0 0 48px var(--accent-glow);
+		transition: opacity var(--completion-reveal-duration, 500ms) ease-out;
+	}
+
+	/* One restrained state: a hairline gold edge plus a soft halo keep the
+	   finished artwork fully readable — no overlay, no particles, no JS loop. */
+	.board-canvas.completion-reveal::after {
+		opacity: 1;
+	}
+
+	/* Under reduced motion the route skips the timed fade (results open
+	   immediately) but the completed lifecycle still applies the class,
+	   so this rule is the live snap for the settle, not a hypothetical. */
+	@media (prefers-reduced-motion: reduce) {
+		.board-canvas::after {
+			transition: none;
+		}
 	}
 
 	/* Mobile: the page is pinned to the viewport and .game-layout fills main,

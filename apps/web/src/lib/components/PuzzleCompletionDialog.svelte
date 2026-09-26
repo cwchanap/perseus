@@ -71,17 +71,28 @@
 		onDismiss
 	}: Props = $props();
 
+	// Local subview switch: the results sheet or the dedicated artwork view.
+	// It doubles as the modalFocus key so entering a view refocuses the
+	// dialog container (the first Tab then reaches that view's controls).
+	let completionView = $state<'results' | 'artwork'>('results');
+
+	// Normalize empty-string URLs to null so the preview, the VIEW ARTWORK
+	// entry, and the artwork subview all agree on one availability check (an
+	// unchecked '' used to render fallback art next to a VIEW ARTWORK button
+	// that opened a broken <img src="">).
+	const artworkUrl = $derived(referenceImageUrl || null);
+
+	// If the reference disappears while the artwork subview is open, fall
+	// back to results; otherwise the focused BACK control is destroyed, focus
+	// drops to body, and the backdrop's delegated Escape handler goes dead.
+	$effect(() => {
+		if (completionView === 'artwork' && artworkUrl === null) completionView = 'results';
+	});
+
 	const resultLabel = $derived(RESULT_LABELS[resultClass]);
 	const timedResult = $derived(resultClass !== 'relaxed');
 	const competitiveTimedResult = $derived(
 		resultClass === 'standard_timed' || resultClass === 'rotation_timed'
-	);
-	const completionStarCount = $derived(
-		resultClass === 'relaxed'
-			? 1
-			: competitiveTimedResult && hintsUsed === 0 && incorrectAttempts === 0
-				? 3
-				: 2
 	);
 	const standardTimedResult = $derived(resultClass === 'standard_timed');
 	const serverPersonalBest = $derived(awards?.personalBest);
@@ -108,201 +119,228 @@
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="modal-title"
-		use:modalFocus
+		tabindex="-1"
+		use:modalFocus={completionView}
 	>
-		<div class="completion-layout">
-			<div class="completion-art-column">
-				{#if referenceImageUrl}
+		{#if completionView === 'artwork' && artworkUrl !== null}
+			<div class="completion-artwork-view" data-testid="completion-artwork-view">
+				<div class="artwork-identity">
+					<div class="modal-tag">// FINISHED ARTWORK</div>
+					<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
+				</div>
+				<div class="artwork-image-wrap">
 					<img
-						class="completion-reference-art"
-						data-testid="completion-reference-art"
-						src={referenceImageUrl}
+						class="completion-artwork-image"
+						data-testid="completion-artwork-image"
+						src={artworkUrl}
 						alt={`${puzzleName} finished artwork`}
 					/>
-				{:else}
-					<div
-						class="completion-reference-fallback"
-						data-testid="completion-reference-fallback"
-						role="img"
-						aria-label="Finished artwork unavailable"
+				</div>
+				<div class="artwork-actions">
+					<button
+						type="button"
+						onclick={() => (completionView = 'results')}
+						class="arcade-btn-ghost"
+						data-testid="back-to-results"
 					>
-						<span>FINISHED ART</span>
-						<strong>REFERENCE UNAVAILABLE</strong>
-					</div>
-				{/if}
+						BACK TO RESULTS
+					</button>
+				</div>
 			</div>
-
-			<div class="completion-result-column">
-				<div
-					class="completion-stars"
-					role="img"
-					aria-label={`${completionStarCount} stars awarded`}
-				>
-					{#each Array.from({ length: completionStarCount }) as _, index (index)}
-						<svg
-							class="completion-star"
-							data-testid="completion-star"
-							viewBox="0 0 24 24"
-							aria-hidden="true"
-							style={`--star-size: ${index === 1 && completionStarCount === 3 ? '5.5rem' : '4rem'}`}
+		{:else}
+			<div class="completion-layout">
+				<div class="completion-art-column">
+					{#if artworkUrl}
+						<img
+							class="completion-reference-art"
+							data-testid="completion-reference-art"
+							src={artworkUrl}
+							alt={`${puzzleName} finished artwork`}
+						/>
+					{:else}
+						<div
+							class="completion-reference-fallback"
+							data-testid="completion-reference-fallback"
+							role="img"
+							aria-label="Finished artwork unavailable"
 						>
-							<path
-								d="M12 2l2.9 6.3 6.9.8-5 4.7 1.3 6.8L12 17.4 5.9 20.6 7.2 13.8l-5-4.7 6.9-.8z"
-							/>
-						</svg>
-					{/each}
+							<span>FINISHED ART</span>
+							<strong>REFERENCE UNAVAILABLE</strong>
+						</div>
+					{/if}
 				</div>
 
-				<div class="completion-result-content">
+				<div class="completion-result-column">
 					<div class="completion-identity">
+						<svg class="completion-check" viewBox="0 0 24 24" aria-hidden="true">
+							<path
+								d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+							/>
+						</svg>
 						<div class="modal-tag">// MISSION COMPLETE</div>
 						<div class="modal-result" data-testid="completion-result-label">{resultLabel}</div>
 						<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 					</div>
 
-					<div class="modal-stats">
-						{#if timedResult && elapsedSeconds !== null}
-							<div class="modal-stat modal-stat-primary">
-								<span class="mstat-label">FINAL TIME</span>
-								<span class="mstat-value" data-testid="completion-final-time">
-									{formatTime(elapsedSeconds)}
+					<div class="completion-result-content">
+						<div class="modal-stats">
+							{#if timedResult && elapsedSeconds !== null}
+								<div class="modal-stat modal-stat-primary">
+									<span class="mstat-label">FINAL TIME</span>
+									<span class="mstat-value" data-testid="completion-final-time">
+										{formatTime(elapsedSeconds)}
+									</span>
+								</div>
+							{/if}
+
+							{#if competitiveTimedResult && displayedBestTime !== null}
+								<div class="modal-stat modal-stat-best">
+									<svg class="record-icon" viewBox="0 0 24 24" aria-hidden="true">
+										<path
+											d="M7 3h10v3a5 5 0 0 1-3 4.58V14h3v3H7v-3h3v-3.42A5 5 0 0 1 7 6V3Zm-3 1h3v2H4V4Zm13 0h3v2h-3V4Z"
+										/>
+									</svg>
+									<span class="mstat-label">RECORD</span>
+									<span
+										class="mstat-value"
+										class:gold={displayedIsNewBest}
+										class:record-new={displayedIsNewBest}
+										data-testid="completion-best-time"
+									>
+										{formatTime(displayedBestTime)}
+									</span>
+									{#if displayedIsNewBest}
+										{#if localStatsFailed && !serverPersonalBest}
+											<span class="new-record-badge unsaved" data-testid="new-best-unsaved"
+												>UNSAVED</span
+											>
+										{:else}
+											<span class="new-record-badge">NEW RECORD</span>
+										{/if}
+									{/if}
+								</div>
+							{/if}
+						</div>
+
+						<div class="completion-summary" data-testid="completion-run-summary">
+							<div class="summary-item">
+								<svg
+									class="summary-icon summary-icon-pieces"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
+									<path d="M5 5h14v14H5zM8 8h3v3H8zm5 0h3v3h-3zM8 13h3v3H8zm5 0h3v3h-3z" />
+								</svg>
+								<span class="mstat-label">PIECES</span>
+								<span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
+							</div>
+							<div class="summary-item">
+								<svg class="summary-icon summary-icon-hints" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M12 3a7 7 0 0 0-4 12.74V19h8v-3.26A7 7 0 0 0 12 3Zm-2 18h4v-1h-4v1Z" />
+								</svg>
+								<span class="mstat-label">HINTS USED</span>
+								<span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
+							</div>
+							<div class="summary-item">
+								<svg
+									class="summary-icon summary-icon-incorrect"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
+									<path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3Zm1 0v7h7v2h-9V3h2Z" />
+								</svg>
+								<span class="mstat-label">INCORRECT ATTEMPTS</span>
+								<span class="summary-value" data-testid="completion-incorrect-attempts">
+									{incorrectAttempts}
 								</span>
 							</div>
-						{/if}
-
-						{#if competitiveTimedResult && displayedBestTime !== null}
-							<div class="modal-stat modal-stat-best">
-								<svg class="record-icon" viewBox="0 0 24 24" aria-hidden="true">
+							<div class="summary-item">
+								<svg
+									class="summary-icon summary-icon-rotation"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
 									<path
-										d="M7 3h10v3a5 5 0 0 1-3 4.58V14h3v3H7v-3h3v-3.42A5 5 0 0 1 7 6V3Zm-3 1h3v2H4V4Zm13 0h3v2h-3V4Z"
+										d="M6 7h10.17l-1.58-1.59L16 4l4 4-4 4-1.41-1.41L16.17 9H6V7Zm12 10H7.83l1.58 1.59L8 20l-4-4 4-4 1.41 1.41L7.83 15H18v2Z"
 									/>
 								</svg>
-								<span class="mstat-label">RECORD</span>
-								<span
-									class="mstat-value"
-									class:gold={displayedIsNewBest}
-									class:record-new={displayedIsNewBest}
-									data-testid="completion-best-time"
-								>
-									{formatTime(displayedBestTime)}
+								<span class="mstat-label">ROTATION</span>
+								<span class="summary-value rotation-value">
+									<span aria-hidden="true">{rotationEnabled ? 'ON' : 'OFF'}</span>
+									<span class="rotation-summary-full" data-testid="completion-rotation"
+										>{rotationSummary}</span
+									>
 								</span>
-								{#if displayedIsNewBest}
-									{#if localStatsFailed && !serverPersonalBest}
-										<span class="new-record-badge unsaved" data-testid="new-best-unsaved"
-											>UNSAVED</span
-										>
-									{:else}
-										<span class="new-record-badge">NEW RECORD</span>
-									{/if}
-								{/if}
 							</div>
-						{/if}
-					</div>
+						</div>
 
-					<div class="completion-summary" data-testid="completion-run-summary">
-						<div class="summary-item">
-							<svg class="summary-icon summary-icon-pieces" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M5 5h14v14H5zM8 8h3v3H8zm5 0h3v3h-3zM8 13h3v3H8zm5 0h3v3h-3z" />
-							</svg>
-							<span class="mstat-label">PIECES</span>
-							<span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
-						</div>
-						<div class="summary-item">
-							<svg class="summary-icon summary-icon-hints" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M12 3a7 7 0 0 0-4 12.74V19h8v-3.26A7 7 0 0 0 12 3Zm-2 18h4v-1h-4v1Z" />
-							</svg>
-							<span class="mstat-label">HINTS USED</span>
-							<span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
-						</div>
-						<div class="summary-item">
-							<svg
-								class="summary-icon summary-icon-incorrect"
-								viewBox="0 0 24 24"
-								aria-hidden="true"
-							>
-								<path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3Zm1 0v7h7v2h-9V3h2Z" />
-							</svg>
-							<span class="mstat-label">INCORRECT ATTEMPTS</span>
-							<span class="summary-value" data-testid="completion-incorrect-attempts">
-								{incorrectAttempts}
-							</span>
-						</div>
-						<div class="summary-item">
-							<svg
-								class="summary-icon summary-icon-rotation"
-								viewBox="0 0 24 24"
-								aria-hidden="true"
-							>
-								<path
-									d="M6 7h10.17l-1.58-1.59L16 4l4 4-4 4-1.41-1.41L16.17 9H6V7Zm12 10H7.83l1.58 1.59L8 20l-4-4 4-4 1.41 1.41L7.83 15H18v2Z"
-								/>
-							</svg>
-							<span class="mstat-label">ROTATION</span>
-							<span class="summary-value rotation-value">
-								<span aria-hidden="true">{rotationEnabled ? 'ON' : 'OFF'}</span>
-								<span class="rotation-summary-full" data-testid="completion-rotation"
-									>{rotationSummary}</span
+						<div class="modal-actions">
+							<button onclick={onPlayAgain} class="arcade-btn">PLAY AGAIN</button>
+							<button onclick={onBackToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
+							{#if artworkUrl !== null}
+								<button
+									type="button"
+									onclick={() => (completionView = 'artwork')}
+									class="arcade-btn-ghost completion-view-artwork"
+									data-testid="view-artwork"
 								>
-							</span>
+									VIEW ARTWORK
+								</button>
+							{/if}
 						</div>
-					</div>
 
-					<div class="modal-actions">
-						<button onclick={onPlayAgain} class="arcade-btn">PLAY AGAIN</button>
-						<button onclick={onBackToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
-					</div>
+						<div class="completion-awards">
+							{#if awards?.clearPoints}
+								<div class="award-banner" data-testid="completion-clear-points">
+									+{awards.clearPoints} SCORE
+								</div>
+							{/if}
 
-					<div class="completion-awards">
-						{#if awards?.clearPoints}
-							<div class="award-banner" data-testid="completion-clear-points">
-								+{awards.clearPoints} SCORE
-							</div>
-						{/if}
+							{#if awards?.achievements?.length}
+								<div class="award-section" data-testid="completion-achievements">
+									<div class="award-heading">NEW ACHIEVEMENTS</div>
+									<ul class="award-list">
+										{#each awards.achievements as achievement (achievement)}
+											<li>{ACHIEVEMENT_LABELS[achievement] ?? achievement}</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
 
-						{#if awards?.achievements?.length}
-							<div class="award-section" data-testid="completion-achievements">
-								<div class="award-heading">NEW ACHIEVEMENTS</div>
-								<ul class="award-list">
-									{#each awards.achievements as achievement (achievement)}
-										<li>{ACHIEVEMENT_LABELS[achievement] ?? achievement}</li>
-									{/each}
-								</ul>
-							</div>
-						{/if}
+							{#if awards?.mastery?.length}
+								<div class="award-section" data-testid="completion-mastery">
+									<div class="award-heading">MASTERY EARNED</div>
+									<ul class="award-list">
+										{#each awards.mastery as badge (badge)}
+											<li>{MASTERY_LABELS[badge] ?? badge}</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
 
-						{#if awards?.mastery?.length}
-							<div class="award-section" data-testid="completion-mastery">
-								<div class="award-heading">MASTERY EARNED</div>
-								<ul class="award-list">
-									{#each awards.mastery as badge (badge)}
-										<li>{MASTERY_LABELS[badge] ?? badge}</li>
-									{/each}
-								</ul>
-							</div>
-						{/if}
-
-						{#if awards?.puzzleRank}
-							<div class="award-banner" data-testid="completion-puzzle-rank">
-								FAMILY RANK #{awards.puzzleRank}
-							</div>
-						{/if}
-					</div>
-
-					{#if serverSubmissionRetryable}
-						<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
-							<span class="server-retry-label">MISSION SYNC FAILED</span>
-							<button
-								onclick={onRetryServerSubmission}
-								class="arcade-btn-ghost"
-								data-testid="retry-server-submission"
-							>
-								RETRY SYNC
-							</button>
+							{#if awards?.puzzleRank}
+								<div class="award-banner" data-testid="completion-puzzle-rank">
+									FAMILY RANK #{awards.puzzleRank}
+								</div>
+							{/if}
 						</div>
-					{/if}
+
+						{#if serverSubmissionRetryable}
+							<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
+								<span class="server-retry-label">MISSION SYNC FAILED</span>
+								<button
+									onclick={onRetryServerSubmission}
+									class="arcade-btn-ghost"
+									data-testid="retry-server-submission"
+								>
+									RETRY SYNC
+								</button>
+							</div>
+						{/if}
+					</div>
 				</div>
 			</div>
-		</div>
+		{/if}
 	</div>
 </div>
 
@@ -324,6 +362,10 @@
 		padding: clamp(1.25rem, 3vw, 3.5rem);
 		width: min(calc(100% - 2rem), 84rem);
 		max-height: calc(100vh - 2rem);
+		/* Shared gold frame for the reference art and the artwork subview. */
+		--gold-frame:
+			0 0 0 2px rgba(255, 204, 0, 0.7), 0 0 35px rgba(255, 178, 58, 0.3),
+			0 14px 32px rgba(0, 0, 0, 0.5);
 		box-shadow:
 			0 0 60px var(--accent-glow-strong),
 			0 0 120px var(--accent-glow),
@@ -395,21 +437,19 @@
 		text-align: center;
 	}
 
-	.completion-stars {
+	.completion-identity {
 		display: flex;
-		align-items: flex-end;
-		justify-content: center;
-		gap: 0.5rem;
-		min-height: 4rem;
+		flex-direction: column;
+		align-items: center;
 		margin: 1rem 0 0.5rem;
-		color: var(--gold);
-		filter: drop-shadow(0 0 14px var(--gold-glow));
 	}
 
-	.completion-star {
-		width: var(--star-size);
-		height: var(--star-size);
-		fill: currentColor;
+	.completion-check {
+		width: 4rem;
+		height: 4rem;
+		fill: var(--accent);
+		filter: drop-shadow(0 0 14px var(--accent-glow-strong));
+		margin-bottom: 0.5rem;
 		flex: 0 0 auto;
 	}
 
@@ -442,6 +482,7 @@
 		letter-spacing: 0.15em;
 		color: var(--text-1);
 		margin: 0.5rem 0 0;
+		max-width: 100%;
 		text-overflow: ellipsis;
 		overflow: hidden;
 		white-space: nowrap;
@@ -630,19 +671,6 @@
 		.completion-result-column {
 			text-align: left;
 		}
-
-		.completion-stars,
-		.modal-stats {
-			justify-content: flex-start;
-		}
-
-		.completion-star:nth-child(2) {
-			margin-bottom: 0.75rem;
-		}
-
-		.modal-actions {
-			justify-content: flex-start;
-		}
 	}
 
 	@media (min-width: 1440px) {
@@ -736,28 +764,25 @@
 	.completion-reference-fallback {
 		width: min(100%, 235px);
 		border-radius: 1.2rem;
-		box-shadow:
-			0 0 0 2px rgba(255, 204, 0, 0.7),
-			0 0 35px rgba(255, 178, 58, 0.3),
-			0 14px 32px rgba(0, 0, 0, 0.5);
+		box-shadow: var(--gold-frame);
 	}
 
 	.completion-result-column {
 		display: contents;
 	}
 
-	.completion-stars {
+	.completion-identity {
 		grid-row: 1;
 		align-items: center;
 		justify-content: center;
-		gap: 0.4rem;
-		min-height: 4.5rem;
+		gap: 0.3rem;
 		margin: 0;
 	}
 
-	.completion-star {
-		width: min(var(--star-size), 4.75rem);
-		height: min(var(--star-size), 4.75rem);
+	.completion-check {
+		width: 4.25rem;
+		height: 4.25rem;
+		margin-bottom: 0.25rem;
 	}
 
 	.completion-result-content {
@@ -767,18 +792,6 @@
 		min-width: 0;
 		min-height: 0;
 		text-align: center;
-	}
-
-	.completion-identity {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
-		border: 0;
 	}
 
 	.modal-stats {
@@ -945,14 +958,13 @@
 			min-height: 0;
 		}
 
-		.completion-stars,
-		.modal-stats {
-			justify-content: flex-start;
+		.completion-identity {
+			align-items: flex-start;
+			text-align: left;
 		}
 
-		.completion-stars {
-			grid-row: auto;
-			min-height: 4.5rem;
+		.modal-stats {
+			justify-content: flex-start;
 		}
 
 		.completion-result-content {
@@ -1016,8 +1028,9 @@
 			align-items: flex-start;
 		}
 
-		.completion-stars {
-			min-height: 4.25rem;
+		.completion-check {
+			width: 3.75rem;
+			height: 3.75rem;
 		}
 
 		.completion-result-content {
@@ -1051,6 +1064,10 @@
 			width: 100%;
 			min-width: 0;
 			padding: 0.65rem 0.5rem;
+		}
+
+		.modal-actions > .completion-view-artwork {
+			grid-column: 1 / -1;
 		}
 
 		.rotation-value {
@@ -1092,6 +1109,57 @@
 		.modal-actions {
 			margin-top: 2.4rem;
 		}
+	}
+
+	/* ===== ARTWORK SUBVIEW ===== */
+	.completion-artwork-view {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.9rem;
+		box-sizing: border-box;
+		width: 100%;
+		max-width: 1128px;
+		height: 100%;
+		margin: 0 auto;
+		/* The ≥900px modal has no padding of its own; keep the framed artwork
+		   off the viewport edges without shrinking the results layout. */
+		padding: clamp(0.75rem, 3vh, 2rem) 0;
+	}
+
+	.artwork-identity {
+		text-align: center;
+		max-width: 100%;
+	}
+
+	/* The wrapper absorbs the flex stretch; the img inside sizes to its own
+	   aspect ratio (max-width/max-height contain-fit), so a wide image is
+	   never letterboxed with dark bars inside the gold frame. */
+	.artwork-image-wrap {
+		flex: 1 1 auto;
+		min-height: 0;
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.completion-artwork-image {
+		max-width: 100%;
+		max-height: 100%;
+		width: auto;
+		height: auto;
+		/* No-op with the auto-dimension contain-fit sizing above, but keeps the
+		   image undistorted if any future constraint clamps the element box. */
+		object-fit: contain;
+		border-radius: 1.2rem;
+		box-shadow: var(--gold-frame);
+	}
+
+	.artwork-actions {
+		display: flex;
+		justify-content: center;
+		flex: 0 0 auto;
 	}
 
 	.rotation-summary-full {

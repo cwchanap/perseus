@@ -75,7 +75,11 @@ export interface GotoFixtureOptions {
 	 * Clock control. `{ startAt }` installs AND pauses Playwright's clock at
 	 * `startAt` before navigation, so navigation does not advance it and
 	 * performance.now() stays at zero until a test calls page.clock.runFor();
-	 * `false` (or omitted) leaves the real wall clock in place.
+	 * `false` (or omitted) leaves the real wall clock in place. Installing a
+	 * paused clock also reduces motion for the page: a paused clock freezes
+	 * the route's 500 ms first-seal reveal setTimeout forever, so
+	 * paused-clock completion tests need reduced motion to keep results
+	 * immediate. Real-clock runs keep normal motion (and the reveal) intact.
 	 */
 	clock?: { startAt: Date } | false;
 	/**
@@ -198,6 +202,16 @@ export class GameplayPage {
 		// page.clock.runFor(). Navigation with a paused clock is safe: pages do
 		// not need advancing time to initialize, and fetch is clock-independent.
 		if (options.clock && typeof options.clock === 'object') {
+			// A paused clock also freezes the route's 500 ms first-seal reveal
+			// timer (a plain setTimeout), so paused-clock runs reduce motion to
+			// keep completion results immediate. Scoped here rather than in the
+			// Playwright config: a global reduced-motion default also disables
+			// every animation/transition the app CSS gates on
+			// prefers-reduced-motion, and real-clock lanes keep the reveal covered.
+			// (Config-level, the only working key is
+			// `use.contextOptions.reducedMotion` — a bare `use.reducedMotion` is
+			// silently ignored by Playwright 1.57.)
+			await this.page.emulateMedia({ reducedMotion: 'reduce' });
 			await this.page.clock.install({ time: options.clock.startAt });
 			await this.page.clock.pauseAt(options.clock.startAt);
 		}
@@ -456,18 +470,11 @@ export class GameplayPage {
 		await this.celebrationModal().getByRole('button', { name: 'PLAY AGAIN' }).click();
 	}
 
-	/** Assert the dialog's initial focus landed on the target element. */
-	async expectDialogInitialFocus(dialog: Locator, target: Locator): Promise<void> {
-		await expect(target).toBeFocused();
-		// The focused element must be a descendant of the dialog under test: a
-		// stale locator that resolves to an element inside a different dialog
-		// (e.g. one left open by an earlier step) would otherwise satisfy the
-		// focus assertion.
-		const contained = await dialog.evaluate(
-			(dialogEl, focusedEl) => dialogEl.contains(focusedEl),
-			await target.elementHandle()
-		);
-		expect(contained).toBe(true);
+	/** Assert the dialog's initial focus landed on the dialog container itself. */
+	async expectDialogInitialFocus(dialog: Locator): Promise<void> {
+		// modalFocus lands focus on the dialog container (tabindex="-1"), not a
+		// control that may sit below the fold when the dialog overflows.
+		await expect(dialog).toBeFocused();
 	}
 
 	/** Click a visible action button inside the dialog by accessible name. */
