@@ -185,6 +185,33 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.poll(() => document.activeElement).toBe(dialogBox);
 	});
 
+	it('contains a tall artwork inside the viewport without scrolling the modal box', async () => {
+		// The contain-fit chain runs through .modal-box { height: 100% } (the
+		// later arcade restyle), which makes .completion-artwork-view and the
+		// flex-grown wrap definite so the img's max-height: 100% resolves. If
+		// that cascade ever regresses to an auto-height chain, a tall reference
+		// lays out at intrinsic size and the dialog starts scrolling.
+		const tallSvg =
+			'data:image/svg+xml,' +
+			encodeURIComponent(
+				'<svg xmlns="http://www.w3.org/2000/svg" width="600" height="2400"><rect width="100%" height="100%" fill="#c33"/></svg>'
+			);
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: tallSvg
+		});
+
+		await page.getByRole('button', { name: 'VIEW ARTWORK' }).click();
+		const img = (await page.getByTestId('completion-artwork-image').element()) as HTMLImageElement;
+		await expect.poll(() => img.complete && img.naturalHeight).toBe(2400);
+
+		const box = document.querySelector<HTMLElement>('.modal-box');
+		expect(box).not.toBeNull();
+		expect(box!.scrollHeight).toBeLessThanOrEqual(box!.clientHeight + 1);
+		expect(Math.round(img.getBoundingClientRect().height)).toBeLessThanOrEqual(box!.clientHeight);
+		expect(Math.round(img.getBoundingClientRect().height)).toBeLessThan(img.naturalHeight);
+	});
+
 	it('dismisses the whole modal on Escape from the artwork view', async () => {
 		const input = {
 			...standardTimedProps(),
