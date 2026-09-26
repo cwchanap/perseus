@@ -2223,6 +2223,62 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('blocks the toolbar Reset View control during the reveal so the completed board stays put', async () => {
+		// HPA-465 final-review fix (continuation): Reset View bumps
+		// viewResetVersion and the board panel's reset effect applies it
+		// unconditionally — zoom/wheel/pan are already gated, so without a
+		// route-side guard a mid-reveal click snaps the completed board back
+		// to fit ahead of the pending results. The control stays enabled;
+		// the route handler is the contract under test.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+
+			const getScale = () => {
+				const el = document.querySelector<HTMLElement>('[data-testid="zoomable-board-frame"]');
+				const match = el?.getAttribute('style')?.match(/scale\(([\d.]+)\)/);
+				return match ? parseFloat(match[1]) : NaN;
+			};
+
+			const initialScale = getScale();
+			await openMoreActions();
+			await page.getByLabelText('Zoom in').click();
+			await vi.advanceTimersByTimeAsync(0);
+			const zoomedScale = getScale();
+			expect(zoomedScale).toBeGreaterThan(initialScale);
+
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+			expect(page.getByTestId('celebration-modal').query()).toBeNull();
+
+			// Direct DOM query + dispatch: the control may sit inside the
+			// overflow disclosure at this viewport, but the route handler is
+			// the contract under test (same technique as the filter test).
+			const resetButton = document.querySelector<HTMLButtonElement>(
+				'button[data-toolbar-action="fit"]'
+			);
+			expect(resetButton).not.toBeNull();
+			resetButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(getScale()).toBe(zoomedScale);
+
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			expect(getScale()).toBe(zoomedScale);
+
+			// Once results are dismissed the same control resets normally.
+			const modal = await page.getByTestId('celebration-modal').element();
+			modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			resetButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(getScale()).toBe(initialScale);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('blocks the family leaderboard control during the reveal so only the completion dialog opens', async () => {
 		// HPA-465 final-review fix (continuation): the leaderboard button is
 		// not a gameplay mutation, but opening it mid-reveal stacks it under

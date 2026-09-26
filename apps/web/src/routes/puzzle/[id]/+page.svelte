@@ -366,6 +366,17 @@
 		boardViewResetVersion += 1;
 	}
 
+	// Toolbar Reset View is a board-view mutation like zoom/pan: during the
+	// first-seal reveal it must not snap the completed board back to fit, so
+	// the toolbar callback is gated on gameplayInputBlocked like the other
+	// toolbar handlers. The internal callers above/below (load, setup apply,
+	// restart) still bump the version unconditionally — they are lifecycle
+	// transitions, not player input.
+	function handleResetView(): void {
+		if (gameplayInputBlocked) return;
+		requestBoardViewReset();
+	}
+
 	const progressPct = $derived.by(() => {
 		if (!puzzle || puzzle.pieceCount === 0) return 0;
 		if (placedPieces.length >= puzzle.pieceCount) return 100;
@@ -1422,7 +1433,7 @@
 						onReferenceToggle={handleReferenceToggle}
 						onZoomIn={() => boardPanel?.zoomIn()}
 						onZoomOut={() => boardPanel?.zoomOut()}
-						onResetView={requestBoardViewReset}
+						onResetView={handleResetView}
 						onRotationToggle={handleRotationToggle}
 						onPause={handleToolbarPause}
 						onOpenSetup={() => showMissionSetup(false)}
