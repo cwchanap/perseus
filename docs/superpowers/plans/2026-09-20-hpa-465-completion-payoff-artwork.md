@@ -136,15 +136,11 @@ Call it from:
 
 It must not touch completion facts/effects.
 
-### 1.5 Leave lifecycle completion opening results immediately
+### 1.5 Gate lifecycle completion on a pending reveal timer
 
-Do not gate the lifecycle handler with a pending flag.
+For `event.type === 'lifecycle' && event.to === 'completed'`: open results only when no reveal timer is pending (`completionRevealTimeout === null`).
 
-Keep the current behavior for `event.type === 'lifecycle' && event.to === 'completed'`:
-
-- open results immediately.
-
-This is required for:
+The route must not depend on game-core's event order: if `completion_sealed` ever arrived before lifecycle→completed, an unconditional open here would cancel the reveal. The pending-timer check is the single source of truth, and the timer-less paths stay immediate:
 
 - redo of the final move;
 - dismiss -> undo -> place the final piece again.
@@ -279,10 +275,10 @@ Do not add another callback, event, or board model.
 
 Apply the state to `.board-canvas`, not individual puzzle pieces.
 
-Use one restrained CSS glow/filter state:
+Use one restrained CSS glow state (box-shadow only — no filter, which would repaint every piece per frame):
 
-- modest accent/gold box-shadow and/or filter;
-- roughly the same 500 ms duration;
+- an inset 1 px gold ring plus soft outer blurs (the ring is inset because the board viewport is `overflow-hidden` and clips outward shadows when the board fills it);
+- opacity-only transition over roughly the same 500 ms duration;
 - no transform/scale animation because `ZoomableBoardFrame` already owns translate/scale and a second scale would look like a zoom bump.
 
 Requirements:
@@ -292,13 +288,15 @@ Requirements:
 - no particle nodes;
 - no JS animation loop.
 
-Add a `prefers-reduced-motion: reduce` rule that disables the glow/filter transition defensively.
+Add a `prefers-reduced-motion: reduce` rule that disables the glow opacity transition defensively (the settle class still applies via the completed lifecycle; it snaps rather than fades).
 
 ### 2.4 Pass the route state into the panel
 
 From the existing puzzle route call site:
 
-`completionRevealActive={completionRevealActive}`
+`completionRevealActive={boardCompletionTreatment}`
+
+where `boardCompletionTreatment = completionRevealActive || lifecycle === 'completed'` — the settle spans the reveal window AND the completed lifecycle (dismissing results keeps the glow at its peak; it drops only when Play Again/restart leaves `completed`).
 
 No `PuzzleBoard.svelte` change unless the panel wrapper proves insufficient during implementation.
 
@@ -373,7 +371,7 @@ Change the existing action to:
 
 `use:modalFocus={completionView}`
 
-`modalFocus.update()` already refocuses the first visible focusable when the key changes; no new focus helper is needed.
+`modalFocus.update()` refocuses the dialog container when the key changes (same focusDialog path as mount); no new focus helper is needed.
 
 ### 3.5 Preserve the two primary actions and add View Artwork as tertiary
 
@@ -387,7 +385,7 @@ Only render `VIEW ARTWORK` when `referenceImageUrl !== null`.
 
 Style it as a tertiary ghost action. Scope `grid-column: 1 / -1` to the existing narrow-viewport media block where `.modal-actions` actually becomes a two-column CSS grid. Do not add the span rule at base flex layout.
 
-This preserves Play Again as initial focus in unit/E2E/a11y tests.
+This preserves Play Again as the first focusable; initial focus goes to the dialog container (below-the-fold safe on short viewports) in unit/E2E/a11y tests.
 
 ### 3.6 Render a dedicated contain-fit artwork view
 
@@ -395,7 +393,7 @@ When `completionView === 'artwork'` and the URL exists:
 
 - keep the same modal/backdrop/focus action;
 - render the same URL as the primary image;
-- use a **separate** artwork-view class with viewport-bounded sizing and `object-fit: contain`;
+- use a **separate** artwork-view class with viewport-bounded contain-fit sizing (auto-dimension image with `max-width`/`max-height: 100%` inside the definite-height chain from `.modal-box { height: 100% }` through the flex-grown wrap; `object-fit: contain` kept as a distortion safeguard);
 - retain accessible puzzle/artwork naming;
 - render one `BACK TO RESULTS` action.
 
@@ -415,8 +413,10 @@ Keep:
 
 Because `completionView` is the modal-focus update key:
 
-- results -> artwork focuses `BACK TO RESULTS`;
-- artwork -> results focuses `PLAY AGAIN`.
+- results -> artwork refocuses the dialog container;
+- artwork -> results refocuses the dialog container.
+
+The first Tab after either switch reaches that subview's first control.
 
 Escape still dismisses the whole completion modal; it is not an alternate Back action.
 
@@ -427,9 +427,8 @@ Dialog component tests cover:
 - all result facts/awards remain truthful;
 - Play Again is the first results focusable;
 - reference URL -> View Artwork exists after the primaries;
-- switch -> focused artwork uses the same `src` with contain-view marker/class;
-- Back to Results receives focus on artwork entry;
-- returning restores results and focus returns to Play Again;
+- switch -> focused artwork uses the same `src` with contain-view marker/class, and the container is refocused;
+- Back to Results restores results with the container refocused;
 - null URL -> fallback visible and View Artwork absent;
 - Escape and focus containment remain intact.
 
