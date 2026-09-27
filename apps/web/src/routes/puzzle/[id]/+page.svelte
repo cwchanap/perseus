@@ -1048,6 +1048,13 @@
 
 	function handleWindowPointerMove(event: PointerEvent): void {
 		if (trayResizePointerId !== event.pointerId) return;
+		// A drag begun before the completion seal must not keep resizing the
+		// tray during the reveal: cancel it once gameplay input is blocked
+		// (the pointerdown guard only blocks new drags).
+		if (gameplayInputBlocked) {
+			trayResizePointerId = null;
+			return;
+		}
 		const deltaX = event.clientX - trayResizeStartX;
 		setRequestedTrayWidth(trayResizeStartWidth - deltaX);
 	}
