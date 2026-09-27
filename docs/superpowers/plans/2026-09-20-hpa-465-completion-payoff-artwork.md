@@ -1,6 +1,6 @@
 # HPA-465 Completion Payoff and Artwork Viewing — Implementation Plan
 
-> Continue implementation on this same branch/PR. One Linear ticket -> one PR.
+> Status: implemented — Tasks 1-4 are complete on this PR; this plan is the shipped record, not pending work. One Linear ticket -> one PR.
 
 **Goal:** Add a short live final-board reveal, remove the misleading star grade, and let players inspect the existing finished artwork without changing completion semantics or progression.
 
@@ -434,7 +434,7 @@ Dialog component tests cover:
 
 Update the route's existing two-button Tab-wrap test here, after the artwork action exists:
 
-- Play Again remains first/initial focus;
+- Play Again remains the first focusable (initial focus is the dialog container — below-the-fold safe on short viewports; the first Tab reaches Play Again);
 - Back to Arcade remains the second primary;
 - View Artwork is the tertiary last action for the default reference fixture;
 - Tab from View Artwork wraps to Play Again;
@@ -448,7 +448,7 @@ This is the single owner of that route focus-contract update.
 
 Replace that assertion with the new visible `MISSION COMPLETE` framing.
 
-Keep the existing initial-focus assertion on Play Again. This is not optional/manual coverage; the old assertion will fail on this PR once stars are removed.
+Keep the existing initial-focus assertion, updated to the dialog container (the first Tab reaches Play Again). This is not optional/manual coverage; the old Play Again assertion fails on this PR once the container focus lands.
 
 ### 3.10 Run focused dialog and route tests
 
@@ -525,6 +525,6 @@ Reject scope creep into:
 
 ### 4.7 Keep the same PR
 
-After planning review, continue Tasks 1-4 on this branch and update this same draft PR’s description/checklist as implementation lands.
+Done: Tasks 1-4 landed on this branch, and this same PR's description/checklist was updated as implementation landed.
 
-Do not open a second HPA-465 implementation PR.
+No second HPA-465 implementation PR was opened.
