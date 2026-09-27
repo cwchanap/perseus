@@ -222,6 +222,19 @@ test.describe('mission session controls', () => {
 		await page.keyboard.press('Shift+Tab');
 		await expect(setup.getByRole('button', { name: 'Start Mission' })).toBeFocused();
 
+		await setup.focus();
+		await page.keyboard.press('Tab');
+		await expect(setup.getByLabel('Timed')).toBeFocused();
+		await page.keyboard.press('Shift+Tab');
+		await expect(setup.getByRole('button', { name: 'Start Mission' })).toBeFocused();
+
+		await setup.getByLabel('Relaxed').check();
+		await setup.focus();
+		await page.keyboard.press('Tab');
+		await expect(setup.getByLabel('Relaxed')).toBeFocused();
+		await page.keyboard.press('Shift+Tab');
+		await expect(setup.getByRole('button', { name: 'Start Mission' })).toBeFocused();
+
 		// A short (dynamic-height) viewport must keep the dialog usable.
 		await page.setViewportSize({ width: 390, height: 480 });
 		await expect(setup).toBeVisible();
