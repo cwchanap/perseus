@@ -172,6 +172,34 @@ describe('modalFocus action', () => {
 		controller.destroy();
 	});
 
+	it('treats the checked radio as the first Tab stop when it is not first in its group', () => {
+		const dialog = createDialogWithButtons(1);
+		for (const value of ['timed', 'relaxed']) {
+			const radio = document.createElement('input');
+			radio.type = 'radio';
+			radio.name = 'mission-mode';
+			radio.value = value;
+			radio.checked = value === 'relaxed';
+			dialog.insertBefore(radio, dialog.querySelector('button'));
+		}
+		const controller = modalFocus(dialog);
+		const relaxed = dialog.querySelector<HTMLInputElement>('input[value="relaxed"]')!;
+		const last = dialog.querySelector('button')!;
+		relaxed.focus();
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true
+		});
+		dialog.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(last);
+
+		controller.destroy();
+	});
+
 	it('lets forward Tab from the container pass through to the first control', async () => {
 		// Synthetic keydown events do not trigger native Tab navigation, so
 		// this asserts non-prevention: the browser moves focus to the first

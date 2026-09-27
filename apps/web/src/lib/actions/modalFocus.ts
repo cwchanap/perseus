@@ -11,10 +11,24 @@ export function modalFocus(node: HTMLElement, focusKey: unknown = true) {
 	// tabindex="-1" in markup, this guards the ones that don't.
 	if (!node.hasAttribute('tabindex')) node.tabIndex = -1;
 
-	const focusable = () =>
-		Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+	const focusable = () => {
+		const elements = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
 			(element) => element.offsetParent !== null
 		);
+		return elements.filter((element) => {
+			if (!(element instanceof HTMLInputElement) || element.type !== 'radio' || !element.name) {
+				return true;
+			}
+			const group = elements.filter(
+				(candidate): candidate is HTMLInputElement =>
+					candidate instanceof HTMLInputElement &&
+					candidate.type === 'radio' &&
+					candidate.name === element.name &&
+					candidate.form === element.form
+			);
+			return (group.find((radio) => radio.checked) ?? group[0]) === element;
+		});
+	};
 
 	const focusDialog = () => {
 		if (focusTimer !== null) clearTimeout(focusTimer);
