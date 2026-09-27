@@ -2250,6 +2250,66 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('cancels an in-flight tray drag when the reveal starts so the completed board stays put', async () => {
+		// HPA-465 review (Devin): the pointerdown guard only blocks new
+		// drags. A resize begun before the final placement kept steering
+		// handleWindowPointerMove through the 500 ms reveal, shifting the
+		// finished board. The move handler now drops the active pointer on
+		// gameplayInputBlocked; same drag then stays dead after results open.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			const restoreViewport = setDesktopViewport();
+			try {
+				await renderPuzzlePage();
+				const layout = document.querySelector<HTMLElement>('.game-layout')!;
+				Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1000 });
+				window.dispatchEvent(new Event('resize'));
+
+				const separator = await page.getByTestId('tray-resizer').element();
+				separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+				await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('300px');
+
+				separator.dispatchEvent(
+					new PointerEvent('pointerdown', {
+						bubbles: true,
+						pointerId: 7,
+						pointerType: 'mouse',
+						button: 0,
+						clientX: 100
+					})
+				);
+				window.dispatchEvent(
+					new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: 84 })
+				);
+				await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('316px');
+
+				// Final placement seals the board mid-drag: further moves for
+				// the same pointer must not resize, and the drag must stay
+				// cancelled once the results dialog is open.
+				await placePiece(0, 0, 0);
+				await placePiece(1, 1, 0);
+				window.dispatchEvent(
+					new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: 20 })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(layout.style.getPropertyValue('--tray-width').trim()).toBe('316px');
+
+				await vi.advanceTimersByTimeAsync(500);
+				await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+				window.dispatchEvent(
+					new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: 20 })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(layout.style.getPropertyValue('--tray-width').trim()).toBe('316px');
+			} finally {
+				restoreViewport();
+			}
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('blocks the toolbar Reset View control during the reveal so the completed board stays put', async () => {
 		// HPA-465 final-review fix (continuation): Reset View bumps
 		// viewResetVersion and the board panel's reset effect applies it
