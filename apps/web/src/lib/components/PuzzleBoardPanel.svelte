@@ -29,8 +29,8 @@
 			kind: 'accepted' | 'rejected';
 		} | null;
 		completionRevealActive?: boolean;
-		/** Settle-animation length in ms; the route passes its reveal constant so the CSS cannot drift from it. */
-		completionRevealDurationMs?: number;
+		/** Settle-animation length in ms; required so a forgotten prop cannot drift from the route's reveal constant. */
+		completionRevealDurationMs: number;
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onReferenceToggle: () => void;
 	}
@@ -49,7 +49,7 @@
 		referenceToggled,
 		placementFeedback = null,
 		completionRevealActive = false,
-		completionRevealDurationMs = 500,
+		completionRevealDurationMs,
 		onPiecePlaced,
 		onReferenceToggle
 	}: Props = $props();
@@ -193,14 +193,21 @@
 	}
 
 	function handleBoardWheel(event: WheelEvent) {
-		if (interactionBlocked) return;
+		// Claim the wheel even while input is blocked — otherwise the browser
+		// scrolls an ancestor (.board-wrap / .puzzle-main) during the reveal.
 		event.preventDefault();
+		if (interactionBlocked) return;
 		const zoomFactor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
 		setView(zoom * zoomFactor);
 	}
 
 	function handleBoardPointerDown(event: PointerEvent) {
-		if (interactionBlocked || !canPanBoard) return;
+		if (interactionBlocked) {
+			// Claim the press so native drag defaults cannot start mid-reveal.
+			event.preventDefault();
+			return;
+		}
+		if (!canPanBoard) return;
 		if (event.pointerType === 'mouse' && event.button !== 0) return;
 
 		event.preventDefault();
@@ -349,9 +356,10 @@
 		opacity: 1;
 	}
 
-	/* Under reduced motion the route skips the timed fade (results open
-	   immediately) but the completed lifecycle still applies the class,
-	   so this rule is the live snap for the settle, not a hypothetical. */
+	/* Under reduced motion the route skips the timed hold — no 500 ms
+	   timer before results — but the completed lifecycle still applies the
+	   class, so this rule (not the route) is what snaps the settle to its
+	   settled opacity instead of fading it. */
 	@media (prefers-reduced-motion: reduce) {
 		.board-canvas::after {
 			transition: none;

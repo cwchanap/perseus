@@ -1,7 +1,7 @@
 # HPA-465: Completion Payoff and Artwork Viewing — Design
 
 **Linear:** HPA-465  
-**Status:** Design for implementation  
+**Status:** Implemented (PR #89) — this document is the shipped record, not pending work  
 **Date:** 2026-09-20
 
 ## Context
@@ -321,7 +321,7 @@ Run the **full smoke lane**, not only the touched interaction spec, because the 
 
 ## Risks
 
-- **Paused E2E clock:** existing smoke tests can freeze browser timers; default E2E contexts to reduced motion so the 500 ms presentation timer is never a hidden CI dependency.
+- **Paused E2E clock:** existing smoke tests can freeze browser timers; scope reduced motion to paused-clock fixture loads (`page.emulateMedia` inside `GameplayPage.gotoFixture`) rather than a context-wide default, so the 500 ms presentation timer is never a hidden CI dependency.
 - **Dialog blocking vs reveal accessibility:** `hasSessionModal` owns `inert`/`aria-hidden`; keep reveal-only blocking in `gameplayInputBlocked` so the glowing board remains accessible while keyboard mutations are blocked.
 - **Stale timeout across route reuse/restart:** the puzzle route component is reused across puzzle ids, so reveal cleanup must run on route teardown, restart, and destroy before an old timer can reopen results.
 
@@ -332,7 +332,8 @@ Expected production/config changes:
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 - `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
-- `apps/web/playwright.config.ts`
+
+`apps/web/playwright.config.ts` was deliberately left unchanged: reduced-motion handling is scoped inside `GameplayPage.gotoFixture` (see §4), not a config default.
 
 Expected test changes:
 
@@ -355,6 +356,6 @@ Do not modify by default:
 
 One Linear ticket -> one pull request.
 
-This planning branch/PR remains the HPA-465 implementation PR. After review of this design/plan, implementation commits continue on the same branch; do not open a second implementation PR.
+This planning branch/PR is the HPA-465 implementation PR; Tasks 1-4 have landed here. As-shipped deltas from the plan below: initial focus is the dialog container (not Play Again — see §8), and no `playwright.config.ts` change (reduced motion is scoped in the fixture loader).
 
 No separate art/SFX ticket is required because the selected design reuses the existing finished artwork and CSS-only presentation.

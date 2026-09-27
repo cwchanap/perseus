@@ -592,6 +592,9 @@
 				showCelebration = true;
 			} else {
 				showCelebration = false;
+				// Clear any earlier timer first so a second seal in one turn
+				// cannot overwrite (and leak) the previous handle.
+				clearCompletionReveal();
 				completionRevealActive = true;
 				completionRevealTimeout = setTimeout(() => {
 					clearCompletionReveal();
@@ -1050,6 +1053,7 @@
 	}
 
 	function handleTrayResizePointerDown(event: PointerEvent): void {
+		if (gameplayInputBlocked) return;
 		if (event.pointerType === 'mouse' && event.button !== 0) return;
 		event.preventDefault();
 		trayResizePointerId = event.pointerId;
@@ -1058,6 +1062,7 @@
 	}
 
 	function handleTrayResizeKeyDown(event: KeyboardEvent): void {
+		if (gameplayInputBlocked) return;
 		switch (event.key) {
 			case 'ArrowLeft':
 				event.preventDefault();

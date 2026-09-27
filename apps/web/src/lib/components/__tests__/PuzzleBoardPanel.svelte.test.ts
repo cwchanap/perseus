@@ -68,6 +68,7 @@ function props(overrides: Record<string, unknown> = {}) {
 		referenceToggled: false,
 		interactionBlocked: false,
 		viewResetVersion: 0,
+		completionRevealDurationMs: 500,
 		onPiecePlaced: vi.fn(),
 		onReferenceDown: vi.fn(),
 		onReferenceUp: vi.fn(),
@@ -505,7 +506,39 @@ describe('PuzzleBoardPanel', () => {
 		expect(boardCanvas).not.toBeNull();
 
 		await expect.poll(() => boardCanvas!.classList.contains('completion-reveal')).toBe(true);
+		// The settle must never read as a zoom bump: the canvas and its halo
+		// pseudo-element stay un-transformed (ZoomableBoardFrame owns scale).
+		expect(getComputedStyle(boardCanvas!).transform).toBe('none');
+		expect(getComputedStyle(boardCanvas!, '::after').transform).toBe('none');
 		// The PuzzleBoard itself still renders normally under the treatment.
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+	});
+
+	it('prevents default wheel and pointer presses while input is blocked so nothing scrolls mid-reveal', async () => {
+		// The blocked early returns used to fall through before
+		// preventDefault(), letting a wheel or drag scroll .board-wrap /
+		// .puzzle-main while the completed board held the reveal.
+		render(PuzzleBoardPanel, props({ interactionBlocked: true }));
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		const board = await page.getByTestId('puzzle-board').element();
+
+		const wheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+		const scaleBefore = scaleOf(transformOf(frame));
+		frame.dispatchEvent(wheel);
+		expect(wheel.defaultPrevented).toBe(true);
+		await vi.waitFor(() => expect(scaleOf(transformOf(frame))).toBe(scaleBefore));
+
+		const press = new PointerEvent('pointerdown', {
+			bubbles: true,
+			cancelable: true,
+			pointerId: 31,
+			pointerType: 'mouse',
+			button: 0,
+			clientX: 100,
+			clientY: 100
+		});
+		board.dispatchEvent(press);
+		expect(press.defaultPrevented).toBe(true);
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 	});
 });

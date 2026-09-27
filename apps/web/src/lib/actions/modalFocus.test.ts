@@ -29,8 +29,9 @@ describe('modalFocus action', () => {
 		const controller = modalFocus(dialog);
 
 		// Focus is still on body (the container focus is zero-delay), so the
-		// trap has nothing to pin and must not intercept the key.
-		const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true });
+		// trap has nothing to pin and must not intercept the key. Cancelable,
+		// so defaultPrevented actually distinguishes interception.
+		const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
 		dialog.dispatchEvent(event);
 		expect(event.defaultPrevented).toBe(false);
 
@@ -71,7 +72,8 @@ describe('modalFocus action', () => {
 		buttons[1].focus();
 		expect(document.activeElement).toBe(buttons[1]);
 
-		const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true });
+		// Cancelable, so defaultPrevented actually distinguishes interception.
+		const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
 		dialog.dispatchEvent(event);
 		expect(event.defaultPrevented).toBe(false);
 

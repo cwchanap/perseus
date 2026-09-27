@@ -21,8 +21,9 @@ test.describe('Puzzle Solving Page', () => {
 	});
 
 	// The former "should have back navigation link" spec navigated to
-	// `/puzzle/any-puzzle`, which the route UUID-validates to the 404 error
-	// panel before any header renders, so it could never pass. HUD back-link
+	// `/puzzle/any-puzzle`, which the API rejects with 400 (invalid UUID
+	// format), so the route renders its generic error panel rather than the
+	// 404 one — it could never pass. HUD back-link
 	// visibility is covered by the fixture-load smoke test in
 	// gameplay-infrastructure.spec.ts; its exit interaction by
 	// gameplay-session-controls.spec.ts.

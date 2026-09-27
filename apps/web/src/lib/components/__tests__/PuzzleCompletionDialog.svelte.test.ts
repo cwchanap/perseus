@@ -168,11 +168,21 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.poll(() => document.activeElement).toBe(dialogBox);
 
 		// BACK TO RESULTS is the only focusable in the subview, so Tab and
-		// Shift+Tab both wrap onto it and focus stays contained.
+		// Shift+Tab both wrap onto it. The events are cancelable and asserted
+		// defaultPrevented — a synthetic Tab never moves focus natively, so
+		// non-prevention would also pass with the trap removed.
 		backToResults.focus();
-		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+		const tab = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
+		document.dispatchEvent(tab);
+		expect(tab.defaultPrevented).toBe(true);
 		expect(document.activeElement).toBe(backToResults);
-		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
+		const shiftTab = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			cancelable: true
+		});
+		document.dispatchEvent(shiftTab);
+		expect(shiftTab.defaultPrevented).toBe(true);
 		expect(document.activeElement).toBe(backToResults);
 
 		await page.getByRole('button', { name: 'BACK TO RESULTS' }).click();

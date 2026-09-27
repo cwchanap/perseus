@@ -2223,6 +2223,33 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('blocks the tray resizer during the reveal', async () => {
+		// Same contract as the other reveal guards: the resizer mutates
+		// layout via keyboard/pointer, so it stays inert while
+		// gameplayInputBlocked. aria-valuenow mirrors appliedTrayWidth.
+		setPrefersReducedMotion(false);
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
+
+			const resizer = document.querySelector<HTMLElement>('[data-testid="tray-resizer"]');
+			expect(resizer).not.toBeNull();
+			const widthBefore = resizer!.getAttribute('aria-valuenow');
+			resizer!.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(resizer!.getAttribute('aria-valuenow')).toBe(widthBefore);
+
+			await vi.advanceTimersByTimeAsync(500);
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('blocks the toolbar Reset View control during the reveal so the completed board stays put', async () => {
 		// HPA-465 final-review fix (continuation): Reset View bumps
 		// viewResetVersion and the board panel's reset effect applies it
