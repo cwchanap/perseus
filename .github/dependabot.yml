@@ -1,5 +1,7 @@
 version: 2
+
 updates:
+  # JavaScript / TypeScript dependencies across all bun workspaces
   - package-ecosystem: 'bun'
     directories:
       - '/'
@@ -13,12 +15,42 @@ updates:
       - '/packages/types'
     schedule:
       interval: 'weekly'
+      day: 'monday'
+      time: '09:00'
+      timezone: 'America/Vancouver'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(deps)'
+      include: 'scope'
     groups:
-      minor-and-patch:
+      pulumi-minor-and-patch:
+        patterns:
+          - '@pulumi/*'
         update-types:
           - 'minor'
           - 'patch'
+      js-minor-and-patch:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - '@pulumi/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # GitHub Actions versions in .github/workflows
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
       interval: 'weekly'
+      day: 'monday'
+      time: '10:00'
+      timezone: 'America/Vancouver'
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(deps)'
+      include: 'scope'
+    groups:
+      github-actions:
+        patterns:
+          - '*'
