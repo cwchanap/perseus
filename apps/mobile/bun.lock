@@ -7,7 +7,7 @@
       "dependencies": {
         "@nativescript-community/svelte-native": "~1.0.30",
         "@nativescript/canvas": "^2.1.18",
-        "@nativescript/core": "^9.0.0",
+        "@nativescript/core": "^9.1.2",
         "@nativescript/google-signin": "^2.1.1",
         "@nativescript/secure-storage": "^4.0.2",
         "@perseus/game-core": "file:../../packages/game-core",
@@ -16,9 +16,9 @@
       },
       "devDependencies": {
         "@nativescript-community/svelte-native-preprocessor": "^1.0.1",
-        "@nativescript/android": "9.0.5",
-        "@nativescript/ios": "9.0.3",
-        "@nativescript/types": "~9.0.0",
+        "@nativescript/android": "9.1.1",
+        "@nativescript/ios": "9.1.0",
+        "@nativescript/types": "~9.1.2",
         "@nativescript/webpack": "~5.0.28",
         "@types/node": "^22",
         "babel-loader": "^10.0.0",
@@ -105,11 +105,11 @@
 
     "@nativescript-community/svelte-native-preprocessor": ["@nativescript-community/svelte-native-preprocessor@1.0.1", "", { "peerDependencies": { "svelte": ">= 3.37.0 < 5" } }, "sha512-U8ePExwC8m93mIJ5k0WLqPsf8Gx7CBcQYLGLxy1rJid5xurvDbPPXpurP9fOO+lngDat2OTQPfWV0Is4Wt+GlQ=="],
 
-    "@nativescript/android": ["@nativescript/android@9.0.5", "", {}, "sha512-X68BZJDZtnSU3NL13k3giUriCDvZPCS5rRcRBM77RyTKbK78bHsyP9Yl6REg4L35xORK2cX2HOl1NCec7lS2eA=="],
+    "@nativescript/android": ["@nativescript/android@9.1.1", "", {}, "sha512-oDWfVnQtgQ0ctbfFWSugqGEZnYVjls82FqlO5UbA9HNwTNqdP4gqWwqHR80WKQngrbxlRHYDIuYv5S9kQfKhcw=="],
 
     "@nativescript/canvas": ["@nativescript/canvas@2.1.18", "", { "dependencies": { "@nativescript/font-manager": "*" } }, "sha512-wj4gbG+YW6GXTAc5zKW6D7CBjIywLKBryWIbhERjSI7+9reFdnyWjtof4Bp7J1uieQn+6e7IlQdJUuO0ZJt0jA=="],
 
-    "@nativescript/core": ["@nativescript/core@9.1.1", "", { "dependencies": { "@csstools/css-calc": "~2.1.4", "@csstools/css-color-parser": "^3.0.10", "@csstools/css-parser-algorithms": "^3.0.5", "@csstools/css-tokenizer": "^3.0.4", "@nativescript/hook": "~3.0.4", "acorn": "^8.15.0", "css-tree": "^3.1.0", "css-what": "^7.0.0", "emoji-regex": "^10.2.1", "source-map": "0.7.6", "source-map-js": "^1.2.1", "tslib": "^2.0.0" } }, "sha512-H33BI0GsHRLkMax8EPl7Tc7LrR8FZMenMRnnuufYdICzthWG3bFK382MtWrK1jX1QonNorCu9sf2HmD3s4OSrw=="],
+    "@nativescript/core": ["@nativescript/core@9.1.2", "", { "dependencies": { "@csstools/css-calc": "~2.1.4", "@csstools/css-color-parser": "^3.0.10", "@csstools/css-parser-algorithms": "^3.0.5", "@csstools/css-tokenizer": "^3.0.4", "@nativescript/hook": "~3.0.4", "acorn": "^8.15.0", "css-tree": "^3.1.0", "css-what": "^7.0.0", "emoji-regex": "^10.2.1", "semver": "^7.0.0", "source-map": "0.7.6", "source-map-js": "^1.2.1", "tslib": "^2.0.0" } }, "sha512-zL/dgfuLmcVu9nR47UEFOaPHXoaRKuWMBnDwiaMAwXmf4WKd6yr1gIXcNHheKgBNGrls06LgbBpkB841fI+HcA=="],
 
     "@nativescript/font-manager": ["@nativescript/font-manager@1.0.14", "", {}, "sha512-CzAz0QxT0UInjooQ700zFI6Nrzi5qfLLdVG1yJu7pTKoIjJPFR70iXXfw3LIgYUAZo8Vft47HlzvBtMqk4sBgQ=="],
 
@@ -117,15 +117,15 @@
 
     "@nativescript/hook": ["@nativescript/hook@3.0.5", "", {}, "sha512-MzL7R/nPZU2qnvDWWuJ8RB7H3luEwANgFX/d/ILdg7bSYxl6uANCfzlueHnWgrQmBxu6dTkvPsFW2WNVUxlhUg=="],
 
-    "@nativescript/ios": ["@nativescript/ios@9.0.3", "", {}, "sha512-1IE9OIkBac4D8IPeFZ7kNxQRUr9s7BgFwOoS8XwhX5RvJHE/oSqjbSp+ag9A7MennpyDs/qxduGkwpS1EmmxOg=="],
+    "@nativescript/ios": ["@nativescript/ios@9.1.0", "", {}, "sha512-rdSmL+oOL+iyLYoSBM/cS0bOMAKzzOax6SpR4WmIHpmpa7TrFrrmzekuPSkwTZGeA7NTXnXD6K45rFvCHm6kOA=="],
 
     "@nativescript/secure-storage": ["@nativescript/secure-storage@4.0.2", "", {}, "sha512-4sWU4tmvGjh9ZfuApt0enwcT3tGN88dR5IeOuQsYqUSeUQbxK7Xo2JTF1dy7KIxnh0Fnxrs5O61x7hp9JBn/kw=="],
 
-    "@nativescript/types": ["@nativescript/types@9.0.0", "", { "dependencies": { "@nativescript/types-android": "9.0.0", "@nativescript/types-ios": "9.0.0" } }, "sha512-fR9ot7Si9L0StcsOZpAEThggeQb8cQxCL0BwRKuWHbm+SdlinuOWSl6lS3bKuIIcCzJem2cWP3UrzgweRnOe/A=="],
+    "@nativescript/types": ["@nativescript/types@9.1.2", "", { "dependencies": { "@nativescript/types-android": "9.1.1", "@nativescript/types-ios": "9.1.2" } }, "sha512-kRpa+Vwmb3Qa0dbbT7tRgria4bQPZ7YuN2CEat58x2qIrBeUHvBTbiJ0Orv5jcsLEPO2M0uvyk6MIINgFZ1j0w=="],
 
-    "@nativescript/types-android": ["@nativescript/types-android@9.0.0", "", {}, "sha512-Az64E1m6jd7CKX/QKOZi3uSxQEXZbPW5NlmMNP9VGCP9UobHLd5GgqpEIyeBB4Jep4rckA2Z4LEEpjbu/my63Q=="],
+    "@nativescript/types-android": ["@nativescript/types-android@9.1.1", "", {}, "sha512-PGaTum9tyqyyza3QT21Z7WrRR1+nM7ITsq9EJiaShLArThJI0PD1ZuDO5IoUUvSQ+gTKU2nLiVMnFbU4s3FeeQ=="],
 
-    "@nativescript/types-ios": ["@nativescript/types-ios@9.0.0", "", {}, "sha512-A13VLFFKNrkYqS7JU0V+R4wxKIE66VvYiHK1+vrVXqiK6l+95BxgEgRPD8FlXN7W2iXXqYLapo8nVMtWArpscg=="],
+    "@nativescript/types-ios": ["@nativescript/types-ios@9.1.2", "", {}, "sha512-tIFN3FwKNAbWJs6Ne6fBJ92PD9/z8wcEHHW8OLGqeoqAaKBz2X8433B7e367iewHOrP70wYkStu6M1IhJ7Dj/A=="],
 
     "@nativescript/webpack": ["@nativescript/webpack@5.0.38", "", { "dependencies": { "@babel/core": "^7.0.0", "@pmmmwh/react-refresh-webpack-plugin": "~0.6.1", "@vue/compiler-sfc": "^3.5.17", "acorn": "^8.0.0", "acorn-stage3": "^4.0.0", "ansi-colors": "^4.1.3", "babel-loader": "^10.0.0", "cli-highlight": "^2.0.0", "commander": "^14.0.0", "copy-webpack-plugin": "^13.0.0", "css": "^3.0.0", "css-loader": "^7.0.0", "dotenv-webpack": "^8.0.0", "fork-ts-checker-webpack-plugin": "^9.0.0", "loader-utils": "^2.0.0 || ^3.0.0", "postcss": "^8.0.0", "postcss-import": "^16.0.0", "postcss-loader": "^8.0.0", "raw-loader": "^4.0.0", "react-refresh": "~0.18.0", "sass": "^1.0.0", "sass-loader": "^16.0.0", "sax": "^1.0.0", "semver": "^7.0.0 || ^6.0.0", "source-map": "^0.7.0", "terser-webpack-plugin": "^5.0.0", "ts-dedent": "^2.0.0", "ts-loader": "^9.0.0", "vue-loader": "^17.4.2", "webpack": "^5.30.0 <= 5.50.0 || ^5.51.2", "webpack-bundle-analyzer": "^4.0.0", "webpack-chain": "^6.0.0", "webpack-cli": "^6.0.0", "webpack-merge": "^6.0.0", "webpack-virtual-modules": "^0.4.0" }, "peerDependencies": { "nativescript-vue-template-compiler": "^2.8.1" }, "optionalPeers": ["nativescript-vue-template-compiler"], "bin": { "nativescript-webpack": "dist/bin/index.js" } }, "sha512-lcOfqIgRe53LHi/DoSMe67N3wBon+Fg/820wrew83DH/OyWKxy1ian5BZONU0Bn9syTjpKa212cuz5WCXF4PHA=="],
 
@@ -829,7 +829,7 @@
 
     "@nativescript/core/css-tree": ["css-tree@3.2.1", "", { "dependencies": { "mdn-data": "2.27.1", "source-map-js": "^1.2.1" } }, "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA=="],
 
-    "@perseus/game-core/@perseus/types": ["@perseus/types@file:../../packages/types", {}],
+    "@perseus/game-core/@perseus/types": ["@perseus/types@file:../../packages/types", { "devDependencies": { "@vitest/coverage-v8": "^4.0.18", "typescript": "^5.9.0", "vitest": "^4.0.18" } }],
 
     "@pmmmwh/react-refresh-webpack-plugin/schema-utils": ["schema-utils@4.3.3", "", { "dependencies": { "@types/json-schema": "^7.0.9", "ajv": "^8.9.0", "ajv-formats": "^2.1.1", "ajv-keywords": "^5.1.0" } }, "sha512-eflK8wEtyOE6+hsaRVPxvUKYCpRgzLqDTb8krvAsRIwOGlHoSgYLgBXoubGgLd2fT41/OUYdb48v4k4WWHQurA=="],
 

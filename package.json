@@ -38,7 +38,7 @@
 		"@eslint/js": "^9.39.1",
 		"@perseus/shared": "workspace:*",
 		"@perseus/types": "workspace:*",
-		"@types/bun": "^1.1.15",
+		"@types/bun": "^1.4.2",
 		"@types/node": "^22",
 		"@vitest/coverage-v8": "^4.0.18",
 		"eslint": "^9.39.1",
@@ -46,12 +46,12 @@
 		"globals": "^16.5.0",
 		"husky": "^9.1.7",
 		"lint-staged": "^16.2.7",
-		"prettier": "^3.7.4",
+		"prettier": "^3.9.9",
 		"prettier-plugin-svelte": "^3.4.0",
-		"prettier-plugin-tailwindcss": "^0.7.2",
-		"turbo": "^2.3.3",
-		"typescript-eslint": "^8.48.1",
-		"wrangler": "4.60.0"
+		"prettier-plugin-tailwindcss": "^0.8.1",
+		"turbo": "^2.11.5",
+		"typescript-eslint": "^8.70.1",
+		"wrangler": "4.142.0"
 	},
 	"lint-staged": {
 		"*.{js,ts,svelte,json,md,css,html}": [

@@ -16,9 +16,9 @@
 	"dependencies": {
 		"@perseus/shared": "workspace:*",
 		"@perseus/types": "workspace:*",
-		"@cf-wasm/photon": "^0.3.4",
-		"@cf-wasm/resvg": "^0.3.3",
-		"drizzle-orm": "^0.36.0"
+		"@cf-wasm/photon": "^0.4.0",
+		"@cf-wasm/resvg": "^0.4.0",
+		"drizzle-orm": "^0.45.3"
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20241230.0",
@@ -27,10 +27,10 @@
 		"eslint": "^9.39.1",
 		"eslint-config-prettier": "^10.1.8",
 		"globals": "^16.5.0",
-		"prettier": "^3.7.4",
+		"prettier": "^3.9.9",
 		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.48.1",
+		"typescript-eslint": "^8.70.1",
 		"vitest": "^4.0.18",
-		"wrangler": "4.60.0"
+		"wrangler": "4.142.0"
 	}
 }
