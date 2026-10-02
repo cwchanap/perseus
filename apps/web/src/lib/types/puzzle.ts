@@ -135,6 +135,4 @@ export interface DeletePuzzleFailure {
 }
 
 export type DeletePuzzleResponse =
-	| DeletePuzzleSuccess
-	| DeletePuzzlePartialSuccess
-	| DeletePuzzleFailure;
+	DeletePuzzleSuccess | DeletePuzzlePartialSuccess | DeletePuzzleFailure;

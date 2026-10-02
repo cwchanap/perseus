@@ -326,6 +326,20 @@ describe('player profiles against real D1', () => {
 	});
 });
 
+async function expectTriggerAbort(promise: Promise<unknown>): Promise<void> {
+	const error = await promise.then(
+		() => new Error('expected the query to be aborted by the puzzle_deleted trigger'),
+		(e: unknown) => e
+	);
+	let message = '';
+	let current: unknown = error;
+	for (let depth = 0; current instanceof Error && depth < 10; depth += 1) {
+		message += `${current.message}\n`;
+		current = (current as { cause?: unknown }).cause;
+	}
+	expect(message).toContain('puzzle_deleted');
+}
+
 describe('tombstone-guarded table protection against real D1', () => {
 	it('rejects direct inserts and updates for every tombstone-guarded table', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
@@ -349,7 +363,7 @@ describe('tombstone-guarded table protection against real D1', () => {
 		});
 		await executor.beginPuzzleDeletion('pz1', 2_000);
 
-		await expect(
+		await expectTriggerAbort(
 			db.insert(schema.puzzleBestTimes).values({
 				playerId: 'p2',
 				puzzleId: 'pz1',
@@ -359,40 +373,40 @@ describe('tombstone-guarded table protection against real D1', () => {
 				bestTimeSeconds: 80,
 				achievedAt: 2_000
 			})
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db
 				.update(schema.puzzleBestTimes)
 				.set({ bestTimeSeconds: 50 })
 				.where(eq(schema.puzzleBestTimes.puzzleId, 'pz1'))
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db
 				.update(schema.puzzleBestTimes)
 				.set({ puzzleId: 'pz2' })
 				.where(eq(schema.puzzleBestTimes.puzzleId, 'pz1'))
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db.insert(schema.playerVariantMastery).values({
 				playerId: 'p2',
 				puzzleId: 'pz1',
 				badge: 'speed',
 				earnedAt: 2_000
 			})
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db
 				.update(schema.playerVariantMastery)
 				.set({ earnedAt: 3_000 })
 				.where(eq(schema.playerVariantMastery.puzzleId, 'pz1'))
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db
 				.update(schema.playerVariantMastery)
 				.set({ puzzleId: 'pz2' })
 				.where(eq(schema.playerVariantMastery.puzzleId, 'pz1'))
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			d1
 				.prepare(
 					`
@@ -404,19 +418,19 @@ describe('tombstone-guarded table protection against real D1', () => {
 				)
 				.bind(FAMILY_ID)
 				.run()
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db
 				.update(schema.puzzleCompletionRuns)
 				.set({ completedAt: 3_000 })
 				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
-		).rejects.toThrow('puzzle_deleted');
-		await expect(
+		);
+		await expectTriggerAbort(
 			db
 				.update(schema.puzzleCompletionRuns)
 				.set({ puzzleId: 'pz2' })
 				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
-		).rejects.toThrow('puzzle_deleted');
+		);
 	});
 });
 

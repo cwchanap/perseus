@@ -40,8 +40,7 @@ export type CleanupOptions = AccessCredentials & {
 };
 
 export type CleanupPlanAction =
-	| { type: 'kv-delete'; key: string }
-	| { type: 'r2-delete'; key: string; objectPath: string };
+	{ type: 'kv-delete'; key: string } | { type: 'r2-delete'; key: string; objectPath: string };
 
 function readManifest(migrationDir: string): LegacyExportManifest {
 	return JSON.parse(
