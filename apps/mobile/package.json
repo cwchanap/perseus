@@ -23,7 +23,7 @@
 		"@nativescript/ios": "9.0.3",
 		"@nativescript/types": "~9.0.0",
 		"@nativescript/webpack": "~5.0.28",
-		"@types/node": "^22",
+		"@types/node": "^26",
 		"babel-loader": "^10.0.0",
 		"css-loader": "^7.0.0",
 		"postcss-loader": "^8.0.0",
