@@ -39,7 +39,7 @@
 		"@perseus/shared": "workspace:*",
 		"@perseus/types": "workspace:*",
 		"@types/bun": "^1.1.15",
-		"@types/node": "^22",
+		"@types/node": "^26",
 		"@vitest/coverage-v8": "^4.0.18",
 		"eslint": "^9.39.1",
 		"eslint-config-prettier": "^10.1.8",
