@@ -21,7 +21,7 @@
 		"@pulumi/cloudflare": "^6.21.0"
 	},
 	"devDependencies": {
-		"@types/node": "^22.10.0",
+		"@types/node": "^26.6.3",
 		"typescript": "^5.9.0",
 		"vitest": "^4.0.18",
 		"yaml": "^2.5.0"
