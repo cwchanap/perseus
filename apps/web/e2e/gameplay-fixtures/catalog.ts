@@ -16,11 +16,7 @@ import type { PuzzleDifficulty } from '@perseus/types';
 import { buildFixture, type GameplayFixture } from './builder';
 
 export type GameplayFixtureId =
-	| 'e2e-square-4'
-	| 'e2e-landscape-12'
-	| 'e2e-portrait-12'
-	| 'e2e-square-100'
-	| 'e2e-square-225';
+	'e2e-square-4' | 'e2e-landscape-12' | 'e2e-portrait-12' | 'e2e-square-100' | 'e2e-square-225';
 
 export const FIXTURE_IDS: readonly GameplayFixtureId[] = [
 	'e2e-square-4',
