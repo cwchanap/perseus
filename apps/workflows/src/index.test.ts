@@ -338,10 +338,11 @@ describe('updateMetadata', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await workflow.run(event, step);
@@ -402,10 +403,11 @@ describe('Workflow Execution - Image Validation', () => {
 			`Image size ${MAX_IMAGE_BYTES + 1} bytes exceeds maximum ${MAX_IMAGE_BYTES} bytes. ` +
 			'Please use a smaller image.';
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, step)).rejects.toThrow(message);
@@ -441,10 +443,11 @@ describe('Workflow Execution - Image Validation', () => {
 
 		const message = `Image dimensions ${mockWidth}x${mockHeight} exceed maximum ${MAX_IMAGE_DIMENSION}px`;
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, step)).rejects.toThrow(message);
@@ -515,10 +518,11 @@ describe('Workflow Execution - Image Validation', () => {
 		workflow.setEnv(env);
 
 		const message = `Image dimensions 5000x5000 exceed maximum ${MAX_IMAGE_DIMENSION}px`;
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		// Clear the Photon mock call history (vi.restoreAllMocks in afterEach
@@ -559,7 +563,8 @@ describe('Workflow Execution - Parameter Validation', () => {
 		const event = {
 			payload: { familyId: 'not-a-uuid' },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(
@@ -574,7 +579,8 @@ describe('Workflow Execution - Parameter Validation', () => {
 		const event = {
 			payload: { familyId: '' },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(
@@ -614,10 +620,11 @@ describe('Workflow Execution - Resource Loading', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, createMockStep())).rejects.toThrow('not found');
@@ -649,10 +656,11 @@ describe('Workflow Execution - Resource Loading', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
@@ -688,10 +696,11 @@ describe('Workflow Execution - Resource Loading', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		const step = createMockStep();
@@ -740,10 +749,11 @@ describe('Workflow Execution - Resource Loading', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		const step = createMockStep();
@@ -810,10 +820,11 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		// Force the D1 ready mirror to reject. The one-shot mock runs the
@@ -933,10 +944,11 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 			const workflow = new TestWorkflow();
 			workflow.setEnv(env);
 
-			const event: WorkflowEvent<WorkflowParams> = {
+			const event = {
 				payload: { familyId },
 				timestamp: new Date(),
-				instanceId: 'test-retry-instance'
+				instanceId: 'test-retry-instance',
+				workflowName: 'perseus-workflow'
 			};
 
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1006,10 +1018,11 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-already-ready'
+			instanceId: 'test-already-ready',
+			workflowName: 'perseus-workflow'
 		};
 
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1087,10 +1100,11 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
@@ -1131,10 +1145,11 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
@@ -1165,10 +1180,11 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-instance'
+			instanceId: 'test-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, createMockStep())).rejects.toThrow('not found');
@@ -1284,10 +1300,11 @@ describe('Family workflow checkpoint names', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-family-instance'
+			instanceId: 'test-family-instance',
+			workflowName: 'perseus-workflow'
 		};
 
 		await workflow.run(event, step);
@@ -1428,10 +1445,11 @@ describe('Family workflow status rollup when one difficulty fails', () => {
 		const workflow = new TestWorkflow();
 		workflow.setEnv(env);
 
-		const event: WorkflowEvent<WorkflowParams> = {
+		const event = {
 			payload: { familyId },
 			timestamp: new Date(),
-			instanceId: 'test-family-rollup'
+			instanceId: 'test-family-rollup',
+			workflowName: 'perseus-workflow'
 		};
 
 		await expect(workflow.run(event, step)).resolves.toBeUndefined();
