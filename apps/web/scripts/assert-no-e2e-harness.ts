@@ -22,7 +22,8 @@ async function findJsFiles(dir: string): Promise<string[]> {
 			// Fail loudly and name the directory.
 			const reason = err instanceof Error ? err.message : String(err);
 			throw new Error(
-				`assertNoE2EHarness: unreadable directory ${relative(dir, current) || '.'}: ${reason}`
+				`assertNoE2EHarness: unreadable directory ${relative(dir, current) || '.'}: ${reason}`,
+				{ cause: err }
 			);
 		}
 		for (const entry of entries) {
@@ -58,7 +59,9 @@ export async function assertNoE2EHarness(buildDirectory: string): Promise<{
 		}
 	} catch (err) {
 		const reason = err instanceof Error ? err.message : String(err);
-		throw new Error(`assertNoE2EHarness: build directory not readable: ${root} (${reason})`);
+		throw new Error(`assertNoE2EHarness: build directory not readable: ${root} (${reason})`, {
+			cause: err
+		});
 	}
 
 	const jsFiles = await findJsFiles(root);
@@ -75,7 +78,9 @@ export async function assertNoE2EHarness(buildDirectory: string): Promise<{
 			buf = await readFile(file);
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
-			throw new Error(`assertNoE2EHarness: unreadable file ${relative(root, file)}: ${reason}`);
+			throw new Error(`assertNoE2EHarness: unreadable file ${relative(root, file)}: ${reason}`, {
+				cause: err
+			});
 		}
 		bytesScanned += buf.length;
 
