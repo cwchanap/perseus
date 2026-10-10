@@ -89,19 +89,22 @@ const adminAccess = createAdminAccessResources({
 	cliServiceTokenDuration: '8760h'
 });
 
-export const r2BucketName = r2Bucket.name;
-export const kvNamespaceId = kvNamespace.id;
-export const d1DatabaseId = d1Database.uuid;
+// Explicit annotations keep these portable when @pulumi/cloudflare nests its own
+// @pulumi/pulumi copy (TS2742 on version skew).
+export const r2BucketName: pulumi.Output<string> = r2Bucket.name;
+export const kvNamespaceId: pulumi.Output<string> = kvNamespace.id;
+export const d1DatabaseId: pulumi.Output<string> = d1Database.uuid;
 export const workflowsWorkerName = workflowsWorker.workerName;
 export const apiWorkerName = apiWorker.workerName;
-export const adminAccessApplicationId = adminAccess.application.id;
-export const adminCliAccessApplicationId = adminAccess.cliApplication.id;
+export const adminAccessApplicationId: pulumi.Output<string> = adminAccess.application.id;
+export const adminCliAccessApplicationId: pulumi.Output<string> = adminAccess.cliApplication.id;
 /** AUD for the narrow CLI Access app. Set as CF_ACCESS_AUD in the startup CLI
  * so cloudflaredTokenPath/cloudflaredLockPath resolve the correct cache files. */
-export const adminCliAccessAud = adminAccess.cliApplication.aud;
-export const adminAccessDevicePostureRuleId = adminAccess.devicePostureRule.id;
-export const adminAccessDeviceSerialListId = adminAccess.deviceSerialList.id;
+export const adminCliAccessAud: pulumi.Output<string> = adminAccess.cliApplication.aud;
+export const adminAccessDevicePostureRuleId: pulumi.Output<string> =
+	adminAccess.devicePostureRule.id;
+export const adminAccessDeviceSerialListId: pulumi.Output<string> = adminAccess.deviceSerialList.id;
 /** Client ID for CF-Access-Client-Id (safe to store in local shell env for CLI uploads). */
-export const adminCliAccessClientId = adminAccess.cliServiceToken.clientId;
+export const adminCliAccessClientId: pulumi.Output<string> = adminAccess.cliServiceToken.clientId;
 /** Client Secret for CF-Access-Client-Secret — treat as a secret. */
 export const adminCliAccessClientSecret = pulumi.secret(adminAccess.cliServiceToken.clientSecret);

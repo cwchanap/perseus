@@ -1178,7 +1178,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				const bytes = await loadFamilyOriginalImageBytes(this.env, familyId);
 				const image = PhotonImage.new_from_byteslice(bytes);
 
-				let resized = null;
+				let resized;
 				try {
 					const srcW = image.get_width();
 					const srcH = image.get_height();
