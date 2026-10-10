@@ -136,7 +136,7 @@ function makeJpeg(width: number, height: number): Blob {
 
 	// EOI
 	view.setUint8(off++, 0xff);
-	view.setUint8(off++, 0xd9);
+	view.setUint8(off, 0xd9);
 
 	return new Blob([buf], { type: 'image/jpeg' });
 }

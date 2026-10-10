@@ -190,7 +190,7 @@ async function reclaimReservationOrFail(
 				// — return 200. Otherwise (processing/failed/null) the
 				// puzzle is stuck or being reaped; signal 409 so the
 				// client does not treat a disappearing puzzle as success.
-				let authoritative: string | null = null;
+				let authoritative: string | null;
 				try {
 					authoritative = await getAuthoritativeStatus(doNs, reclaimed.familyId);
 				} catch (doErr) {
@@ -1261,7 +1261,7 @@ admin.post('/puzzle-families', async (c) => {
 									// puzzle is stuck or being reaped; signal transient (409)
 									// so the client does not treat a disappearing puzzle as
 									// success and the reaper completes cleanup.
-									let authoritative: string | null = null;
+									let authoritative: string | null;
 									try {
 										authoritative = await getAuthoritativeStatus(
 											c.env.PUZZLE_METADATA_DO,
