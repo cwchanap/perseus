@@ -19,6 +19,11 @@ updates:
       time: '09:00'
       timezone: 'America/Vancouver'
     open-pull-requests-limit: 5
+    # @vitest/browser-playwright v5 hard-requires vitest v5 core; blocked until a
+    # coordinated vitest 5 upgrade happens (see closed #104/#110).
+    ignore:
+      - dependency-name: '@vitest/browser-playwright'
+        update-types: ['version-update:semver-major']
     commit-message:
       prefix: 'chore(deps)'
       include: 'scope'
