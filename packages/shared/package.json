@@ -21,11 +21,11 @@
 		"test:unit": "bun --bun vitest run"
 	},
 	"dependencies": {
-		"drizzle-orm": "^0.45.3"
+		"drizzle-orm": "^0.45.4"
 	},
 	"devDependencies": {
 		"@cf-wasm/photon": "^0.4.0",
-		"@cloudflare/workers-types": "^5.20261007.1",
+		"@cloudflare/workers-types": "^5.20261010.1",
 		"@types/bun": "^1.4.2",
 		"drizzle-kit": "^0.31.11",
 		"esbuild": "^0.28.2",
