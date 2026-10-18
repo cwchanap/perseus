@@ -68,7 +68,7 @@ Then trigger the workflow. **Read existing D1 database ID from stack** reads
 **Pulumi Up** publishes either Worker. Subsequent deploys are unaffected.
 
 **Source:** `deploy-infrastructure.yml` (Apply D1 migrations step comment),
-`CLAUDE.md` → First-deploy D1 gap.
+`AGENTS.md` → First-deploy D1 gap.
 
 ---
 
@@ -99,7 +99,7 @@ drop):** adopt an expand/contract flow:
 2. Ship the contract migration after the old Worker version is no longer
    live.
 
-**Source:** `CLAUDE.md` → D1 migration safety,
+**Source:** `AGENTS.md` → D1 migration safety,
 `deploy-infrastructure.yml` (MIGRATION SAFETY comment).
 
 ---
@@ -117,7 +117,7 @@ database (exported as `d1DatabaseId` from the infrastructure stack).
    output, so CI always targets the bound database. The static value is only
    used by manual `bun run db:migrate` operator runs.
 
-**Source:** `CLAUDE.md` → D1 database ID.
+**Source:** `AGENTS.md` → D1 database ID.
 
 ---
 
@@ -156,7 +156,7 @@ nuking prod data. Re-protect after any legitimate destructive operation.
 and removed in `e3229c9` after adoption completed. Consult those commits if
 the lines above are stale.
 
-**Source:** `CLAUDE.md` → D1 state-loss recovery.
+**Source:** `AGENTS.md` → D1 state-loss recovery.
 
 ---
 

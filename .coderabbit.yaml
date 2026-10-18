@@ -5,7 +5,7 @@ reviews:
     - '!specs/**'
     - '!.specify/**'
     - '!**/drizzle/migrations/**'
-    - '!CLAUDE.md'
+    - '!AGENTS.md'
     - '!docs/superpowers/**'
   pre_merge_checks:
     docstrings:

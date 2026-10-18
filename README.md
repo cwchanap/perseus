@@ -15,5 +15,5 @@ The API development server runs on `http://localhost:4690`.
 
 ## Documentation
 
-- Contributor guide: [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md` is a symlink to the same guide)
+- Contributor guide: [`AGENTS.md`](AGENTS.md)
 - Production/admin operations: [`.agents/skills/perseus-operations/SKILL.md`](.agents/skills/perseus-operations/SKILL.md)
