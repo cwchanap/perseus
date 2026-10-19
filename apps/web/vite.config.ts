@@ -18,12 +18,25 @@ export default defineConfig({
 		sveltekit()
 	],
 
+	// @testing-library/svelte-core (via vitest-browser-svelte v3) ships raw
+	// .svelte sources: keep it out of esbuild prebundling and let the Svelte
+	// plugin compile it.
+	ssr: {
+		noExternal: ['@testing-library/svelte-core']
+	},
+	optimizeDeps: {
+		exclude: ['@testing-library/svelte-core']
+	},
+
 	test: {
 		expect: { requireAssertions: true },
 		setupFiles: ['vitest-browser-svelte', 'src/vitest.setup.ts'],
 		browser: {
 			enabled: true,
 			provider: playwright(),
+			// v4 semantics: locator strings match substrings. Tests rely on it
+			// (e.g. getByLabel('Puzzle piece 1') vs 'Puzzle piece 1, rotated 90 degrees').
+			locators: { exact: false },
 			screenshotFailures: true,
 			screenshotDirectory: 'test-artifacts/screenshots',
 			instances: [{ browser: 'chromium', headless: true }]

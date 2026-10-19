@@ -48,8 +48,8 @@ describe('PuzzleDifficultyPicker', () => {
 		]);
 		render(PuzzleDifficultyPicker, { family: familySummary(), progressByVariantId: progress });
 
-		await expect.element(page.getByTestId('difficulty-progress').nth(0)).toHaveTextContent('7/16');
-		await expect.element(page.getByTestId('difficulty-progress').nth(1)).toHaveTextContent('3/49');
+		await expect.element(page.getByTestId('difficulty-progress').nth(0)).toMatchTextContent('7/16');
+		await expect.element(page.getByTestId('difficulty-progress').nth(1)).toMatchTextContent('3/49');
 		await expect
 			.element(
 				page.getByRole('link', {

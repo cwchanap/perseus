@@ -868,7 +868,7 @@ describe('Puzzle route gameplay integration', () => {
 
 			for (const puzzle of puzzles) {
 				vi.mocked(fetchPuzzle).mockResolvedValue(puzzle);
-				const view = render(PuzzlePage);
+				const view = await render(PuzzlePage);
 				await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 
 				const boardPanel = document.querySelector<HTMLElement>('.board-panel');
@@ -878,7 +878,7 @@ describe('Puzzle route gameplay integration', () => {
 
 				const boardWidth = Number.parseFloat(boardCanvas!.style.getPropertyValue('--board-width'));
 				expect(boardWidth).toBeLessThanOrEqual(boardPanel!.getBoundingClientRect().width + 0.01);
-				view.unmount();
+				await view.unmount();
 			}
 		} finally {
 			await page.viewport(originalInnerWidth, originalInnerHeight);
@@ -1419,10 +1419,10 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
 		await expect.poll(() => page.getByText('FINAL TIME').query()).toBeNull();
 		await expect.poll(() => page.getByText('PERSONAL BEST').query()).toBeNull();
-		await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
+		await expect.element(page.getByTestId('completion-result-label')).toMatchTextContent('RELAXED');
 		expect(page.getByTestId('completion-final-time').query()).toBeNull();
 		expect(page.getByTestId('completion-best-time').query()).toBeNull();
-		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^2$/);
+		await expect.element(page.getByTestId('completion-piece-count')).toMatchTextContent(/^2$/);
 	});
 
 	it('passes the loaded reference art into the completion dialog', async () => {
@@ -1614,7 +1614,7 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('style', 'transform: rotate(90deg);');
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 rotated.');
+			.toMatchTextContent('Puzzle piece 0 rotated.');
 	});
 
 	it('updates undo and redo controls after successful placements', async () => {
@@ -3059,7 +3059,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		await expect
 			.element(page.getByTestId('completion-result-label'))
-			.toHaveTextContent('STANDARD TIMED');
+			.toMatchTextContent('STANDARD TIMED');
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 		await expect.element(page.getByTestId('completion-best-time')).toBeVisible();
 	});
@@ -3088,8 +3088,8 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		await expect
 			.element(page.getByTestId('completion-result-label'))
-			.toHaveTextContent('STANDARD TIMED');
-		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^00:42$/);
+			.toMatchTextContent('STANDARD TIMED');
+		await expect.element(page.getByTestId('completion-best-time')).toMatchTextContent(/^00:42$/);
 		expect(page.getByText('NEW RECORD').query()).toBeNull();
 	});
 
@@ -3126,11 +3126,11 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		await expect
 			.element(page.getByTestId('completion-result-label'))
-			.toHaveTextContent('ASSISTED TIMED');
-		await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^1$/);
+			.toMatchTextContent('ASSISTED TIMED');
+		await expect.element(page.getByTestId('completion-hints-used')).toMatchTextContent(/^1$/);
 		await expect
 			.element(page.getByTestId('completion-incorrect-attempts'))
-			.toHaveTextContent(/^1$/);
+			.toMatchTextContent(/^1$/);
 		expect(page.getByTestId('completion-best-time').query()).toBeNull();
 		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
 		expect(recordCompletion).toHaveBeenCalledTimes(1);
@@ -3483,7 +3483,7 @@ describe('Puzzle route gameplay integration', () => {
 		// and cancels the checkpoint interval before clearing storage, so
 		// unmounting after Discard must not call saveSession.
 		vi.mocked(fetchPuzzle).mockResolvedValue(createMockPuzzle());
-		const view = render(PuzzlePage);
+		const view = await render(PuzzlePage);
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 		await placePiece(0, 0, 0);
 
@@ -3500,7 +3500,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
 		sessionStorageSpies.saveSession.mockClear();
-		view.unmount();
+		await view.unmount();
 		expect(sessionStorageSpies.saveSession).not.toHaveBeenCalled();
 	});
 
@@ -3998,7 +3998,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 selected.');
+			.toMatchTextContent('Puzzle piece 0 selected.');
 	});
 
 	it('announces an explicit selection cancel', async () => {
@@ -4012,7 +4012,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Selection canceled.');
+			.toMatchTextContent('Selection canceled.');
 	});
 
 	it('announces an accepted placement', async () => {
@@ -4022,7 +4022,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 placed.');
+			.toMatchTextContent('Puzzle piece 0 placed.');
 	});
 
 	it('announces a placement into the wrong slot', async () => {
@@ -4033,7 +4033,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 does not fit there.');
+			.toMatchTextContent('Puzzle piece 0 does not fit there.');
 	});
 
 	it('announces a non-upright placement rejection', async () => {
@@ -4047,7 +4047,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 must be upright.');
+			.toMatchTextContent('Puzzle piece 0 must be upright.');
 	});
 
 	it('announces a successful rotation', async () => {
@@ -4060,7 +4060,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 rotated.');
+			.toMatchTextContent('Puzzle piece 0 rotated.');
 	});
 
 	it('re-announces identical consecutive outcomes by bumping the live-region revision', async () => {
@@ -4080,13 +4080,13 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		await rotateSelectedPiece();
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 rotated.');
+			.toMatchTextContent('Puzzle piece 0 rotated.');
 		const revisionAfterFirst = await getRevision();
 
 		await rotateSelectedPiece();
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 rotated.');
+			.toMatchTextContent('Puzzle piece 0 rotated.');
 		// The second announcement reuses the identical text, so the text
 		// assertion above can resolve against the stale first-render content
 		// before Svelte flushes the bumped revision. Poll the revision
@@ -4107,7 +4107,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		// Piece 1 sits at grid (x=1, y=0): row 1, column 2.
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Hint: puzzle piece 1 goes to row 1, column 2.');
+			.toMatchTextContent('Hint: puzzle piece 1 goes to row 1, column 2.');
 	});
 
 	it('announces an explicit toolbar pause', async () => {
@@ -4119,7 +4119,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Mission paused.');
+			.toMatchTextContent('Mission paused.');
 	});
 
 	it('announces resuming the mission', async () => {
@@ -4131,7 +4131,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Mission resumed.');
+			.toMatchTextContent('Mission resumed.');
 	});
 
 	it('does not announce a selection the session does not accept (paused run)', async () => {
@@ -4142,7 +4142,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Mission paused.');
+			.toMatchTextContent('Mission paused.');
 
 		// The page subtree is inert while the pause dialog is open, so a real
 		// user cannot reach the inventory. A keyboard event that reaches the
@@ -4155,7 +4155,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Mission paused.');
+			.toMatchTextContent('Mission paused.');
 	});
 
 	it('does not announce a rotation the session does not accept (paused run)', async () => {
@@ -4167,7 +4167,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Mission paused.');
+			.toMatchTextContent('Mission paused.');
 
 		// The page subtree is inert while paused. A rotation shortcut that
 		// reaches the piece anyway must not announce: the engine no-ops
@@ -4179,7 +4179,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Mission paused.');
+			.toMatchTextContent('Mission paused.');
 	});
 
 	it('announces the final accepted placement with Puzzle complete exactly once', async () => {
@@ -4193,7 +4193,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		// exactly once (no duplicate "Puzzle complete." from other events).
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent(/^Puzzle piece 1 placed\. Puzzle complete\.$/);
+			.toMatchTextContent(/^Puzzle piece 1 placed\. Puzzle complete\.$/);
 	});
 
 	it('clears the announcement when navigating directly to a different puzzle', async () => {
@@ -4218,7 +4218,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		await selectPiece(0);
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Puzzle piece 0 selected.');
+			.toMatchTextContent('Puzzle piece 0 selected.');
 
 		// SvelteKit reuses the route component for the new puzzle id: the
 		// stale announcement must not survive the switch.
@@ -4277,7 +4277,7 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 			.toHaveAttribute('data-selected', 'false');
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
-			.toHaveTextContent('Selection canceled.');
+			.toMatchTextContent('Selection canceled.');
 	});
 });
 
@@ -4435,6 +4435,6 @@ describe('Puzzle page placement feedback state', () => {
 
 		await placePiece(0, 0, 0);
 
-		await expect.element(page.getByTestId('filter-count-all')).toHaveTextContent('1');
+		await expect.element(page.getByTestId('filter-count-all')).toMatchTextContent('1');
 	});
 });

@@ -27,7 +27,7 @@ function createToolbarProps(
 	};
 }
 
-function renderToolbar(overrides: Parameters<typeof createToolbarProps>[0] = {}) {
+async function renderToolbar(overrides: Parameters<typeof createToolbarProps>[0] = {}) {
 	return render(PuzzleToolbar, createToolbarProps(overrides));
 }
 
@@ -150,7 +150,7 @@ describe('PuzzleToolbar', () => {
 		});
 
 		it('no-ops arrow traversal when the focused action is no longer enabled', async () => {
-			const view = renderToolbar({ canUndo: true, canRedo: false });
+			const view = await renderToolbar({ canUndo: true, canRedo: false });
 			const undo = await page.getByLabelText('Undo').element();
 			undo.focus();
 

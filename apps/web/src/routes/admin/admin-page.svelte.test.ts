@@ -78,8 +78,8 @@ describe('Admin Page', () => {
 			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(1);
 			expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(1);
 		});
-		await expect.element(page.getByTestId('admin-missions-count')).toHaveTextContent('1');
-		await expect.element(page.getByTestId('admin-players-count')).toHaveTextContent('1');
+		await expect.element(page.getByTestId('admin-missions-count')).toMatchTextContent('1');
+		await expect.element(page.getByTestId('admin-players-count')).toMatchTextContent('1');
 
 		const puzzlesPanel = document.getElementById('admin-panel-puzzles');
 		const playersPanel = document.getElementById('admin-panel-players');

@@ -11,7 +11,7 @@ describe('GameTimer', () => {
 
 		const timer = page.getByTestId('game-timer');
 		await expect.element(timer).toBeVisible();
-		await expect.element(timer).toHaveTextContent('02:05');
+		await expect.element(timer).toMatchTextContent('02:05');
 	});
 
 	it('does not render best-time element when bestTime is null', async () => {
@@ -28,7 +28,7 @@ describe('GameTimer', () => {
 
 		const bestTime = page.getByTestId('best-time');
 		await expect.element(bestTime).toBeVisible();
-		await expect.element(bestTime).toHaveTextContent('01:30');
+		await expect.element(bestTime).toMatchTextContent('01:30');
 	});
 
 	it('aria-label includes the formatted time', async () => {

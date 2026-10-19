@@ -20,7 +20,7 @@ describe('CategoryBadge', () => {
 
 		const badge = page.getByTestId('category-badge');
 		await expect.element(badge).toBeVisible();
-		await expect.element(badge).toHaveTextContent('Animals');
+		await expect.element(badge).toMatchTextContent('Animals');
 		await expect.element(badge).toHaveAttribute('data-category-icon', 'paw');
 	});
 
@@ -36,7 +36,7 @@ describe('CategoryBadge', () => {
 
 		const badge = page.getByTestId('category-badge');
 		await expect.element(badge).toBeVisible();
-		await expect.element(badge).toHaveTextContent('Nature');
+		await expect.element(badge).toMatchTextContent('Nature');
 	});
 
 	it.each(PUZZLE_CATEGORIES)('maps %s to its decorative icon', async (category) => {

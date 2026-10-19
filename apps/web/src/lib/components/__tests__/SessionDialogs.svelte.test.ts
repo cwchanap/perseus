@@ -140,7 +140,7 @@ describe('MissionSetupDialog', () => {
 
 describe('SessionPauseDialog', () => {
 	it('switches to inline restart confirmation on rerender', async () => {
-		const view = render(SessionPauseDialog, {
+		const view = await render(SessionPauseDialog, {
 			presentation: 'paused',
 			mode: 'timed',
 			confirmingRestart: false,

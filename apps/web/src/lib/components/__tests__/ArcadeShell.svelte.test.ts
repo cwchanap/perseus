@@ -47,8 +47,8 @@ describe('ArcadeShell', () => {
 		for (const name of ['Arcade', 'Ranks', 'Upload', 'Quick', 'Profile']) {
 			await expect.element(page.getByRole('link', { name, exact: true })).toBeVisible();
 		}
-		await expect.element(page.getByTestId('arcade-score')).toHaveTextContent('900');
-		await expect.element(page.getByTestId('arcade-rank')).toHaveTextContent('#38');
+		await expect.element(page.getByTestId('arcade-score')).toMatchTextContent('900');
+		await expect.element(page.getByTestId('arcade-rank')).toMatchTextContent('#38');
 		await expect.element(page.getByTestId('shell-child')).toBeVisible();
 	});
 
@@ -56,8 +56,8 @@ describe('ArcadeShell', () => {
 		await page.viewport(1440, 900);
 		render(ArcadeShell, authenticatedProps);
 
-		await expect.element(page.getByTestId('arcade-score')).toHaveTextContent('900');
-		await expect.element(page.getByTestId('arcade-rank')).toHaveTextContent('#38');
+		await expect.element(page.getByTestId('arcade-score')).toMatchTextContent('900');
+		await expect.element(page.getByTestId('arcade-rank')).toMatchTextContent('#38');
 		expect(document.querySelector('.score-card')).not.toHaveAttribute('aria-label');
 	});
 
@@ -65,7 +65,7 @@ describe('ArcadeShell', () => {
 		await page.viewport(390, 844);
 		render(ArcadeShell, authenticatedProps);
 
-		await expect.element(page.getByTestId('arcade-compact-score')).toHaveTextContent('900');
+		await expect.element(page.getByTestId('arcade-compact-score')).toMatchTextContent('900');
 		expect(document.querySelector('.compact-score')).not.toHaveAttribute('aria-label');
 	});
 
@@ -73,8 +73,8 @@ describe('ArcadeShell', () => {
 		await page.viewport(1440, 900);
 		render(ArcadeShell, unknownProgressProps);
 
-		await expect.element(page.getByTestId('arcade-score')).toHaveTextContent('—');
-		await expect.element(page.getByTestId('arcade-rank')).toHaveTextContent('#—');
+		await expect.element(page.getByTestId('arcade-score')).toMatchTextContent('—');
+		await expect.element(page.getByTestId('arcade-rank')).toMatchTextContent('#—');
 		const cardText = document.querySelector('.score-card')?.textContent ?? '';
 		expect(cardText).not.toContain('0');
 		expect(document.querySelector('.score-card')).not.toHaveAttribute('aria-label');
@@ -84,7 +84,7 @@ describe('ArcadeShell', () => {
 		await page.viewport(390, 844);
 		render(ArcadeShell, unknownProgressProps);
 
-		await expect.element(page.getByTestId('arcade-compact-score')).toHaveTextContent('—');
+		await expect.element(page.getByTestId('arcade-compact-score')).toMatchTextContent('—');
 		const compactText = document.querySelector('.compact-score')?.textContent ?? '';
 		expect(compactText).not.toContain('0');
 		expect(document.querySelector('.compact-score')).not.toHaveAttribute('aria-label');

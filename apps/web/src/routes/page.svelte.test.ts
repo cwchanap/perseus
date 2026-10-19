@@ -394,7 +394,7 @@ describe('Gallery Page', () => {
 		await expect
 			.element(page.getByTestId('progress-ring'))
 			.toHaveAttribute('aria-valuenow', '12.5');
-		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Resume Me');
+		await expect.element(page.getByTestId('continue-on-device')).toMatchTextContent('Resume Me');
 		await expect.element(page.getByText('2/16 PLACED')).toBeVisible();
 	});
 
@@ -435,7 +435,7 @@ describe('Gallery Page', () => {
 
 		const panel = page.getByTestId('continue-on-device');
 		await expect.element(panel).toBeVisible();
-		await expect.element(panel).toHaveTextContent('Resume Me');
+		await expect.element(panel).toMatchTextContent('Resume Me');
 		// The difficulty label renders inline next to the mission name.
 		await expect.element(panel.getByText('Hard')).toBeVisible();
 		await expect.element(page.getByText('2/100 PLACED')).toBeVisible();
@@ -490,7 +490,7 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
 		await expect
 			.element(page.getByTestId('continue-on-device'))
-			.toHaveTextContent('Corrupt Mission');
+			.toMatchTextContent('Corrupt Mission');
 	});
 
 	it('links to a Quick-only newest progress without adding a Quick card', async () => {
@@ -545,11 +545,11 @@ describe('Gallery Page', () => {
 			.mockReturnValue({ byVariantId: new Map(), newest: null });
 
 		render(GalleryPage);
-		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
+		await expect.element(page.getByTestId('continue-on-device')).toMatchTextContent('Latest Save');
 		await openGallerySearch();
 		await page.getByTestId('search-input').fill('other');
 		await vi.waitFor(() => expect(mockedFetchPuzzles).toHaveBeenCalledTimes(2));
-		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
+		await expect.element(page.getByTestId('continue-on-device')).toMatchTextContent('Latest Save');
 	});
 
 	it('shows picker entry for an off-page candidate with no known latest row', async () => {
@@ -558,7 +558,7 @@ describe('Gallery Page', () => {
 		render(GalleryPage);
 		await expect
 			.element(page.getByTestId('continue-on-device'))
-			.toHaveTextContent('SAVED PROGRESS AVAILABLE');
+			.toMatchTextContent('SAVED PROGRESS AVAILABLE');
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 		expect(mockedDiscoverAllSavedProgress).not.toHaveBeenCalled();
 	});
@@ -603,7 +603,7 @@ describe('Gallery Page', () => {
 		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 
-		const { unmount } = render(GalleryPage);
+		const { unmount } = await render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
@@ -615,7 +615,7 @@ describe('Gallery Page', () => {
 		// Remount: onMount re-probes shallow storage. The session was purged
 		// during authoritative discovery, so listResumableSessionCandidateIds
 		// returns [] and the dead affordance does not reappear.
-		unmount();
+		await unmount();
 		render(GalleryPage);
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
 	});
@@ -663,7 +663,7 @@ describe('Gallery Page', () => {
 		mockedDiscoverGalleryProgress.mockReturnValue({ byVariantId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [validRow], complete: true });
 
-		const { unmount } = render(GalleryPage);
+		const { unmount } = await render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.element(page.getByText('Valid Save')).toBeVisible();
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
@@ -678,7 +678,7 @@ describe('Gallery Page', () => {
 
 		// Remount: onMount reads the post-purge storage state, so 'gone' does
 		// not resurface as a candidate.
-		unmount();
+		await unmount();
 		render(GalleryPage);
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(2);
@@ -1616,7 +1616,7 @@ describe('Gallery Page', () => {
 
 		await expect
 			.element(page.getByTestId('gallery-bookmark-error'))
-			.toHaveTextContent('bookmark_limit_reached');
+			.toMatchTextContent('bookmark_limit_reached');
 		await expect
 			.element(page.getByTestId('gallery-bookmark-error'))
 			.toHaveAttribute('role', 'alert');
@@ -1767,11 +1767,11 @@ describe('Gallery Page', () => {
 			limit: 20
 		});
 
-		const { unmount } = render(GalleryPage);
+		const { unmount } = await render(GalleryPage);
 		await expect
 			.element(page.getByRole('img', { name: 'Highest cleared difficulty: Hard' }))
 			.toBeVisible();
-		unmount();
+		await unmount();
 
 		statsSpies.getStats.mockImplementation((puzzleId: string) =>
 			puzzleId === 'p1-e' ? { totalCompletions: 1 } : null

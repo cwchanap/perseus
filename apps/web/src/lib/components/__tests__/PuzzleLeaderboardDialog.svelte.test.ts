@@ -51,7 +51,7 @@ describe('PuzzleLeaderboardDialog', () => {
 				}
 			]
 		});
-		await expect.element(page.getByTestId('leaderboard-entries')).toHaveTextContent('Ace');
+		await expect.element(page.getByTestId('leaderboard-entries')).toMatchTextContent('Ace');
 	});
 
 	it('shows an error when the leaderboard fetch fails', async () => {
@@ -99,8 +99,8 @@ describe('PuzzleLeaderboardDialog', () => {
 		});
 
 		await expect.element(page.getByTestId('leaderboard-me')).toBeVisible();
-		await expect.element(page.getByTestId('leaderboard-me')).toHaveTextContent('#7');
-		await expect.element(page.getByTestId('leaderboard-me')).toHaveTextContent('You (you)');
+		await expect.element(page.getByTestId('leaderboard-me')).toMatchTextContent('#7');
+		await expect.element(page.getByTestId('leaderboard-me')).toMatchTextContent('You (you)');
 	});
 
 	it('hides the viewer row when the viewer is already in the leaderboard entries', async () => {
@@ -127,7 +127,7 @@ describe('PuzzleLeaderboardDialog', () => {
 			onDismiss: vi.fn()
 		});
 
-		await expect.element(page.getByTestId('leaderboard-entries')).toHaveTextContent('Ace');
+		await expect.element(page.getByTestId('leaderboard-entries')).toMatchTextContent('Ace');
 		expect(page.getByTestId('leaderboard-me').query()).toBeNull();
 	});
 
@@ -151,7 +151,7 @@ describe('PuzzleLeaderboardDialog', () => {
 			onDismiss: vi.fn()
 		});
 
-		await expect.element(page.getByTestId('leaderboard-entries')).toHaveTextContent('Ace');
+		await expect.element(page.getByTestId('leaderboard-entries')).toMatchTextContent('Ace');
 		await page.getByTestId('leaderboard-difficulty').selectOptions('hard');
 		await expect.poll(() => vi.mocked(fetchFamilyLeaderboard).mock.calls.length).toBe(2);
 		expect(vi.mocked(fetchFamilyLeaderboard).mock.calls[1]?.[0]).toBe('fam-1');
@@ -181,7 +181,7 @@ describe('PuzzleLeaderboardDialog', () => {
 			onDismiss: vi.fn()
 		});
 
-		await expect.element(page.getByTestId('leaderboard-entries')).toHaveTextContent('Ace');
+		await expect.element(page.getByTestId('leaderboard-entries')).toMatchTextContent('Ace');
 		await page.getByTestId('leaderboard-mode').selectOptions('rotation');
 		await expect.poll(() => vi.mocked(fetchFamilyLeaderboard).mock.calls.length).toBe(2);
 		expect(vi.mocked(fetchFamilyLeaderboard).mock.calls[1]?.[0]).toBe('fam-1');
@@ -223,8 +223,8 @@ describe('PuzzleLeaderboardDialog', () => {
 			mode: 'rotation'
 		});
 
-		await expect.element(page.getByTestId('leaderboard-entries')).toHaveTextContent('Ace');
-		await expect.element(page.getByTestId('leaderboard-entries')).toHaveTextContent('01:05');
+		await expect.element(page.getByTestId('leaderboard-entries')).toMatchTextContent('Ace');
+		await expect.element(page.getByTestId('leaderboard-entries')).toMatchTextContent('01:05');
 
 		await page.getByRole('button', { name: 'CLOSE' }).click();
 		expect(onDismiss).toHaveBeenCalledOnce();
