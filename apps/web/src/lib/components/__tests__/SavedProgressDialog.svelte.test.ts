@@ -19,7 +19,11 @@ const progress: GalleryProgress[] = [
 
 describe('SavedProgressDialog', () => {
 	it('renders loading and empty states', async () => {
-		const view = render(SavedProgressDialog, { progress: [], loading: true, onClose: vi.fn() });
+		const view = await render(SavedProgressDialog, {
+			progress: [],
+			loading: true,
+			onClose: vi.fn()
+		});
 		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
 		await view.rerender({ progress: [], loading: false, onClose: vi.fn() });
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
@@ -55,8 +59,8 @@ describe('SavedProgressDialog', () => {
 		});
 		const row = page.getByTestId('saved-progress-row-old-save');
 		await expect.element(row).toBeVisible();
-		await expect.element(row).toHaveTextContent('Older Mission');
-		await expect.element(row).toHaveTextContent('3/12 PLACED');
+		await expect.element(row).toMatchTextContent('Older Mission');
+		await expect.element(row).toMatchTextContent('3/12 PLACED');
 		await expect.element(page.getByTestId('saved-progress-partial-warning')).toBeVisible();
 		// The full-outage message must NOT appear when rows are present.
 		expect(document.body.textContent).not.toContain('UNABLE TO LOAD SAVED PROGRESS');
@@ -84,10 +88,10 @@ describe('SavedProgressDialog', () => {
 
 		const row = page.getByTestId('saved-progress-row-pz1-h');
 		await expect.element(row).toBeVisible();
-		await expect.element(row).toHaveTextContent('Twin Mission');
+		await expect.element(row).toMatchTextContent('Twin Mission');
 		// The difficulty label renders inline next to the mission name.
 		await expect.element(row.getByText('Hard')).toBeVisible();
-		await expect.element(row).toHaveTextContent('4/100 PLACED');
+		await expect.element(row).toMatchTextContent('4/100 PLACED');
 		// The Continue link's accessible name includes the difficulty so two
 		// same-named variants are distinguishable to assistive tech.
 		await expect
@@ -100,8 +104,8 @@ describe('SavedProgressDialog', () => {
 		const list = page.getByRole('list');
 		await expect.element(list).toBeVisible();
 		const row = page.getByTestId('saved-progress-row-old-save');
-		await expect.element(row).toHaveTextContent('Older Mission');
-		await expect.element(row).toHaveTextContent('3/12 PLACED');
+		await expect.element(row).toMatchTextContent('Older Mission');
+		await expect.element(row).toMatchTextContent('3/12 PLACED');
 		await expect
 			.element(row.getByRole('link', { name: 'Continue Older Mission' }))
 			.toHaveAttribute('href', '/puzzle/old-save');
@@ -135,13 +139,13 @@ describe('SavedProgressDialog', () => {
 		});
 
 		const fresh = page.getByTestId('saved-progress-row-fresh');
-		await expect.element(fresh).toHaveTextContent('0/12 PLACED');
+		await expect.element(fresh).toMatchTextContent('0/12 PLACED');
 		await expect
 			.element(fresh.getByRole('link', { name: 'Continue Fresh Mission' }))
 			.toHaveAttribute('href', '/puzzle/fresh');
 
 		const corrupt = page.getByTestId('saved-progress-row-corrupt');
-		await expect.element(corrupt).toHaveTextContent('Corrupt Mission');
+		await expect.element(corrupt).toMatchTextContent('Corrupt Mission');
 		await expect
 			.element(corrupt.getByRole('link', { name: 'Continue Corrupt Mission' }))
 			.toHaveAttribute('href', '/puzzle/corrupt');

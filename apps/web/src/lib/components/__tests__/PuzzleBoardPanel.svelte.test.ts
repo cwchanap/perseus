@@ -191,7 +191,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('resets real zoom and pan when viewResetVersion changes', async () => {
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 		await expect.poll(() => transformOf(frame)).toContain('translate(0px, 0px)');
 		const fitTransform = transformOf(frame);
@@ -206,7 +206,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('cancels pan and ignores later pointer moves when interactionBlocked becomes true', async () => {
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const frame = await beginRealPan(8);
 
 		await view.rerender({ ...input, interactionBlocked: true });
@@ -246,7 +246,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('cancels a real active pan when selection begins', async () => {
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const frame = await beginRealPan(31);
 
 		await view.rerender({ ...input, selectedPieceId: 0 });
@@ -267,7 +267,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('allows pan again after selection clears', async () => {
 		const input = props({ selectedPieceId: 0 });
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
 		await view.rerender({ ...input, selectedPieceId: null });
@@ -290,7 +290,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('reclamps on boardMetrics changes without resetting usable zoom', async () => {
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 
 		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
@@ -325,7 +325,7 @@ describe('PuzzleBoardPanel', () => {
 	});
 
 	it('zooms out via the exported board methods', async () => {
-		const view = render(PuzzleBoardPanel, props());
+		const view = await render(PuzzleBoardPanel, props());
 		const boardHandle = view.component as unknown as {
 			zoomIn: () => void;
 			zoomOut: () => void;
@@ -361,7 +361,7 @@ describe('PuzzleBoardPanel', () => {
 		// Render with valid metrics first so the viewport element has dimensions,
 		// then switch to invalid metrics to trigger the invalid-dimensions branch.
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const viewport = await page.getByTestId('board-viewport').element();
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 		await expect.poll(() => scaleOf(transformOf(frame))).toBeLessThan(1);
@@ -468,7 +468,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('falls back to fit zoom of 1 when the viewport has zero dimensions', async () => {
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const viewport = await page.getByTestId('board-viewport').element();
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 		// Wait for initial fit zoom (board is larger than viewport, so < 1).
@@ -487,7 +487,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('omits the completion-reveal marker when the reveal prop is unset or false', async () => {
 		const input = props();
-		const view = render(PuzzleBoardPanel, input);
+		const view = await render(PuzzleBoardPanel, input);
 		const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
 		expect(boardCanvas).not.toBeNull();
 

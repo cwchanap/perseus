@@ -200,7 +200,7 @@ describe('PuzzleInventoryPanel', () => {
 
 	it('forwards select and cancel selection', async () => {
 		const input = baseProps();
-		const view = render(PuzzleInventoryPanel, input);
+		const view = await render(PuzzleInventoryPanel, input);
 
 		const piece = await page.getByLabelText('Puzzle piece 1').element();
 		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -282,7 +282,7 @@ describe('PuzzleInventoryPanel', () => {
 
 	it('shows Cancel only while a piece is selected and forwards it', async () => {
 		const input = baseProps();
-		const view = render(PuzzleInventoryPanel, input);
+		const view = await render(PuzzleInventoryPanel, input);
 
 		expect(page.getByRole('button', { name: 'Cancel selected piece' }).query()).toBeNull();
 
@@ -349,7 +349,7 @@ describe('PuzzleInventoryPanel', () => {
 
 	it('opens the drawer before scrolling the hinted piece into view', async () => {
 		const input = baseProps();
-		const view = render(PuzzleInventoryPanel, input);
+		const view = await render(PuzzleInventoryPanel, input);
 
 		await page.getByRole('button', { name: 'Expand piece tray to full' }).click();
 		await page.getByRole('button', { name: 'Collapse piece tray to peek' }).click();
@@ -415,7 +415,7 @@ describe('PuzzleInventoryPanel', () => {
 
 	it('forwards Shuffle and disables it with fewer than two unplaced pieces', async () => {
 		const input = baseProps();
-		const view = render(PuzzleInventoryPanel, input);
+		const view = await render(PuzzleInventoryPanel, input);
 		const shuffle = page.getByRole('button', { name: 'Shuffle pieces' });
 
 		await shuffle.click();
@@ -476,7 +476,7 @@ describe('PuzzleInventoryPanel', () => {
 
 		it('rotates the selected enlarged piece and reflects the new angle', async () => {
 			const input = baseProps();
-			const view = render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+			const view = await render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
 			await page.getByRole('button', { name: 'Rotate selected piece' }).click();
 			expect(input.onRotate).toHaveBeenCalledWith(1);
 			await view.rerender({ ...input, selectedPieceId: 1, pieceRotations: { 1: 90 as const } });
@@ -488,7 +488,7 @@ describe('PuzzleInventoryPanel', () => {
 
 		it('removes the expanded state when the selection is cleared', async () => {
 			const input = baseProps();
-			const view = render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+			const view = await render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
 			const slot = await page.getByTestId('piece-slot-1').element();
 			expect(getComputedStyle(slot).gridColumnStart).toBe('span 2');
 			await view.rerender({ ...input, selectedPieceId: null });
@@ -565,7 +565,7 @@ describe('PuzzleInventoryPanel', () => {
 
 		it('updates badges after placedPieces changes', async () => {
 			const input = { ...baseProps(), ...filterProps() };
-			const view = render(PuzzleInventoryPanel, input);
+			const view = await render(PuzzleInventoryPanel, input);
 			expect(badgeText('center')).toBe('1');
 			expect(badgeText('all')).toBe('9');
 			await view.rerender({ ...input, placedPieces: [{ pieceId: 4, x: 1, y: 1 }] });
@@ -616,7 +616,7 @@ describe('PuzzleInventoryPanel', () => {
 
 		it('shows SHOW ALL REMAINING in both empty branches and recovers on activation', async () => {
 			const emptyKind = baseProps();
-			const view = render(PuzzleInventoryPanel, { ...emptyKind, activeFilter: 'center' });
+			const view = await render(PuzzleInventoryPanel, { ...emptyKind, activeFilter: 'center' });
 			await expect.element(page.getByText('SHOW ALL REMAINING')).toBeVisible();
 			expect(emptyKind.onFilterChange).not.toHaveBeenCalled();
 			await page.getByTestId('inventory-filter-recovery').click();
@@ -704,7 +704,7 @@ describe('PuzzleInventoryPanel', () => {
 		});
 
 		it('restores exactly one tabbable root when a filter removes the active piece', async () => {
-			const view = render(PuzzleInventoryPanel, {
+			const view = await render(PuzzleInventoryPanel, {
 				...baseProps(),
 				puzzle: filterPuzzle,
 				trayOrder: filterPuzzle.pieces.map((piece) => piece.id)
@@ -732,7 +732,7 @@ describe('PuzzleInventoryPanel', () => {
 		});
 
 		it('restores exactly one tabbable root when placement removes the active piece', async () => {
-			const view = render(PuzzleInventoryPanel, baseProps());
+			const view = await render(PuzzleInventoryPanel, baseProps());
 			const pieces = Array.from(
 				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
 			);

@@ -248,7 +248,7 @@ describe('Bookmarks Page', () => {
 		render(BookmarksPage);
 
 		await expect.element(page.getByTestId('bookmarks-grid')).toBeVisible();
-		await expect.element(page.getByTestId('puzzle-card-title')).toHaveTextContent('Puzzle f1');
+		await expect.element(page.getByTestId('puzzle-card-title')).toMatchTextContent('Puzzle f1');
 		await expect.element(page.getByRole('button', { name: 'Remove bookmark' })).toBeVisible();
 	});
 
@@ -269,7 +269,7 @@ describe('Bookmarks Page', () => {
 		// toggle (e.g. the 409 quota response) is still visible.
 		await expect
 			.element(page.getByTestId('bookmarks-mutation-error'))
-			.toHaveTextContent('bookmark_limit_reached');
+			.toMatchTextContent('bookmark_limit_reached');
 		await expect
 			.element(page.getByTestId('bookmarks-mutation-error'))
 			.toHaveAttribute('role', 'alert');
@@ -291,7 +291,7 @@ describe('Bookmarks Page', () => {
 
 		await expect
 			.element(page.getByTestId('bookmarks-error'))
-			.toHaveTextContent('Failed to load bookmarks');
+			.toMatchTextContent('Failed to load bookmarks');
 		// The load failure renders once: no duplicate mutation-error banner.
 		expect(page.getByTestId('bookmarks-mutation-error').query()).toBeNull();
 		await expect.element(page.getByTestId('bookmarks-error')).toHaveAttribute('role', 'alert');

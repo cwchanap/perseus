@@ -30,11 +30,11 @@ describe('Leaderboard page', () => {
 
 		await expect
 			.element(page.getByTestId('leaderboard-title'))
-			.toHaveTextContent('Overall Leaderboard');
-		await expect.element(page.getByTestId('overall-leaderboard-table')).toHaveTextContent('Ace');
-		await expect.element(page.getByTestId('overall-leaderboard-table')).toHaveTextContent('500');
-		await expect.element(page.getByTestId('overall-leaderboard-table')).toHaveTextContent('2');
-		await expect.element(page.getByTestId('overall-leaderboard-table')).toHaveTextContent('1');
-		await expect.element(page.getByTestId('overall-leaderboard-table')).toHaveTextContent('0');
+			.toMatchTextContent('Overall Leaderboard');
+		await expect.element(page.getByTestId('overall-leaderboard-table')).toMatchTextContent('Ace');
+		await expect.element(page.getByTestId('overall-leaderboard-table')).toMatchTextContent('500');
+		await expect.element(page.getByTestId('overall-leaderboard-table')).toMatchTextContent('2');
+		await expect.element(page.getByTestId('overall-leaderboard-table')).toMatchTextContent('1');
+		await expect.element(page.getByTestId('overall-leaderboard-table')).toMatchTextContent('0');
 	});
 });

@@ -164,7 +164,7 @@ describe('ReferenceOverlay', () => {
 			document.body.appendChild(trigger);
 			trigger.focus();
 
-			const { rerender } = render(ReferenceOverlay, {
+			const { rerender } = await render(ReferenceOverlay, {
 				imageUrl: '/api/puzzles/test-puzzle/reference',
 				active: true,
 				dismissible: true,

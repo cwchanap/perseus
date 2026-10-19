@@ -54,3 +54,4 @@ state-backup-*.json
 
 # Local puzzle image assets
 /assets/
+.vitest/

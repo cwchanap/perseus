@@ -154,15 +154,15 @@ describe('profile page', () => {
 
 		render(ProfilePage);
 
-		await expect.element(page.getByTestId('profile-progression-score')).toHaveTextContent('142');
-		await expect.element(page.getByTestId('profile-progression-rank')).toHaveTextContent('3');
+		await expect.element(page.getByTestId('profile-progression-score')).toMatchTextContent('142');
+		await expect.element(page.getByTestId('profile-progression-rank')).toMatchTextContent('3');
 		await expect
 			.element(page.getByTestId('profile-progression-achievements'))
-			.toHaveTextContent('1/9');
-		await expect.element(page.getByTestId('profile-difficulty-easy')).toHaveTextContent('1');
-		await expect.element(page.getByTestId('profile-difficulty-normal')).toHaveTextContent('0');
-		await expect.element(page.getByTestId('profile-difficulty-hard')).toHaveTextContent('0');
-		await expect.element(page.getByTestId('profile-mastery-earned')).toHaveTextContent('2');
+			.toMatchTextContent('1/9');
+		await expect.element(page.getByTestId('profile-difficulty-easy')).toMatchTextContent('1');
+		await expect.element(page.getByTestId('profile-difficulty-normal')).toMatchTextContent('0');
+		await expect.element(page.getByTestId('profile-difficulty-hard')).toMatchTextContent('0');
+		await expect.element(page.getByTestId('profile-mastery-earned')).toMatchTextContent('2');
 	});
 
 	it('shows summary counts', async () => {
@@ -180,8 +180,8 @@ describe('profile page', () => {
 
 		render(ProfilePage);
 		await expect.element(page.getByTestId('profile-summary-uploaded')).toBeVisible();
-		await expect.element(page.getByTestId('profile-summary-solved')).toHaveTextContent('3');
-		await expect.element(page.getByTestId('profile-summary-completions')).toHaveTextContent('7');
+		await expect.element(page.getByTestId('profile-summary-solved')).toMatchTextContent('3');
+		await expect.element(page.getByTestId('profile-summary-completions')).toMatchTextContent('7');
 	});
 
 	it('presents nullable and numeric puzzle results without formatting null', async () => {

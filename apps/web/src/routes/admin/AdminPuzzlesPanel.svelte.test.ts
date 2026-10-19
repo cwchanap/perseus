@@ -424,7 +424,7 @@ describe('AdminPuzzlesPanel', () => {
 			.mockResolvedValueOnce(mockFamilies)
 			.mockResolvedValueOnce(mockFamilies);
 
-		const view = render(AdminPuzzlesPanel, { active: false });
+		const view = await render(AdminPuzzlesPanel, { active: false });
 
 		await expect.element(page.getByText('City Lights')).toBeVisible();
 		await vi.advanceTimersByTimeAsync(3000);
@@ -445,12 +445,12 @@ describe('AdminPuzzlesPanel', () => {
 			})
 		);
 
-		const { unmount } = render(AdminPuzzlesPanel);
+		const { unmount } = await render(AdminPuzzlesPanel);
 		await vi.waitFor(() => {
 			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(1);
 		});
 
-		unmount();
+		await unmount();
 		const setIntervalSpy = vi.spyOn(window, 'setInterval');
 		try {
 			resolveInitialRequest(mockFamilies);

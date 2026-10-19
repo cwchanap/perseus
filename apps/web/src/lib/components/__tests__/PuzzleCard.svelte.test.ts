@@ -52,7 +52,7 @@ describe('PuzzleCard', () => {
 		const progress = new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]);
 		render(PuzzleCard, { family: mockFamily, progressByVariantId: progress });
 
-		await expect.element(page.getByTestId('difficulty-progress')).toHaveTextContent('7/16');
+		await expect.element(page.getByTestId('difficulty-progress')).toMatchTextContent('7/16');
 		await expect
 			.element(
 				page.getByRole('link', {
@@ -60,7 +60,7 @@ describe('PuzzleCard', () => {
 				})
 			)
 			.toBeVisible();
-		await expect.element(page.getByTestId('card-progress')).toHaveTextContent('7/16');
+		await expect.element(page.getByTestId('card-progress')).toMatchTextContent('7/16');
 		const progressBadge = await page.getByTestId('card-progress').element();
 		expect(progressBadge.getAttribute('aria-label')).toBeNull();
 		expect(page.getByTestId('card-mastery').query()).toBeNull();
@@ -120,7 +120,7 @@ describe('PuzzleCard', () => {
 	});
 
 	it('exposes add and remove accessible states on the bookmark button', async () => {
-		const { unmount } = render(PuzzleCard, {
+		const { unmount } = await render(PuzzleCard, {
 			family: mockFamily,
 			bookmarked: false,
 			onBookmarkToggle: () => {}
@@ -128,7 +128,7 @@ describe('PuzzleCard', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Add bookmark: Test Puzzle' }))
 			.toBeVisible();
-		unmount();
+		await unmount();
 
 		render(PuzzleCard, { family: mockFamily, bookmarked: true, onBookmarkToggle: () => {} });
 		await expect
@@ -159,9 +159,9 @@ describe('PuzzleCard', () => {
 	});
 
 	it('keeps difficulty links intact and hides the bookmark action without a callback', async () => {
-		const { unmount } = render(PuzzleCard, { family: mockFamily, bookmarked: true });
+		const { unmount } = await render(PuzzleCard, { family: mockFamily, bookmarked: true });
 		expect(page.getByTestId('card-bookmark').query()).toBeNull();
-		unmount();
+		await unmount();
 
 		render(PuzzleCard, { family: mockFamily, onBookmarkToggle: () => {} });
 		await expect.element(page.getByTestId('card-bookmark')).toBeVisible();
@@ -172,10 +172,10 @@ describe('PuzzleCard', () => {
 	});
 
 	it('renders no cleared badge or status stack without a cleared difficulty', async () => {
-		const { unmount } = render(PuzzleCard, { family: mockFamily });
+		const { unmount } = await render(PuzzleCard, { family: mockFamily });
 		expect(page.getByTestId('card-cleared-difficulty').query()).toBeNull();
 		expect(page.getByTestId('card-status-stack').query()).toBeNull();
-		unmount();
+		await unmount();
 
 		render(PuzzleCard, { family: mockFamily, highestClearedDifficulty: null });
 		expect(page.getByTestId('card-cleared-difficulty').query()).toBeNull();
@@ -213,14 +213,14 @@ describe('PuzzleCard', () => {
 	});
 
 	it('renders progress-only and clear-only layouts inside the status stack', async () => {
-		const { unmount } = render(PuzzleCard, {
+		const { unmount } = await render(PuzzleCard, {
 			family: mockFamily,
 			progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]])
 		});
 		const progressStack = await page.getByTestId('card-status-stack').element();
 		expect(progressStack.querySelector('[data-testid="card-progress"]')).not.toBeNull();
 		expect(progressStack.querySelector('[data-testid="card-cleared-difficulty"]')).toBeNull();
-		unmount();
+		await unmount();
 
 		render(PuzzleCard, { family: mockFamily, highestClearedDifficulty: 'normal' });
 		await expect.element(page.getByTestId('card-cleared-difficulty')).toBeVisible();

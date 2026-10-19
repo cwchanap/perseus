@@ -44,7 +44,7 @@ describe('PuzzleCompletionDialog', () => {
 			await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
 			await expect
 				.element(page.getByTestId('completion-result-label'))
-				.toHaveTextContent(expectedLabel);
+				.toMatchTextContent(expectedLabel);
 			expect(dialog.querySelector('[data-testid="completion-star"]')).toBeNull();
 			expect(dialog.querySelector('.completion-stars')).toBeNull();
 			expect(dialog.querySelector('[aria-label*="star" i]')).toBeNull();
@@ -71,7 +71,7 @@ describe('PuzzleCompletionDialog', () => {
 		// If the artwork URL is withdrawn while the artwork subview is open,
 		// the route must return to results; the modalFocus key change
 		// refocuses the dialog container so focus never drops to body.
-		const rendered = render(PuzzleCompletionDialog, {
+		const rendered = await render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
 		});
@@ -253,8 +253,8 @@ describe('PuzzleCompletionDialog', () => {
 
 		await expect
 			.element(page.getByTestId('completion-result-label'))
-			.toHaveTextContent('STANDARD TIMED');
-		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
+			.toMatchTextContent('STANDARD TIMED');
+		await expect.element(page.getByTestId('completion-final-time')).toMatchTextContent(/^01:15$/);
 
 		await page.getByTestId('retry-server-submission').click();
 		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
@@ -273,18 +273,18 @@ describe('PuzzleCompletionDialog', () => {
 		expect(page.getByText('S RANK').query()).toBeNull();
 		await expect
 			.element(page.getByTestId('completion-result-label'))
-			.toHaveTextContent('STANDARD TIMED');
-		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
-		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:08$/);
+			.toMatchTextContent('STANDARD TIMED');
+		await expect.element(page.getByTestId('completion-final-time')).toMatchTextContent(/^01:15$/);
+		await expect.element(page.getByTestId('completion-best-time')).toMatchTextContent(/^01:08$/);
 		expect(page.getByText('NEW RECORD').query()).toBeNull();
-		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
-		await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^0$/);
+		await expect.element(page.getByTestId('completion-piece-count')).toMatchTextContent(/^12$/);
+		await expect.element(page.getByTestId('completion-hints-used')).toMatchTextContent(/^0$/);
 		await expect
 			.element(page.getByTestId('completion-incorrect-attempts'))
-			.toHaveTextContent(/^1$/);
+			.toMatchTextContent(/^1$/);
 		await expect
 			.element(page.getByTestId('completion-rotation'))
-			.toHaveTextContent(/^OFF · NOT USED$/);
+			.toMatchTextContent(/^OFF · NOT USED$/);
 	});
 
 	it('shows a standard timed new-best verdict', async () => {
@@ -294,7 +294,7 @@ describe('PuzzleCompletionDialog', () => {
 			isNewBest: true
 		});
 
-		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:15$/);
+		await expect.element(page.getByTestId('completion-best-time')).toMatchTextContent(/^01:15$/);
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 	});
 
@@ -308,8 +308,8 @@ describe('PuzzleCompletionDialog', () => {
 
 		// FINAL TIME and PERSONAL BEST intentionally format to the same text here;
 		// target the dedicated best-value node so the locator is unambiguous.
-		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:30$/);
-		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:30$/);
+		await expect.element(page.getByTestId('completion-final-time')).toMatchTextContent(/^01:30$/);
+		await expect.element(page.getByTestId('completion-best-time')).toMatchTextContent(/^01:30$/);
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 	});
 
@@ -337,12 +337,12 @@ describe('PuzzleCompletionDialog', () => {
 
 			await expect
 				.element(page.getByTestId('completion-result-label'))
-				.toHaveTextContent('ROTATION TIMED');
-			await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
+				.toMatchTextContent('ROTATION TIMED');
+			await expect.element(page.getByTestId('completion-final-time')).toMatchTextContent(/^01:15$/);
 			expect(page.getByTestId('completion-best-time').query()).toBeNull();
 			await expect
 				.element(page.getByTestId('completion-rotation'))
-				.toHaveTextContent(/^ON · USED$/);
+				.toMatchTextContent(/^ON · USED$/);
 		}
 	);
 
@@ -359,11 +359,11 @@ describe('PuzzleCompletionDialog', () => {
 
 			await expect
 				.element(page.getByTestId('completion-result-label'))
-				.toHaveTextContent('ASSISTED TIMED');
-			await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^2$/);
+				.toMatchTextContent('ASSISTED TIMED');
+			await expect.element(page.getByTestId('completion-hints-used')).toMatchTextContent(/^2$/);
 			await expect
 				.element(page.getByTestId('completion-incorrect-attempts'))
-				.toHaveTextContent(/^3$/);
+				.toMatchTextContent(/^3$/);
 			expect(page.getByTestId('completion-best-time').query()).toBeNull();
 		}
 	);
@@ -375,10 +375,10 @@ describe('PuzzleCompletionDialog', () => {
 			elapsedSeconds: null
 		});
 
-		await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
+		await expect.element(page.getByTestId('completion-result-label')).toMatchTextContent('RELAXED');
 		expect(page.getByTestId('completion-final-time').query()).toBeNull();
 		expect(page.getByTestId('completion-best-time').query()).toBeNull();
-		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
+		await expect.element(page.getByTestId('completion-piece-count')).toMatchTextContent(/^12$/);
 	});
 
 	it('shows progression awards when the server returns them', async () => {
@@ -394,17 +394,17 @@ describe('PuzzleCompletionDialog', () => {
 
 		await expect
 			.element(page.getByTestId('completion-clear-points'))
-			.toHaveTextContent('+200 SCORE');
+			.toMatchTextContent('+200 SCORE');
 		await expect
 			.element(page.getByTestId('completion-achievements'))
-			.toHaveTextContent('First Clear');
+			.toMatchTextContent('First Clear');
 		await expect
 			.element(page.getByTestId('completion-achievements'))
-			.toHaveTextContent('Getting Started');
-		await expect.element(page.getByTestId('completion-mastery')).toHaveTextContent('Hintless');
+			.toMatchTextContent('Getting Started');
+		await expect.element(page.getByTestId('completion-mastery')).toMatchTextContent('Hintless');
 		await expect
 			.element(page.getByTestId('completion-puzzle-rank'))
-			.toHaveTextContent('FAMILY RANK #3');
+			.toMatchTextContent('FAMILY RANK #3');
 	});
 
 	it('shows server personal best for standard timed completions', async () => {
@@ -417,7 +417,7 @@ describe('PuzzleCompletionDialog', () => {
 			}
 		});
 
-		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:02$/);
+		await expect.element(page.getByTestId('completion-best-time')).toMatchTextContent(/^01:02$/);
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 	});
 
@@ -434,7 +434,7 @@ describe('PuzzleCompletionDialog', () => {
 			}
 		});
 
-		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:10$/);
+		await expect.element(page.getByTestId('completion-best-time')).toMatchTextContent(/^01:10$/);
 		expect(page.getByText('NEW RECORD').query()).toBeNull();
 	});
 });

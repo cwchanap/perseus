@@ -19,11 +19,13 @@ updates:
       time: '09:00'
       timezone: 'America/Vancouver'
     open-pull-requests-limit: 5
-    # @vitest/browser-playwright v5 hard-requires vitest v5 core; blocked until a
-    # coordinated vitest 5 upgrade happens (see closed #104/#110).
+    # @vitest/* packages peer-require exact matching vitest core versions, so a
+    # lone bump of browser-playwright (major or minor) breaks lockstep and
+    # hangs browser-mode tests (#129). Vitest ecosystem updates are manual,
+    # in lockstep, across all workspaces (v5 landed via the coordinated
+    # upgrade; see closed #104/#110).
     ignore:
       - dependency-name: '@vitest/browser-playwright'
-        update-types: ['version-update:semver-major']
     commit-message:
       prefix: 'chore(deps)'
       include: 'scope'

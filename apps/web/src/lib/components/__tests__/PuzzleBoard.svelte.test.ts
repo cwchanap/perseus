@@ -364,7 +364,7 @@ describe('PuzzleBoard', () => {
 	it('exposes data-candidate-enabled only while a piece is selected', async () => {
 		const puzzle = createMockPuzzle(3);
 
-		const unselected = render(PuzzleBoard, {
+		const unselected = await render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
@@ -373,7 +373,7 @@ describe('PuzzleBoard', () => {
 		});
 		const unselectedBoard = await page.getByTestId('puzzle-board').element();
 		expect(unselectedBoard.getAttribute('data-candidate-enabled')).toBeNull();
-		unselected.unmount();
+		await unselected.unmount();
 
 		render(PuzzleBoard, {
 			puzzle,
@@ -390,7 +390,7 @@ describe('PuzzleBoard', () => {
 	it('changes an empty cell baseline styling while selected even without hover', async () => {
 		const puzzle = createMockPuzzle(3);
 
-		const unselected = render(PuzzleBoard, {
+		const unselected = await render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
@@ -401,7 +401,7 @@ describe('PuzzleBoard', () => {
 			.getByRole('button', { name: 'Row 1, column 2, empty' })
 			.element();
 		const unselectedColor = getComputedStyle(unselectedCell).backgroundColor;
-		unselected.unmount();
+		await unselected.unmount();
 
 		render(PuzzleBoard, {
 			puzzle,
@@ -492,7 +492,7 @@ describe('PuzzleBoard', () => {
 	it('styles accepted and rejected feedback distinctly', async () => {
 		const puzzle = createMockPuzzle(3);
 
-		const accepted = render(PuzzleBoard, {
+		const accepted = await render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
@@ -500,7 +500,7 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 		const acceptedStyle = getComputedStyle(await page.getByTestId('placement-feedback').element());
-		accepted.unmount();
+		await accepted.unmount();
 
 		render(PuzzleBoard, {
 			puzzle,
