@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import { ApiError, recordCompletion } from '$lib/services/api';
@@ -256,7 +256,7 @@
 		}
 	});
 
-	const puzzleId = $derived($page.params.id);
+	const puzzleId = $derived(page.params.id);
 
 	// --- Session-derived canonical state -----------------------------------------
 	const placedPieces = $derived<PlacedPiece[]>(sessionState?.placedPieces ?? []);

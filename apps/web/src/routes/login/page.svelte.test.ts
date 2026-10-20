@@ -4,37 +4,16 @@ import { page } from 'vitest/browser';
 import LoginPage from './+page.svelte';
 import { getGoogleLoginUrl } from '$lib/services/api';
 
-const mockPage = vi.hoisted(() => {
-	const subscribers = new Set<(value: unknown) => void>();
-	let value: unknown = {
-		url: new URL('https://perseus.test/login'),
-		status: 200,
-		error: null,
-		params: {},
-		route: { id: null }
-	};
+import { mockPage } from '$lib/testing/app-state-mock.svelte';
 
-	return {
-		subscribe(fn: (value: unknown) => void) {
-			fn(value);
-			subscribers.add(fn);
-			return () => {
-				subscribers.delete(fn);
-			};
-		},
-		set(nextValue: unknown) {
-			value = nextValue;
-			subscribers.forEach((fn) => fn(value));
-		}
-	};
+vi.mock('$app/state', async () => {
+	const { mockPage: page } = await import('$lib/testing/app-state-mock.svelte');
+	return { page };
 });
 
-vi.mock('$app/stores', () => ({
-	page: mockPage
-}));
-
 vi.mock('$app/paths', () => ({
-	resolve: (path: string) => path
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
 vi.mock('$lib/services/api', () => ({

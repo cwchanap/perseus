@@ -40,7 +40,8 @@ vi.mock('$lib/services/stats', () => ({
 }));
 
 vi.mock('$app/paths', () => ({
-	resolve: (path: string) => path
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
 const mockPlayerAuth = vi.hoisted(() => {

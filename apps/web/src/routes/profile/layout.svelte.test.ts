@@ -11,7 +11,8 @@ vi.mock('$app/navigation', () => ({
 
 vi.mock('$app/paths', () => ({
 	base: '',
-	resolve: (p: string) => p
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
 // Mutable playerAuth store mock so individual tests can set the auth state.

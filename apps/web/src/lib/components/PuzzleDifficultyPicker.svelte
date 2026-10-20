@@ -51,7 +51,7 @@
 			progress !== undefined ? ` ${progress.placedCount}/${progress.pieceCount}` : ''}
 		{#if variant.status === 'ready' && playableLinks}
 			<a
-				href={resolve(`/puzzle/${variant.id}`)}
+				href={resolve('/puzzle/[id]', { id: variant.id })}
 				class="difficulty-action"
 				class:difficulty-action-active={hasProgress}
 				aria-label={`${presentation.label} difficulty, ${variant.pieceCount} pieces${hasProgress ? `, continue saved progress${progressLabel}` : ''}`}

@@ -9,7 +9,7 @@
 	import '@fontsource/share-tech-mono/400.css';
 	import './layout.css';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';
 	import ArcadeShell from '$lib/components/ArcadeShell.svelte';
 	import { getPlayerProgression } from '$lib/services/api';
@@ -17,8 +17,8 @@
 
 	let { children } = $props();
 
-	const isOnPuzzleRoute = $derived($page.url.pathname.startsWith('/puzzle/'));
-	const shellVisible = $derived(!isOnPuzzleRoute && $page.url.pathname !== '/admin');
+	const isOnPuzzleRoute = $derived(page.url.pathname.startsWith('/puzzle/'));
+	const shellVisible = $derived(!isOnPuzzleRoute && page.url.pathname !== '/admin');
 	const playerDisplayName = $derived($playerAuth.user?.name ?? $playerAuth.user?.email ?? '');
 	let shellScore = $state<number | null>(null);
 	let shellRank = $state<number | null>(null);
@@ -28,7 +28,7 @@
 	});
 
 	$effect(() => {
-		const pathname = $page.url.pathname;
+		const pathname = page.url.pathname;
 		const authenticated = $playerAuth.status === 'authenticated';
 		const canShowShell = !pathname.startsWith('/puzzle/') && pathname !== '/admin';
 
@@ -68,7 +68,7 @@
 
 <ArcadeShell
 	showChrome={shellVisible}
-	currentPath={$page.url.pathname}
+	currentPath={page.url.pathname}
 	authStatus={$playerAuth.status}
 	{playerDisplayName}
 	score={shellScore}

@@ -1,4 +1,8 @@
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
+
+// $app/paths no longer types `base`; derive it from the resolved root path
+// (resolve('/') is `${paths.base}/`).
+const base = resolve('/').replace(/\/+$/, '');
 
 interface AdminNavigationUrl {
 	pathname: string;

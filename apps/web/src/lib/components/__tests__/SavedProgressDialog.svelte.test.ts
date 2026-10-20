@@ -4,7 +4,10 @@ import { page } from 'vitest/browser';
 import SavedProgressDialog from '../SavedProgressDialog.svelte';
 import type { GalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
-vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
+vi.mock('$app/paths', () => ({
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
+}));
 
 const progress: GalleryProgress[] = [
 	{

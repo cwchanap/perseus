@@ -47,7 +47,7 @@
 				data-testid={`quick-list-row-${puzzle.id}`}
 			>
 				<a
-					href={resolve(`/puzzle/${puzzle.id}`)}
+					href={resolve('/puzzle/[id]', { id: puzzle.id })}
 					class="flex flex-1 items-center gap-3"
 					data-testid={`quick-list-link-${puzzle.id}`}
 				>

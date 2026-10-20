@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('$app/paths', () => ({
-	base: '/myapp',
-	resolve: (p: string) => `/myapp${p}`
+	// kit 3 no longer types `base`; adminNavigation derives it from resolve('/'),
+	// so the mock reproduces a prefixed resolver instead.
+	resolve: (path: string, params?: Record<string, string>) => {
+		const resolved = params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path;
+		return `/myapp${resolved}`;
+	}
 }));
 
 import { buildAdminDocumentHref, isClientRoutedAdminPath, stripBase } from './adminNavigation';

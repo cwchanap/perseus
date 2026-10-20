@@ -6,7 +6,11 @@ import svelte from 'eslint-plugin-svelte';
 import { defineConfig } from 'eslint/config';
 import globals from 'globals';
 import ts from 'typescript-eslint';
-import svelteConfig from './svelte.config.js';
+// kit 3 moved SvelteKit config into vite.config.ts; eslint only needs the
+// shared preprocess for eslint-plugin-svelte.
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+const svelteConfig = { preprocess: vitePreprocess() };
 
 const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url));
