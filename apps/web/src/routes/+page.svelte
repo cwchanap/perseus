@@ -386,7 +386,7 @@
 						</span>
 					</div>
 					<a
-						href={resolve(`/puzzle/${latestProgress.puzzleId}`)}
+						href={resolve('/puzzle/[id]', { id: latestProgress.puzzleId })}
 						class="continue-action arcade-btn"
 						aria-label={`Resume ${latestProgress.name}${latestProgress.difficulty ? ` (${getDifficultyLabel(latestProgress.difficulty)})` : ''}`}
 					>

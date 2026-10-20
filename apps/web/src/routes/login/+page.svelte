@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { getGoogleLoginUrl } from '$lib/services/api';
 
 	const errorMessages: Record<string, string> = {
@@ -12,7 +12,7 @@
 	};
 
 	const googleLoginUrl = getGoogleLoginUrl('/');
-	const errorMessage = $derived(errorMessages[$page.url.searchParams.get('error') ?? ''] ?? null);
+	const errorMessage = $derived(errorMessages[page.url.searchParams.get('error') ?? ''] ?? null);
 </script>
 
 <svelte:head>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import {
 		forceAdminDocumentNavigation,
 		isClientRoutedAdminPath
@@ -10,11 +10,11 @@
 	let redirecting = $state(true);
 
 	onMount(() => {
-		const shouldRedirect = isClientRoutedAdminPath($page.url.pathname);
+		const shouldRedirect = isClientRoutedAdminPath(page.url.pathname);
 		redirecting = shouldRedirect;
 
 		if (shouldRedirect) {
-			forceAdminDocumentNavigation($page.url);
+			forceAdminDocumentNavigation(page.url);
 		}
 	});
 </script>

@@ -26,7 +26,7 @@ import type {
 import { isPlayerBookmarkListResponse, type PlayerBookmarkListResponse } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
-import { PUBLIC_API_BASE } from '$env/static/public';
+import { PUBLIC_API_BASE } from '$app/env/public';
 
 // Use empty string (same-origin) as default for Workers deployment.
 // In local dev, explicitly set PUBLIC_API_BASE to 'http://localhost:4690'.

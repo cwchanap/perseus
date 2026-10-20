@@ -109,7 +109,7 @@
 								</p>
 							</div>
 							<a
-								href={resolve(`/puzzle/${item.puzzleId}`)}
+								href={resolve('/puzzle/[id]', { id: item.puzzleId })}
 								aria-label={`Continue ${item.name}${item.difficulty ? ` (${getDifficultyLabel(item.difficulty)})` : ''}`}
 								class="arcade-btn"
 							>

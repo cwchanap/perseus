@@ -10,38 +10,7 @@ import {
 	getResponsivePuzzleBoardMetrics
 } from '$lib/services/puzzleLayout';
 
-const mockPageStore = vi.hoisted(() => {
-	type PageValue = {
-		url: { pathname: string };
-		params: { id: string };
-		route: { id: string | null };
-		status: number;
-		error: unknown;
-	};
-
-	const subscribers = new Set<(value: PageValue) => void>();
-	let value: PageValue = {
-		url: { pathname: '/puzzle/test-puzzle' },
-		params: { id: 'test-puzzle' },
-		route: { id: '/puzzle/[id]' },
-		status: 200,
-		error: null
-	};
-
-	return {
-		subscribe(callback: (value: PageValue) => void) {
-			callback(value);
-			subscribers.add(callback);
-			return () => {
-				subscribers.delete(callback);
-			};
-		},
-		set(next: PageValue) {
-			value = next;
-			subscribers.forEach((callback) => callback(value));
-		}
-	};
-});
+import { mockPage as mockPageStore } from '$lib/testing/app-state-mock.svelte';
 
 const progressState = vi.hoisted(() => ({
 	value: null as GameProgress | null
@@ -134,16 +103,18 @@ const runtimeState = vi.hoisted(() => {
 	};
 });
 
-vi.mock('$app/stores', () => ({
-	page: mockPageStore
-}));
+vi.mock('$app/state', async () => {
+	const { mockPage: page } = await import('$lib/testing/app-state-mock.svelte');
+	return { page };
+});
 
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn()
 }));
 
 vi.mock('$app/paths', () => ({
-	resolve: (path: string) => path
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
 vi.mock('$lib/services/gameplay/runtime', () => ({

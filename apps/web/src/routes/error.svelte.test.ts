@@ -4,41 +4,20 @@ import { page } from 'vitest/browser';
 import ErrorPage from './+error.svelte';
 import { goto } from '$app/navigation';
 
-// Hoisted mutable page store for controlling $page.status / $page.error
-const mockPage = vi.hoisted(() => {
-	const subscribers = new Set<(v: unknown) => void>();
-	let value: unknown = {
-		url: { pathname: '/missing' },
-		status: 404,
-		error: null,
-		params: {},
-		route: { id: null }
-	};
-	return {
-		subscribe(fn: (v: unknown) => void) {
-			fn(value);
-			subscribers.add(fn);
-			return () => {
-				subscribers.delete(fn);
-			};
-		},
-		set(v: unknown) {
-			value = v;
-			subscribers.forEach((fn) => fn(value));
-		}
-	};
-});
+import { mockPage } from '$lib/testing/app-state-mock.svelte';
 
-vi.mock('$app/stores', () => ({
-	page: mockPage
-}));
+vi.mock('$app/state', async () => {
+	const { mockPage: page } = await import('$lib/testing/app-state-mock.svelte');
+	return { page };
+});
 
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn()
 }));
 
 vi.mock('$app/paths', () => ({
-	resolve: (p: string) => p
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
 describe('+error.svelte', () => {

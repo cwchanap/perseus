@@ -48,7 +48,7 @@
 				toast = 'Storage full — this puzzle will only last for this session.';
 				await new Promise((r) => setTimeout(r, 1500));
 			}
-			await goto(resolve(`/puzzle/${result.stored.id}`));
+			await goto(resolve('/puzzle/[id]', { id: result.stored.id }));
 		} catch (err) {
 			console.error('Quick puzzle generation failed:', err);
 			toast =

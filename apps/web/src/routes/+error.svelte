@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
@@ -76,23 +76,23 @@ px-6"
 tracking-[0.1em] text-(--hot)
 [text-shadow:0_0_30px_var(--hot),0_0_60px_var(--hot-glow)]"
 		>
-			{$page.status}
+			{page.status}
 		</div>
 		<div
 			class="h-px w-full bg-[linear-gradient(90deg,transparent,var(--hot),transparent)] opacity-40"
 		></div>
 		<h1 class="text-[1.1rem] font-(--font-display) font-bold tracking-[0.15em] text-(--text-0)">
-			{#if $page.status === 404}
+			{#if page.status === 404}
 				SECTOR NOT FOUND
 			{:else}
 				SYSTEM ERROR
 			{/if}
 		</h1>
 		<p class="text-[0.75rem] leading-[1.6] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-			{#if $page.status === 404}
+			{#if page.status === 404}
 				The mission you're looking for doesn't exist or has been removed.
-			{:else if $page.error}
-				{getSafeErrorMessage($page.error) ?? 'An unexpected error occurred. Please try again.'}
+			{:else if page.error}
+				{getSafeErrorMessage(page.error) ?? 'An unexpected error occurred. Please try again.'}
 			{:else}
 				An unexpected error occurred. Please try again.
 			{/if}

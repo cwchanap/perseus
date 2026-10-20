@@ -1,8 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { gameplayRuntimeOverridePlugin } from './vite-plugins/gameplay-runtime-override-plugin';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import { gameplayRuntimeOverridePlugin } from './vite-plugins/gameplay-runtime-override-plugin.ts';
 
 // Captured when the config is created. An already-running Vitest process does
 // not switch modes after environment mutation, so this is read at module-eval.
@@ -15,7 +17,17 @@ export default defineConfig({
 			readerPath: harnessEnabled ? '/src/lib/testing/e2e-gameplay-runtime' : undefined
 		}),
 		tailwindcss(),
-		sveltekit()
+		sveltekit({
+			// Consult https://svelte.dev/docs/kit/integrations
+			// for more information about preprocessors
+			preprocess: vitePreprocess(),
+			// Static hosting SPA fallback.
+			// Some static hosts (e.g. Surge) expect a `200.html` fallback for client-side routing.
+			adapter: adapter({ fallback: '200.html' }),
+			// shortcut: kit 3 removed $lib for #lib; keep the $lib alias until the
+			// ~260 usages migrate to #lib, then delete this line
+			alias: { $lib: 'src/lib' }
+		})
 	],
 
 	// @testing-library/svelte-core (via vitest-browser-svelte v3) ships raw

@@ -18,7 +18,8 @@ vi.mock('$lib/services/api', () => ({
 }));
 
 vi.mock('$app/paths', () => ({
-	resolve: (p: string) => p
+	resolve: (path: string, params?: Record<string, string>) =>
+		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
 vi.mock('$app/navigation', () => ({
