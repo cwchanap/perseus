@@ -12,7 +12,7 @@ The umbrella issue is **partly valid**, not nine open implementation bugs. The s
 
 | Original item | Finding on current main | Disposition |
 | --- | --- | --- |
-| #1 Upload silently fails | `upload/+page.svelte` catches API/normalization errors and shows `role="alert"`; it clears the form only after `createPlayerPuzzle` resolves and auto-clears the success message after 3s. `api.ts` posts to `/api/puzzle-families`. The Worker returns 201 only after R2 upload, family/variant metadata, D1 ownership insert, and workflow creation. `getPlayerSummary` counts processing, ready **and failed** owned families. Thus a successful 201 should be reflected in the profile; the reported 0 count remains unexplained. Existing web unit tests mock the API; they do **not** prove the real signed-in path. | **Unconfirmed root cause / required signed-in repro.** Improve confirmation; fix backend only against evidence. |
+| #1 Upload silently fails | `upload/+page.svelte` catches API/normalization errors and shows `role="alert"`; it clears the form only after `createPlayerPuzzle` resolves and auto-clears the success message after 3s. `api.ts` posts to `/api/puzzle-families`. The Worker returns 201 only after R2 upload, family/variant metadata, D1 ownership insert, and workflow creation. `getPlayerSummary` counts processing, ready **and failed** owned families. Thus a successful 201 should be reflected in the profile; the reported 0 count remains unexplained. Existing web unit tests mock the API; they do **not** prove the real signed-in path. | **Unconfirmed persistence root cause; confirmed short-lived success notice.** Fix success feedback unconditionally; investigate backend only with a signed-in trace. |
 | #2 Invalid image preview | `handleImageSelect` immediately stores any selected `File` and uses `FileReader.readAsDataURL`; the file input's `accept` is advisory, and actual `createImageBitmap` decode happens later, on submit, inside `normalizePuzzleImageFile`. Invalid files can therefore be previewed as broken images. | **Confirmed by code. Fix.** |
 | #3 Pause feedback | `PuzzleToolbar.svelte` has Pause action; `SessionPauseDialog.svelte` is an accessible modal labelled “Mission Paused” with Resume/Restart/Exit/Discard. | **Already addressed. No code change.** |
 | #4 Drag/placement | `PuzzlePiece.svelte` emits native HTML5 `dragstart` data; `PuzzleBoard.svelte` handles native `dragover/drop` and also keyboard/click placement through the engine. This does not prove a human drag succeeds; scripted gestures can fail to synthesize the browser drag data transfer. | **Manual human test, then act only if reproducible.** |
@@ -25,21 +25,22 @@ The umbrella issue is **partly valid**, not nine open implementation bugs. The s
 
 ## Implementation plan (one PR)
 
-### A. Upload flow: reproduce first, then address precisely (highest priority)
+### A. Upload flow: fix confirmed feedback; investigate persistence separately (highest priority)
 
-1. Exercise **signed-in** `/upload` with a real valid JPEG (around 1024px). Record POST `/api/puzzle-families` status/response; inspect Worker logs when available; check GET `/api/player/profile` and `/api/player/puzzle-families` immediately after POST. Do not log image contents, OAuth tokens, or personal email.
-2. Interpret the trace before changing the backend:
-   - **201 + family present:** no persistence bug. Make the success banner persistent until dismissed/new attempt, clearly distinguish “uploaded/processing” from “ready in gallery,” and offer a “View my puzzles” link. Do not discard the success confirmation after 3 seconds.
+1. **Unconditional frontend fix (no authenticated reproduction required):** In `upload/+page.svelte`, remove the three-second `successTimeout` auto-dismiss and its cleanup; keep a successful upload confirmation visible until the next upload attempt or navigation. Distinguish “accepted for processing” from “ready in the gallery,” and add a direct “View my puzzles” link to the existing `/profile` route. Do not introduce another timer, notification store, or polling loop. This fixes a confirmed UX problem regardless of what caused the original QA failure.
+2. Separately exercise **signed-in** `/upload` with a real valid JPEG (around 1024px). Record POST `/api/puzzle-families` status/response; inspect Worker logs when available; check GET `/api/player/profile` and `/api/player/puzzle-families` immediately after POST. Do not log image contents, OAuth tokens, or personal email.
+3. Interpret the trace **before changing backend logic**:
+   - **201 + family present:** no demonstrated persistence bug; the unconditional UX change above is sufficient unless the repro shows another issue.
    - **Non-2xx:** preserve name/image on failure and show the server-provided reason in the existing `role="alert"`; adjust the failing API path only if the trace identifies a real fault. The existing Worker cleanup/ownership workflow is authoritative; do not add an alternate write path.
    - **201 + missing ownership:** verify D1 row and status, profile/list filters, and actual account identity; fix the specific mismatch plus a Worker regression test. This contradicts the reviewed insert-before-201/count-processing contracts and must be demonstrated, not assumed.
-3. Keep the upload button disabled during requests and prevent duplicate submission. Ensure a retryable error remains visible and that a successful return has a durable confirmation.
+4. Keep the upload button disabled during requests and prevent duplicate submission. Ensure a retryable error remains visible.
 
 **Files to inspect/change only when needed:** `apps/web/src/routes/upload/+page.svelte`, `apps/web/src/lib/services/api.ts`, `apps/api/src/routes/puzzle-families.worker.ts`, `packages/shared/src/repositories.ts`; no schema/migration by default.
 
 ### B. Reject invalid image *before* preview
 
-- In `upload/+page.svelte`, synchronously reject non-JPEG/PNG/WebP declared MIME and files above the existing 10MB bound; clear previous image/preview and show an immediate inline `role="alert"`.
-- Decode before promoting an image to a visible preview (reuse browser image decoding, with failure handling); keep the input clear on failure. Prevent a slower previous selection from overwriting a newer one, and clean up any temporary blob/preview URL if used.
+- In `upload/+page.svelte`, synchronously reject unsupported declared MIME types and oversized files using `ALLOWED_MIME_TYPES` and `MAX_FILE_SIZE` imported from `@perseus/types` (`packages/types/src/core.ts`). Mirror the early reject-on-select handler pattern in `QuickPuzzleUploader.svelte`, **not** its separate 20 MB Quick Puzzle limit. Clear previous image/preview and show an immediate inline `role="alert"`; do not add another MIME allowlist or size literal.
+- Before preview, probe decoding with `const bitmap = await createImageBitmap(file)`, following `normalizePuzzleImage` in `apps/web/src/lib/services/puzzleImage.ts`; immediately call `bitmap.close()` on success. Only then run the existing `FileReader` preview path; on decode failure, show the existing “Couldn't read this image” error and leave no broken preview or selected file. Fence both asynchronous decode and reader callbacks so an older selection cannot overwrite a newer one; clear the file input on validation failure. No new preview component or duplicate normalization pipeline.
 - Continue using `normalizePuzzleImageFile` for actual crop/dimension checks and the existing Worker magic-byte validation as the source of truth. Do not duplicate the entire image validation stack on the client.
 
 ### C. Persist gallery query/category in the URL
@@ -70,7 +71,7 @@ The umbrella issue is **partly valid**, not nine open implementation bugs. The s
 
 ## Regression test plan
 
-- `apps/web/src/routes/upload/page.svelte.test.ts`: invalid MIME/file size rejected before preview, undecodable image leaves no broken image, stale preview race, backend failure preserves form/alert, real success confirmation survives beyond 3s and provides profile link.
+- `apps/web/src/routes/upload/page.svelte.test.ts`: invalid MIME/file size rejected before preview using shared limits, undecodable image never reaches `FileReader` preview and closes successful probe bitmaps, stale decode/reader race, backend failure preserves form/alert, successful upload keeps the confirmation beyond 3s with a `/profile` link (replace the old auto-dismiss test).
 - `apps/api/src/routes/__tests__/*` or `puzzle-families.worker.test.ts` **only if #1 backend root cause is demonstrated**: successful 201 implies owned `processing` row visible to player profile/list; failing path is handled/rolled back with useful status.
 - `apps/web/src/routes/page.svelte.test.ts` + `apps/web/e2e/gallery.spec.ts`: `/?q=macaw&category=Animals` hydration, query/category updates, refresh/back/forward, unknown category, clear filters, stale-page cancellation, visible local Continue alongside gallery-only no-results wording.
 - `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` and existing E2E fixture routes: malformed ID (400) vs absent valid ID (404) vs 500 presentation and recovery.
@@ -81,6 +82,7 @@ Suggested checks: `bun run --cwd apps/web test:unit -- src/routes/upload/page.sv
 
 ## Acceptance criteria
 
+- [ ] Every successful upload visibly confirms accepted/processing status until the next attempt or navigation and offers a `/profile` link, regardless of whether the separate backend repro succeeds.
 - [ ] Signed-in JPEG upload has an observed, documented outcome (successful 201 reflected in Profile, or correctly diagnosed API failure); no unexplained silent reset.
 - [ ] Unsupported/corrupt input never shows a broken preview or enables successful submission.
 - [ ] Gallery query/category survive deep links, reload, and meaningful back/forward navigation without breaking infinite scroll.
@@ -92,4 +94,4 @@ Suggested checks: `bun run --cwd apps/web test:unit -- src/routes/upload/page.sv
 
 ## PR boundary
 
-This draft initially changes **only this plan document**. After review, implement the verified web fixes and necessary tests **on this same branch and PR**. Keep #4 and #9 gated by manual evidence and any backend work gated by a signed-in HTTP trace. No second PR, new Linear ticket, abstraction framework, schema migration, or engine change is proposed for this issue.
+This draft initially changes **only this plan document**. After review, implement the verified web fixes and necessary tests **on this same branch and PR**. Ship confirmed upload-success feedback without waiting for a signed-in trace; keep #4 and #9 gated by manual evidence and any **backend** work gated by that trace. No second PR, new Linear ticket, abstraction framework, schema migration, or engine change is proposed for this issue.
