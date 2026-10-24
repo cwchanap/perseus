@@ -1,97 +1,94 @@
 # Issue #86 — arcade QA verification and fix plan
 
-**Source:** https://github.com/cwchanap/perseus/issues/86 (including 2026-09-18 and 2026-10-20 follow-up comments)  
-**Baseline:** current `main` as reviewed on 2026-10-23  
-**Delivery:** one implementation PR; continue using this draft PR/branch after the plan review. No separate implementation PR.
+**Issue:** https://github.com/cwchanap/perseus/issues/86, including September 18 and October 20 follow-ups  
+**Baseline:** source verified against `main` (October 23–24, 2026); no fresh signed-in production reproduction  
+**Delivery:** continue implementation on this **same draft PR**; no separate PR or new ticket.
 
 ## Verdict and constraints
 
-The umbrella issue is **partly valid**, not nine open implementation bugs. The signed-in upload failure needs a reproducible request/response trace; the other confirmed issues are mostly route-local UI work. Avoid speculative backend rewrites, new stores, generic components, new persistence contracts, and changes to the shared game engine. Preserve the existing gallery pagination/infinite scroll, session saves, and authentication flow.
+Issue #86 is **partly valid**, not nine open code bugs. Keep changes route-local, lean, and evidenced: no speculative backend rewrites, global filter stores, gameplay-engine changes, generic UI frameworks or schema migrations. Keep local progress, existing session persistence, auth flow, and gallery cursor pagination.
 
-### Code-backed verification (not a fresh authenticated production reproduction)
+### Code-backed verification
 
-| Original item | Finding on current main | Disposition |
-| --- | --- | --- |
-| #1 Upload silently fails | `upload/+page.svelte` catches API/normalization errors and shows `role="alert"`; it clears the form only after `createPlayerPuzzle` resolves and auto-clears the success message after 3s. `api.ts` posts to `/api/puzzle-families`. The Worker returns 201 only after R2 upload, family/variant metadata, D1 ownership insert, and workflow creation. `getPlayerSummary` counts processing, ready **and failed** owned families. Thus a successful 201 should be reflected in the profile; the reported 0 count remains unexplained. Existing web unit tests mock the API; they do **not** prove the real signed-in path. | **Unconfirmed persistence root cause; confirmed short-lived success notice.** Fix success feedback unconditionally; investigate backend only with a signed-in trace. |
-| #2 Invalid image preview | `handleImageSelect` immediately stores any selected `File` and uses `FileReader.readAsDataURL`; the file input's `accept` is advisory, and actual `createImageBitmap` decode happens later, on submit, inside `normalizePuzzleImageFile`. Invalid files can therefore be previewed as broken images. | **Confirmed by code. Fix.** |
-| #3 Pause feedback | `PuzzleToolbar.svelte` has Pause action; `SessionPauseDialog.svelte` is an accessible modal labelled “Mission Paused” with Resume/Restart/Exit/Discard. | **Already addressed. No code change.** |
-| #4 Drag/placement | `PuzzlePiece.svelte` emits native HTML5 `dragstart` data; `PuzzleBoard.svelte` handles native `dragover/drop` and also keyboard/click placement through the engine. This does not prove a human drag succeeds; scripted gestures can fail to synthesize the browser drag data transfer. | **Manual human test, then act only if reproducible.** |
-| #5 URL-persisted filters | Gallery `+page.svelte` initializes `searchQuery` to empty and `selectedCategory` to All; it fetches with their component-state values but never reads/writes the page URL. | **Confirmed by code. Fix.** |
-| #6 Empty search vs Continue | Gallery renders `continue-on-device` outside the filtered result branches whenever local progress is present, while “NO MISSIONS MATCH YOUR SCAN” refers only to the remote catalog. Both are true but visually ambiguous. | **Confirmed UX ambiguity. Clarify scope, retain local resume.** |
-| #7 Inconsistent missing-puzzle page | `+error.svelte` has branded 404 “SECTOR NOT FOUND” and arcade recovery. The puzzle route catches 404 into a separate “Mission no longer available” state and invalid UUID API 400 into generic “Failed to load mission.” | **Confirmed by code. Fix route presentation.** |
-| #8 Icon-only more-actions accessibility | `PuzzleToolbar.svelte` provides names/titles for the secondary actions and an accessible named trigger with `aria-expanded`. | **Already addressed. No code change.** |
-| #9 First-paint flash | `app.html` has no inline initial background style; `layout.css` sets a dark `:root/html/body` after styles load. Theme-color is currently blue (`#2563eb`) rather than the shell's `#0a0620`. This makes a light flash plausible but is **not** a runtime reproduction. | **Cold-navigation visual check; apply minimal initial dark background if confirmed.** |
-| Follow-up: truncated bookmark title | Shared `PuzzleCard.svelte` truncates the title with CSS `truncate`; no `title` attribute provides hover discovery, though the full string remains in DOM text/image alt. | **Confirmed by code. Fix shared card.** |
+| Reported issue | Code evidence and disposition |
+| --- | --- |
+| #1 Valid JPEG upload disappears | `upload/+page.svelte` catches failure in `formError` and resets only after `createPlayerPuzzle` resolves. However the **success notice vanishes after 3 seconds** (confirmed UX flaw). Worker responds 201 only after image upload/metadata/ownership and workflow start; player profile includes processing, ready and failed. Actual signed-in 201/profile mismatch is **not reproduced**. Fix notice unconditionally; backend only with HTTP evidence. |
+| #2 Bad image broken preview | Selection currently invokes `FileReader.readAsDataURL` before image decoding, so a corrupt file may reach `<img>`. **Fix** MIME selection and decode-before-preview. Server 10 MB limit applies to **normalized uploaded file**, not original input; do **not** reject large raw originals. |
+| #3 Pause unclear | Existing `SessionPauseDialog.svelte` is a labelled modal with pause/resume choices. **Already fixed; no change.** |
+| #4 Drag unclear | Native drag/drop and keyboard/tap paths exist. Existing `@extended` mouse drag E2E is present; WebKit synthetic drag is unreliable. **Reuse test, manually verify if necessary; no speculative rewrite.** |
+| #5 Search/category URL not persisted | Gallery filter variables are component-only. **Fix** using URL as sole committed source of truth; keep only unfinished text input local. |
+| #6 Continue and no-results conflict | Continue displays saved local progress independently of remote gallery results. **Clarify copy only**, not discovery or filtering. |
+| #7 Missing puzzle state differs | Valid missing ID already maps to 404; malformed server UUID currently yields generic 400. **Validate locally** using shared `isPuzzleId` and existing synthetic 404 branch; preserve real 400/5xx. |
+| #8 Icon-only action a11y | Pause/More and secondary toolbar controls have names and More has `aria-expanded`. **Already fixed; no change.** |
+| #9 Blank/flash on cold visit | Global `routes/layout.css` paints `html/body` dark, loaded by the shell stylesheet; an inline dark background would be redundant. `app.html` theme-color is `#2563eb`, mismatching dark `--bg-0` `#0a0620`. **Fix theme-color; investigate actual blank/flash only if reproducible.** |
+| Follow-up: truncated bookmark names | Shared `PuzzleCard.svelte` truncates with no title tooltip. **Add native `title={family.name}`.** |
 
-## Implementation plan (one PR)
+## Plan — one PR
 
-### A. Upload flow: fix confirmed feedback; investigate persistence separately (highest priority)
+### Step 0. Upload diagnostic at the start, if authenticated access is available
 
-1. **Unconditional frontend fix (no authenticated reproduction required):** In `upload/+page.svelte`, remove the three-second `successTimeout` auto-dismiss and its cleanup; keep a successful upload confirmation visible until the next upload attempt or navigation. Distinguish “accepted for processing” from “ready in the gallery,” and add a direct “View my puzzles” link to the existing `/profile` route. Do not introduce another timer, notification store, or polling loop. This fixes a confirmed UX problem regardless of what caused the original QA failure.
-2. Separately exercise **signed-in** `/upload` with a real valid JPEG (around 1024px). Record POST `/api/puzzle-families` status/response; inspect Worker logs when available; check GET `/api/player/profile` and `/api/player/puzzle-families` immediately after POST. Do not log image contents, OAuth tokens, or personal email.
-3. Interpret the trace **before changing backend logic**:
-   - **201 + family present:** no demonstrated persistence bug; the unconditional UX change above is sufficient unless the repro shows another issue.
-   - **Non-2xx:** preserve name/image on failure and show the server-provided reason in the existing `role="alert"`; adjust the failing API path only if the trace identifies a real fault. The existing Worker cleanup/ownership workflow is authoritative; do not add an alternate write path.
-   - **201 + missing ownership:** verify D1 row and status, profile/list filters, and actual account identity; fix the specific mismatch plus a Worker regression test. This contradicts the reviewed insert-before-201/count-processing contracts and must be demonstrated, not assumed.
-4. Keep the upload button disabled during requests and prevent duplicate submission. Ensure a retryable error remains visible.
+Before runtime implementation, try a real **signed-in** ~1024px JPEG upload. Record POST `/api/puzzle-families` status/response and subsequent GET `/api/player/profile` and `/api/player/puzzle-families` presence/count. Inspect Worker logs only as needed; avoid posting any image, credentials, token or personal account details.
 
-**Files to inspect/change only when needed:** `apps/web/src/routes/upload/+page.svelte`, `apps/web/src/lib/services/api.ts`, `apps/api/src/routes/puzzle-families.worker.ts`, `packages/shared/src/repositories.ts`; no schema/migration by default.
+Write the outcome in the PR description: **201 + owned row present** means no demonstrated persistence bug; **non-2xx** requires diagnosing the failing request; **201 + missing owned row** requires checking D1 ownership/status, player identity and profile/list filters before fixing and testing. If authenticated testing is unavailable, explicitly say **not verified**. This diagnostic determines whether backend work is warranted; **it is not a merge gate for confirmed frontend changes**. No speculative backend commits.
 
-### B. Reject invalid image *before* preview
+### A. Upload: minimal unconditional feedback fix
 
-- In `upload/+page.svelte`, synchronously reject unsupported declared MIME types and oversized files using `ALLOWED_MIME_TYPES` and `MAX_FILE_SIZE` imported from `@perseus/types` (`packages/types/src/core.ts`). Mirror the early reject-on-select handler pattern in `QuickPuzzleUploader.svelte`, **not** its separate 20 MB Quick Puzzle limit. Clear previous image/preview and show an immediate inline `role="alert"`; do not add another MIME allowlist or size literal.
-- Before preview, probe decoding with `const bitmap = await createImageBitmap(file)`, following `normalizePuzzleImage` in `apps/web/src/lib/services/puzzleImage.ts`; immediately call `bitmap.close()` on success. Only then run the existing `FileReader` preview path; on decode failure, show the existing “Couldn't read this image” error and leave no broken preview or selected file. Fence both asynchronous decode and reader callbacks so an older selection cannot overwrite a newer one; clear the file input on validation failure. No new preview component or duplicate normalization pipeline.
-- Continue using `normalizePuzzleImageFile` for actual crop/dimension checks and the existing Worker magic-byte validation as the source of truth. Do not duplicate the entire image validation stack on the client.
+1. In `apps/web/src/routes/upload/+page.svelte`, remove `successTimeout`, its 3-second callback and now-unused cleanup/import; show the success status until a next attempt or navigation.
+2. Say “accepted for processing” rather than suggesting immediate playability. Include “View my puzzles” linking to the existing `/profile` route.
+3. Preserve existing behavior: submit is already disabled while uploading; errors already persist in `formError`. **No new concurrency guard or alert system.**
+4. Only if Step 0 exposes a backend failure, inspect `apps/web/src/lib/services/api.ts`, `apps/api/src/routes/puzzle-families.worker.ts` and `packages/shared/src/repositories.ts`, then fix the specific cause and add a regression.
 
-### C. Persist gallery query/category in the URL
+### B. Invalid-image selection: reuse decoding, not a raw-byte gate
 
-- Make the gallery route parse `q` and `category` from `page.url.searchParams`; unknown category becomes All, blank `q` is ignored. Do not create a global filter store.
-- On user search, preserve the existing 300ms debounce; write canonical `q` to the URL without creating a browser history entry per keystroke. On discrete category select / clear filters, create a meaningful navigation/history state. Keep other unrelated URL params and any base path intact; avoid request loops caused by reading and writing the same URL.
-- URL navigation (deep link, reload, back/forward) must rehydrate both controls and refetch the correct first page. Retain the current query-version/abort guards and cursor pagination reset, and do not mutate the URL on initial hydration until a user changes filters.
-- Implement in `apps/web/src/routes/+page.svelte` with the existing SvelteKit `$app/state` + navigation facilities; no server changes required.
+1. Reject unsupported **declared MIME** using `ALLOWED_MIME_TYPES` from `@perseus/types`, echoing the early-reject handler in `QuickPuzzleUploader.svelte`; clear prior image and show `role="alert"`.
+2. **Do not gate `file.size` with `MAX_FILE_SIZE`.** That 10 MB limit is enforced by the Worker on the image **after** `normalizePuzzleImageFile` resizes/compresses it, so large original images may succeed. Do not import the separate Quick Puzzle 20 MB limit either. Leave any normalized-image 400 visible in the existing form alert.
+3. Probe with `const bitmap = await createImageBitmap(file)`, as `puzzleImage.ts` does, then `bitmap.close()`. Only after decode succeeds use the existing `FileReader` preview. Decode failure should say “Couldn't read this image” and show no broken preview.
+4. Use **one selection generation counter**, including explicit remove/reselection, to fence the async bitmap probe and `FileReader` callbacks from racing a newer selection. Clear invalid input; avoid new preview abstractions or running the full normalization before selection.
+5. Change the upload hint from “max 10MB” to “resized automatically” (or other accurate explanation of normalization).
 
-### D. Explain local Continue alongside filtered search
+### C. Gallery: URL-only committed filters, minimal local text state
 
-- Keep “Continue on this device” available even if the remote gallery has zero matches. This is a **separate saved-session shortcut**, not a search result; hiding it could strand a resumable offline/local puzzle.
-- Visually/semantically label the result section as *gallery results* and give the Continue panel a short “Saved on this device — not part of search” description. Change empty-result copy to explicitly say no **gallery** missions match.
-- Do not change the saved-progress discovery, session persistence, or result filtering rules.
+1. In `apps/web/src/routes/+page.svelte`, import reactive `page` from `$app/state`, `goto` from `$app/navigation`. Derive `urlQuery` from `page.url.searchParams.get('q')` (trimmed), and `selectedCategory` from a small `PUZZLE_CATEGORIES.includes` parser; unknown values mean `CATEGORY_ALL`. **Only `searchQuery` remains local state for in-progress input**; remove local `debouncedQuery` and stateful category as committed sources.
+2. Initialize text input directly from URL **synchronously** before initial fetch, and use one focused effect to bring text input in line with `urlQuery` when URL changes through back/forward. Avoid tracking the raw input in that synchronization effect (e.g. `untrack`); it must not revert user typing. No hydration-time URL mutation.
+3. On user action, clone `page.url` (Kit 3 `page.url` is readonly), set/delete `q` and `category` while preserving other params, and call `goto(url, { replace, reset: false })`. For search typing, retain the existing 300 ms debounce and set `replace: true` only if trimmed query differs from `urlQuery`. For category select / clear filters use `replace: false` for meaningful back history.
+4. **SvelteKit 3.1:** `reset: false` preserves scroll and search focus; Kit 2 `noScroll`/`keepFocus` are removed and `replaceState` is deprecated in favour of `replace`. Preserve query-version/abort cancellation and infinite-scroll cursor resets. Both first-page fetch and `loadNextPage` must read **URL-derived** values, not the uncommitted text input. No new store or bidirectional state loop.
 
-### E. Missing puzzle and bookmarks polish
+### D. Continue versus empty gallery: copy only
 
-- Use the existing puzzle-route error branch; map invalid server UUID (`ApiError` 400 for invalid puzzle-ID format) and genuine 404/not-found to a “SECTOR NOT FOUND” / unavailable presentation with the same clear RETURN TO ARCADE recovery as `+error.svelte`. Keep network/5xx failures as retryable “FAILED TO LOAD MISSION” rather than mislabelling an outage as 404. Do not indiscriminately reinterpret every 400.
-- In shared `PuzzleCard.svelte`, set a native `title={family.name}` (or equivalent equally small discoverable affordance) on the truncated title; add a regression test for long titles. This works in both Gallery and Bookmarks.
-- If a cold-load recording confirms #9, add a minimal dark `html/body` initial paint style to `apps/web/src/app.html`, and align `theme-color` with `--bg-0`. Avoid loading screens, SSR rewrites, or new animation mechanisms.
+Keep “Continue on this device” as saved-local progress, independent of gallery search results. Add a one-line “Saved on this device — not part of search results” caption in the Continue panel and change the filtered-empty heading to “NO GALLERY MISSIONS MATCH YOUR SCAN” (or equally scoped copy). Do not modify saved progress retrieval, filtering or layouts.
 
-### F. Non-bugs / manual gates
+### E. Puzzle missing state, card tooltip, shell
 
-- Do not re-implement pause or the more-actions labels (#3/#8). Keep existing tests.
-- Human-test #4 on mouse/trackpad and touch/keyboard where applicable (actual drag/drop, placement count, wrong cell rejection). Only add a code fix if this fails outside synthetic automation.
-- Cold-navigate without warmed CSS/cache to verify #9 before changing styling.
-- Signed-in uploads and the post-upload profile count are a release gate; a mocked frontend success is not enough.
+1. In `apps/web/src/lib/services/puzzleSource.ts` **after** the quick-puzzle prefix branch and **before** `fetchPuzzle(id)`, reuse `isPuzzleId` from `@perseus/types`: if false, throw `new ApiError(404, 'not_found', 'Mission not found')`. This mirrors the existing quick-puzzle synthetic 404 and enters the route's existing 404 panel and RETURN TO ARCADE link **without a network call**. Optionally retitle the 404 panel “SECTOR NOT FOUND”. A real server 400 and network/500 stay error states; do **not** translate arbitrary API 400 messages.
+2. Add native `title={family.name}` to the truncated heading in shared `PuzzleCard.svelte`; test discoverability without changing visual truncation.
+3. Change `apps/web/src/app.html` theme-color to `#0a0620` **unconditionally**. Do **not** add an inline dark `html/body` style: render-blocking stylesheet already supplies this. A cold-navigation repro should distinguish **light browser canvas before document paint** (investigate `<meta name="color-scheme" content="dark">` only if demonstrated) from an **empty dark shell until hydration** (different cause). Do not invent a splash screen.
 
-## Regression test plan
+### F. Non-bugs and manual evidence
 
-- `apps/web/src/routes/upload/page.svelte.test.ts`: invalid MIME/file size rejected before preview using shared limits, undecodable image never reaches `FileReader` preview and closes successful probe bitmaps, stale decode/reader race, backend failure preserves form/alert, successful upload keeps the confirmation beyond 3s with a `/profile` link (replace the old auto-dismiss test).
-- `apps/api/src/routes/__tests__/*` or `puzzle-families.worker.test.ts` **only if #1 backend root cause is demonstrated**: successful 201 implies owned `processing` row visible to player profile/list; failing path is handled/rolled back with useful status.
-- `apps/web/src/routes/page.svelte.test.ts` + `apps/web/e2e/gallery.spec.ts`: `/?q=macaw&category=Animals` hydration, query/category updates, refresh/back/forward, unknown category, clear filters, stale-page cancellation, visible local Continue alongside gallery-only no-results wording.
-- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` and existing E2E fixture routes: malformed ID (400) vs absent valid ID (404) vs 500 presentation and recovery.
-- `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts`: long card title exposes complete string.
-- Manual smoke: authenticated successful/failed upload and profile count, actual drag, cold-navigation flash. Test the built artifact; do not attempt Google OAuth in mocked CI E2E.
+Preserve existing #3 pause and #8 named secondary controls; run existing tests only. For #4 reuse `apps/web/e2e/gameplay-interactions.spec.ts` `@extended` desktop mouse-drag test and human mouse/trackpad verification where needed; WebKit synthetic drag failure alone is not proof of a broken mechanic. For #9 record a cold cache navigation before making any further change. **Backend changes depend on a signed-in trace; frontend merge does not.**
 
-Suggested checks: `bun run --cwd apps/web test:unit -- src/routes/upload/page.svelte.test.ts`, `bun run --cwd apps/web test:unit -- src/routes/page.svelte.test.ts`, `bun run --cwd apps/web test:e2e -- gallery.spec.ts`, `bun run check`, `bun run lint`, and `bun run test:unit` if shared/API code changes.
+## Tests and verification
+
+- **Upload unit:** `apps/web/src/routes/upload/page.svelte.test.ts`: replace auto-dismiss test with persistent status + `/profile` link; MIME rejection; **large raw MIME-valid input allowed through decode**; corrupt bitmap no preview; bitmap closed; stale bitmap/reader callbacks ignored; existing failure alert and disabled-submit contract retained. Server normalized-byte limit remains as-is.
+- **Gallery unit/E2E:** `apps/web/src/routes/page.svelte.test.ts`, `apps/web/e2e/gallery.spec.ts`. Reuse `$app/state` mocking from `apps/web/src/routes/error.svelte.test.ts`. Test first fetch from `/?q=macaw&category=Animals`, unknown category, refresh, back/forward, debounced replace vs category/clear push, **focus and scroll retained during typing**, stale request cancellation, pagination and local Continue with gallery-only empty state.
+- **Puzzle source/route:** `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` and focused source tests: malformed ID returns 404 **with no `fetchPuzzle` call**; valid missing ID 404, other API 400 and 5xx keep separate failure presentation.
+- **Cards:** `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts` checks full title attribute on truncated heading.
+- **Manual/shell:** check theme-color `#0a0620`; classify cold navigation canvas-vs-hydration issue; execute existing `@extended` mouse drag test. Authenticated upload + profile trace if access exists; otherwise document **unverified**, not passing.
+- **Backend tests:** add only if Step 0 establishes a backend fault; test actual failure and owned-family visibility rather than inventing a new write path.
+
+Checks: `bun run --cwd apps/web test:unit -- src/routes/upload/page.svelte.test.ts`, `bun run --cwd apps/web test:unit -- src/routes/page.svelte.test.ts`, `bun run --cwd apps/web test:e2e -- gallery.spec.ts`, `bun run check`, `bun run lint`. Run shared/API unit suites only if touched.
 
 ## Acceptance criteria
 
-- [ ] Every successful upload visibly confirms accepted/processing status until the next attempt or navigation and offers a `/profile` link, regardless of whether the separate backend repro succeeds.
-- [ ] Signed-in JPEG upload has an observed, documented outcome (successful 201 reflected in Profile, or correctly diagnosed API failure); no unexplained silent reset.
-- [ ] Unsupported/corrupt input never shows a broken preview or enables successful submission.
-- [ ] Gallery query/category survive deep links, reload, and meaningful back/forward navigation without breaking infinite scroll.
-- [ ] Continue-local is clearly distinct from filtered remote gallery results.
-- [ ] Bad puzzle identifier/missing puzzle gets helpful 404-style recovery; server outages still show an error.
-- [ ] Full card titles are discoverable without removing visual truncation.
-- [ ] Human drag and cold first-paint outcomes recorded; only verified regressions change code.
-- [ ] Pause/menu existing behavior remains intact.
+- [ ] Success status stays visible until next attempt/navigation; `/profile` link, retryable errors and disabled-submit behavior work.
+- [ ] Unsupported/corrupt image never produces broken preview; **raw** photos larger than 10 MB are not rejected solely because of original byte size.
+- [ ] URL drives committed gallery query/category, survives deep links, reload/back/forward, and keeps focus/scroll/infinite scroll intact.
+- [ ] Local Continue and gallery-only no-results are clearly distinguished without altering data paths.
+- [ ] Malformed puzzle IDs hit existing 404 recovery without `fetchPuzzle`; real 400/500/network remain distinguishable.
+- [ ] PuzzleCard exposes full title with truncation intact, and shell theme-color matches dark background.
+- [ ] Existing pause and More controls remain intact; drag and cold paint are changed only on verified evidence.
+- [ ] Authenticated trace recorded if access exists; if unavailable, explicitly unverified. **Not a frontend merge gate.**
 
 ## PR boundary
 
-This draft initially changes **only this plan document**. After review, implement the verified web fixes and necessary tests **on this same branch and PR**. Ship confirmed upload-success feedback without waiting for a signed-in trace; keep #4 and #9 gated by manual evidence and any **backend** work gated by that trace. No second PR, new Linear ticket, abstraction framework, schema migration, or engine change is proposed for this issue.
+This draft starts **docs only**. After plan review, implement the verified frontend fixes and tests **on this same branch and PR**. No second implementation PR, new Linear ticket, speculative backend rewrite, schema migration, global URL filter store, or engine change.
