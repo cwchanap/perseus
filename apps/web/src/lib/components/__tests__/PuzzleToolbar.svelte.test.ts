@@ -279,6 +279,26 @@ describe('PuzzleToolbar', () => {
 		});
 	});
 
+	describe('sound toggle', () => {
+		it('omits the sound toggle without a handler', async () => {
+			renderToolbar();
+
+			await expect.element(page.getByLabelText('Sound effects')).not.toBeInTheDocument();
+		});
+
+		it('reflects soundEnabled and calls onSoundToggle', async () => {
+			const onSoundToggle = vi.fn();
+			renderToolbar({ onSoundToggle, soundEnabled: false });
+			await userEvent.click(page.getByLabelText('More puzzle actions'));
+
+			const toggle = page.getByLabelText('Sound effects');
+			await expect.element(toggle).toHaveAttribute('aria-pressed', 'false');
+			await userEvent.click(toggle);
+
+			expect(onSoundToggle).toHaveBeenCalledOnce();
+		});
+	});
+
 	describe('undo/redo state', () => {
 		it('disables undo button when canUndo is false', async () => {
 			renderToolbar({ canUndo: false });

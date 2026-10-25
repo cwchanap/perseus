@@ -12,6 +12,7 @@
 		onZoomOut: () => void;
 		onResetView: () => void;
 		onRotationToggle: () => void;
+		onSoundToggle?: () => void;
 		onOpenLeaderboard?: () => void;
 		onPause?: () => void;
 		onOpenSetup?: () => void;
@@ -22,6 +23,7 @@
 		canRedo: boolean;
 		rotationEnabled: boolean;
 		rotationToggleDisabled?: boolean;
+		soundEnabled?: boolean;
 		hasReference?: boolean;
 		referenceToggled: boolean;
 		referenceAvailable: boolean;
@@ -38,6 +40,7 @@
 		onZoomOut,
 		onResetView,
 		onRotationToggle,
+		onSoundToggle,
 		onOpenLeaderboard,
 		onPause,
 		onOpenSetup,
@@ -48,6 +51,7 @@
 		canRedo,
 		rotationEnabled,
 		rotationToggleDisabled = false,
+		soundEnabled = true,
 		hasReference = true,
 		referenceToggled,
 		referenceAvailable
@@ -71,6 +75,7 @@
 		| 'zoom-in'
 		| 'fit'
 		| 'rotation'
+		| 'sound'
 		| 'peek'
 		| 'leaderboard'
 		| 'pause'
@@ -89,6 +94,7 @@
 		'zoom-in': true,
 		fit: true,
 		rotation: !rotationToggleDisabled,
+		sound: onSoundToggle !== undefined,
 		peek: hasReference && referenceAvailable && !referenceToggled,
 		leaderboard: canOpenLeaderboard,
 		pause: canPause,
@@ -392,6 +398,33 @@
 					/>
 				</svg>
 			</button>
+			{#if onSoundToggle}
+				<button
+					type="button"
+					aria-label="Sound effects"
+					aria-pressed={soundEnabled ? 'true' : 'false'}
+					data-toolbar-action="sound"
+					tabindex={toolbarTabIndex('sound')}
+					onclick={onSoundToggle}
+					class="arcade-btn-ghost toolbar-button"
+					title={soundEnabled ? 'Mute sound effects' : 'Unmute sound effects'}
+				>
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						aria-hidden="true"
+					>
+						<path stroke-linejoin="round" d="M4 9h4l5-4v14l-5-4H4z" />
+						{#if soundEnabled}
+							<path stroke-linecap="round" d="M16.5 8.5a5 5 0 010 7M19 6a8.5 8.5 0 010 12" />
+						{:else}
+							<path stroke-linecap="round" d="M16 9l5 6m0-6l-5 6" />
+						{/if}
+					</svg>
+				</button>
+			{/if}
 		</div>
 
 		{#if hasReference}
@@ -737,6 +770,7 @@
 		}
 
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='peek'],
+		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='sound'],
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='setup'],
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='leaderboard'],
 		.puzzle-toolbar > .toolbar-secondary .toolbar-button[data-toolbar-action='zoom-out'],

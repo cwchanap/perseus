@@ -125,4 +125,19 @@ describe('createPuzzleSessionStore', () => {
 		store.dispatch({ type: 'start' });
 		expect(get(store).lifecycle).toBe('disposed');
 	});
+
+	it('reports every dispatch outcome to onOutcome', () => {
+		const outcomes: string[] = [];
+		const store = createPuzzleSessionStore({
+			metadata: makeMetadata(),
+			runIdFactory,
+			clock: new ManualClock(),
+			onOutcome: (outcome) => outcomes.push(outcome.type)
+		});
+
+		const result = store.dispatch({ type: 'start' });
+		store.dispatch({ type: 'start' });
+
+		expect(outcomes).toEqual([result.type, 'lifecycle_noop']);
+	});
 });

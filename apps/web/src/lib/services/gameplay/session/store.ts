@@ -29,7 +29,13 @@ export interface PuzzleSessionStore extends Readable<Readonly<PuzzleSessionState
 	dispose(): void;
 }
 
-export function createPuzzleSessionStore(options: CreatePuzzleSessionOptions): PuzzleSessionStore {
+export interface PuzzleSessionStoreOptions extends CreatePuzzleSessionOptions {
+	/** Observes every dispatch outcome, e.g. to play a sound effect. */
+	onOutcome?: (outcome: PuzzleSessionOutcome) => void;
+}
+
+export function createPuzzleSessionStore(options: PuzzleSessionStoreOptions): PuzzleSessionStore {
+	const { onOutcome } = options;
 	const engine: PuzzleSession = createPuzzleSession(options);
 	const subscribers = new Set<(value: Readonly<PuzzleSessionState>) => void>();
 
@@ -50,7 +56,11 @@ export function createPuzzleSessionStore(options: CreatePuzzleSessionOptions): P
 				subscribers.delete(callback);
 			};
 		},
-		dispatch: (action) => engine.dispatch(action),
+		dispatch: (action) => {
+			const outcome = engine.dispatch(action);
+			onOutcome?.(outcome);
+			return outcome;
+		},
 		setDocumentHidden: (hidden) => engine.setDocumentHidden(hidden),
 		checkpointTime: () => engine.checkpointTime(),
 		dispose: () => engine.dispose()
