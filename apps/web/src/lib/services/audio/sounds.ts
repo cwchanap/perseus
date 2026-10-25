@@ -104,6 +104,9 @@ export function createSoundPlayer(storage: Storage | undefined = browserStorage(
 			saveSoundEnabled(next, storage);
 		},
 		preload() {
+			// Muted devices skip the download; the first play after unmuting
+			// loads its clip on demand.
+			if (!enabled) return;
 			for (const name of SOUND_NAMES) clip(name);
 		},
 		play,

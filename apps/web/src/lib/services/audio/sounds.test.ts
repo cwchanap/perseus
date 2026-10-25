@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PuzzleSessionOutcome } from '@perseus/game-core';
 import { memoryStorage } from '../gameplay/session/persistence.test-fixtures';
 import {
@@ -50,5 +50,15 @@ describe('sound enabled preference', () => {
 
 		expect(player.enabled).toBe(false);
 		expect(createSoundPlayer(memoryStorage(store)).enabled).toBe(false);
+	});
+
+	it('skips preloading while muted', () => {
+		const player = createSoundPlayer(memoryStorage({ [SOUND_ENABLED_KEY]: 'false' }));
+		const AudioSpy = vi.spyOn(window, 'Audio');
+
+		player.preload();
+
+		expect(AudioSpy).not.toHaveBeenCalled();
+		AudioSpy.mockRestore();
 	});
 });
