@@ -43,6 +43,7 @@
 		type PuzzleSessionStore
 	} from '$lib/services/gameplay/session/store';
 	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
+	import { createSoundPlayer } from '$lib/services/audio/sounds';
 	import {
 		completionFailureCodeFromHttpStatus,
 		completionRequestFromSeal,
@@ -149,6 +150,8 @@
 	let setupMandatory = $state(false);
 	let setupDraft = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFERENCES });
 	let devicePreferences = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFERENCES });
+	const soundPlayer = createSoundPlayer();
+	let soundEnabled = $state(soundPlayer.enabled);
 	// How the pause dialog presents itself: 'resume' (restored run awaiting
 	// explicit re-engagement) or 'paused' (user-initiated toolbar pause).
 	let pausePresentation = $state<'resume' | 'paused'>('paused');
@@ -572,6 +575,11 @@
 		});
 	}
 
+	function handleSoundToggle() {
+		soundEnabled = !soundEnabled;
+		soundPlayer.setEnabled(soundEnabled);
+	}
+
 	function handleSessionEvent(event: PuzzleSessionEvent) {
 		if (event.type === 'completion_sealed') {
 			// The lifecycle->completed event in this same synchronous turn has
@@ -771,8 +779,10 @@
 				createTrayOrder: () => runtime.createRestartTrayOrder(pieceIds),
 				createRotations: (requestedPieceIds: number[]) =>
 					runtime.createRotations(loadedPuzzle.id, requestedPieceIds),
-				onEvent: handleSessionEvent
+				onEvent: handleSessionEvent,
+				onOutcome: soundPlayer.playForOutcome
 			});
+			soundPlayer.preload();
 			sessionStore = store;
 			sessionState = null;
 
@@ -1447,6 +1457,8 @@
 						onZoomOut={() => boardPanel?.zoomOut()}
 						onResetView={handleResetView}
 						onRotationToggle={handleRotationToggle}
+						{soundEnabled}
+						onSoundToggle={handleSoundToggle}
 						onPause={handleToolbarPause}
 						onOpenSetup={() => showMissionSetup(false)}
 					/>
