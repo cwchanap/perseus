@@ -41,6 +41,30 @@ describe('sound enabled preference', () => {
 		expect(loadSoundEnabled(storage)).toBe(false);
 	});
 
+	it('uses localStorage by default', () => {
+		localStorage.removeItem(SOUND_ENABLED_KEY);
+		try {
+			saveSoundEnabled(false);
+			expect(loadSoundEnabled()).toBe(false);
+		} finally {
+			localStorage.removeItem(SOUND_ENABLED_KEY);
+		}
+	});
+
+	it('falls back to enabled when storage throws', () => {
+		const broken = {
+			getItem: () => {
+				throw new Error('denied');
+			},
+			setItem: () => {
+				throw new Error('denied');
+			}
+		} as unknown as Storage;
+
+		expect(loadSoundEnabled(broken)).toBe(true);
+		expect(() => saveSoundEnabled(false, broken)).not.toThrow();
+	});
+
 	it('player setEnabled persists the choice', () => {
 		const store: Record<string, string> = {};
 		const player = createSoundPlayer(memoryStorage(store));
@@ -60,5 +84,48 @@ describe('sound enabled preference', () => {
 
 		expect(AudioSpy).not.toHaveBeenCalled();
 		AudioSpy.mockRestore();
+	});
+});
+
+describe('sound player playback', () => {
+	function spyPlay(result: Promise<void>) {
+		return vi.spyOn(HTMLMediaElement.prototype, 'play').mockReturnValue(result);
+	}
+
+	it('plays the clip mapped from an outcome and rewinds it', () => {
+		const play = spyPlay(Promise.resolve());
+		const player = createSoundPlayer(memoryStorage({}));
+		player.preload();
+
+		player.playForOutcome({ type: 'piece_rotated', pieceId: 1 });
+		player.playForOutcome({ type: 'history_restored', direction: 'undo' });
+
+		expect(play).toHaveBeenCalledOnce();
+		const audio = play.mock.contexts[0] as HTMLAudioElement;
+		expect(audio.src).toContain('/sfx/rotate.mp3');
+		expect(audio.currentTime).toBe(0);
+		play.mockRestore();
+	});
+
+	it('stays silent while muted', () => {
+		const play = spyPlay(Promise.resolve());
+		const player = createSoundPlayer(memoryStorage({}));
+		player.setEnabled(false);
+
+		player.play('snap');
+
+		expect(play).not.toHaveBeenCalled();
+		play.mockRestore();
+	});
+
+	it('ignores a rejected play', async () => {
+		const play = spyPlay(Promise.reject(new Error('NotAllowedError')));
+		const player = createSoundPlayer(memoryStorage({}));
+
+		expect(() => player.play('hint')).not.toThrow();
+		await Promise.resolve();
+
+		expect(play).toHaveBeenCalledOnce();
+		play.mockRestore();
 	});
 });
