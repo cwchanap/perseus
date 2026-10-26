@@ -25,8 +25,8 @@
 	},
 	"devDependencies": {
 		"@cf-wasm/photon": "^0.4.0",
-		"@cloudflare/workers-types": "^5.20261010.1",
-		"@types/bun": "^1.4.2",
+		"@cloudflare/workers-types": "^5.20261023.1",
+		"@types/bun": "^1.4.4",
 		"drizzle-kit": "^0.31.11",
 		"esbuild": "^0.28.2",
 		"miniflare": "4.20260730.0",
