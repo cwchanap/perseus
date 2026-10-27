@@ -417,6 +417,9 @@ describe('Gallery Page', () => {
 			.element(page.getByTestId('progress-ring'))
 			.toHaveAttribute('aria-valuenow', '12.5');
 		await expect.element(page.getByTestId('continue-on-device')).toMatchTextContent('Resume Me');
+		await expect
+			.element(page.getByTestId('continue-on-device'))
+			.toMatchTextContent('Saved on this device — not part of search results');
 		await expect.element(page.getByText('2/16 PLACED')).toBeVisible();
 	});
 
@@ -959,6 +962,9 @@ describe('Gallery Page', () => {
 
 		// After debounce fires (300ms) + fetch resolves
 		await expect.element(page.getByTestId('no-results-state')).toBeVisible();
+		await expect
+			.element(page.getByTestId('no-results-state'))
+			.toMatchTextContent('NO GALLERY MISSIONS MATCH YOUR SCAN');
 	});
 
 	it('calls fetchPuzzles with q after debounce', async () => {
