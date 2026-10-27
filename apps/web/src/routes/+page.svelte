@@ -420,6 +420,9 @@
 						<span class="continue-stats">
 							{latestProgress.placedCount}/{latestProgress.pieceCount} PLACED
 						</span>
+						<p class="mt-1 text-[0.7rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
+							Saved on this device — not part of search results
+						</p>
 					</div>
 					<a
 						href={resolve('/puzzle/[id]', { id: latestProgress.puzzleId })}
@@ -459,6 +462,9 @@
 					<div class="continue-details">
 						<h2 id="continue-on-device-title" class="continue-kicker">CONTINUE ON THIS DEVICE</h2>
 						<p class="continue-title">SAVED PROGRESS AVAILABLE</p>
+						<p class="mt-1 text-[0.7rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
+							Saved on this device — not part of search results
+						</p>
 					</div>
 				{/if}
 				{#if savedProgressCandidateIds.length > 0 && !latestProgress}
@@ -577,7 +583,7 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 					class="text-[1rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-1)
 uppercase"
 				>
-					NO MISSIONS MATCH YOUR SCAN
+					NO GALLERY MISSIONS MATCH YOUR SCAN
 				</h2>
 				<p class="text-[0.9rem] tracking-[0.05em] text-(--text-2)">
 					Try a different search term or category.
