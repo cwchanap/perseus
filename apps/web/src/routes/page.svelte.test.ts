@@ -4,6 +4,8 @@ import { page } from 'vitest/browser';
 import GalleryPage from './+page.svelte';
 import type { PuzzleFamilySummary } from '@perseus/types';
 import { fetchPuzzles, ApiError } from '$lib/services/api';
+import { goto } from '$app/navigation';
+import { mockPage } from '$lib/testing/app-state-mock.svelte';
 import { listQuick } from '$lib/services/quickPuzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 import {
@@ -195,6 +197,24 @@ vi.mock('$app/paths', () => ({
 		params ? path.replace(/\[(\w+)\]/g, (_, key) => params[key] ?? '') : path
 }));
 
+vi.mock('$app/state', async () => {
+	const { mockPage: page } = await import('$lib/testing/app-state-mock.svelte');
+	return { page };
+});
+
+// Stands in for SvelteKit completing the navigation: once goto resolves the
+// router has committed the URL, so the mock patches the reactive page state
+// with the destination URL.
+vi.mock('$app/navigation', async () => {
+	const { mockPage } = await import('$lib/testing/app-state-mock.svelte');
+	return {
+		goto: vi.fn(async (url: URL | string) => {
+			const next = typeof url === 'string' ? new URL(url, 'http://localhost') : new URL(url.href);
+			mockPage.set({ url: next });
+		})
+	};
+});
+
 const makeFamily = (
 	id: string,
 	overrides: Partial<PuzzleFamilySummary> = {}
@@ -283,6 +303,7 @@ describe('Gallery Page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		intersectionCallback = null;
+		mockPage.set({ url: new URL('http://localhost/') });
 		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
 		mockedFetchPuzzles.mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
 		mockedListQuick.mockReturnValue([]);
@@ -1567,6 +1588,184 @@ describe('Gallery Page', () => {
 		const newCalls = mockedFetchPuzzles.mock.calls.slice(callsAfterRealSearch);
 		const hasWhitespaceQuery = newCalls.some(([params]) => params?.q === '   ');
 		expect(hasWhitespaceQuery).toBe(false);
+	});
+
+	it('fetches and hydrates the input from a deep-linked URL without navigating on mount', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1', { name: 'Macaw Puzzle' })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+		mockPage.set({ url: new URL('http://localhost/?q=macaw&category=Animals') });
+
+		render(GalleryPage);
+
+		// The first fetch reads the committed URL filters.
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles).toHaveBeenCalledWith({
+				q: 'macaw',
+				category: 'Animals',
+				offset: 0,
+				signal: expect.any(AbortSignal)
+			});
+		});
+		await expect.element(page.getByText('Macaw Puzzle')).toBeVisible();
+
+		// The text input is initialized synchronously from the URL, before the
+		// first fetch, and mounting performs no goto (no hydration URL rewrite).
+		await openGallerySearch();
+		await expect.element(page.getByTestId('search-input')).toHaveValue('macaw');
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('treats an unknown deep-linked category as the all-categories view', async () => {
+		mockPage.set({ url: new URL('http://localhost/?category=Vehicles') });
+
+		render(GalleryPage);
+
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: undefined, category: undefined, offset: 0 })
+			);
+		});
+		await expect.element(page.getByRole('radio', { name: 'All' })).toBeChecked();
+		// An unrecognized value normalizes in state, never by rewriting the URL.
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('syncs the search input and refetches on back after a committed search', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q } = params ?? {};
+			if (q === 'forest') {
+				return {
+					families: [makeFamily('p1', { name: 'Forest Result' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+			return {
+				families: [makeFamily('p2', { name: 'All Result' })],
+				total: 1,
+				offset: 0,
+				limit: 20
+			};
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByText('All Result')).toBeVisible();
+
+		await openGallerySearch();
+		await page.getByTestId('search-input').fill('forest');
+		await expect.element(page.getByText('Forest Result')).toBeVisible();
+		expect(goto).toHaveBeenCalledWith(expect.any(URL), { replace: true, reset: false });
+
+		// Simulate the browser Back button: the router restores the previous URL.
+		mockPage.set({ url: new URL('http://localhost/') });
+
+		await expect.element(page.getByText('All Result')).toBeVisible();
+		await expect.element(page.getByTestId('search-input')).toHaveValue('');
+	});
+
+	it('does not revert in-progress typing while the URL query is unchanged', async () => {
+		render(GalleryPage);
+
+		await openGallerySearch();
+		const input = page.getByTestId('search-input');
+		await input.fill('forest');
+
+		// The URL-sync effect must not track the raw input: with the URL
+		// untouched and the debounce still pending, the field keeps the text.
+		await expect.element(input).toHaveValue('forest');
+	});
+
+	it('commits typing as a history replacement and category/clear as new entries', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q, category } = params ?? {};
+			if (q === 'forest' && category === 'Nature') {
+				return { families: [], total: 0, offset: 0, limit: 20 };
+			}
+			return {
+				families: [makeFamily('p1', { name: 'Forest Scene', category: 'Nature' })],
+				total: 1,
+				offset: 0,
+				limit: 20
+			};
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+
+		await openGallerySearch();
+		await page.getByTestId('search-input').fill('forest');
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledTimes(1);
+		});
+		const typedUrl = vi.mocked(goto).mock.calls[0]?.[0] as URL;
+		expect(typedUrl.searchParams.get('q')).toBe('forest');
+		expect(vi.mocked(goto).mock.calls[0]?.[1]).toEqual({ replace: true, reset: false });
+		await expect.element(page.getByTestId('puzzle-card')).toBeVisible();
+
+		await page.getByRole('radio', { name: 'Nature' }).click();
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledTimes(2);
+		});
+		const categoryUrl = vi.mocked(goto).mock.calls[1]?.[0] as URL;
+		expect(categoryUrl.searchParams.get('q')).toBe('forest');
+		expect(categoryUrl.searchParams.get('category')).toBe('Nature');
+		expect(vi.mocked(goto).mock.calls[1]?.[1]).toEqual({ replace: false, reset: false });
+		await expect.element(page.getByTestId('no-results-state')).toBeVisible();
+
+		vi.mocked(goto).mockClear();
+		await page.getByTestId('clear-filters-btn').click();
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledTimes(1);
+		});
+		const clearedUrl = vi.mocked(goto).mock.calls[0]?.[0] as URL;
+		expect(clearedUrl.searchParams.get('q')).toBeNull();
+		expect(clearedUrl.searchParams.get('category')).toBeNull();
+		expect(vi.mocked(goto).mock.calls[0]?.[1]).toEqual({ replace: false, reset: false });
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await expect.element(page.getByTestId('search-input')).toHaveValue('');
+	});
+
+	it('reads committed URL filters when appending the next page', async () => {
+		mockPage.set({ url: new URL('http://localhost/?q=macaw') });
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { cursor } = params ?? {};
+			if (!cursor) {
+				return {
+					families: [makeFamily('p1', { name: 'Macaw One' })],
+					total: 2,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
+			}
+			return {
+				families: [makeFamily('p2', { name: 'Macaw Two' })],
+				total: 2,
+				offset: 1,
+				limit: 20
+			};
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		expect(intersectionCallback).not.toBeNull();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: 'macaw', category: undefined, cursor: 'cursor-page2' })
+			);
+		});
+		await expect.element(page.getByText('Macaw Two')).toBeVisible();
 	});
 
 	it('authenticated gallery loads bookmarks and renders store membership', async () => {

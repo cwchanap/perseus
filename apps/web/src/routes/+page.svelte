@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { fetchPuzzles, fetchPuzzle, getFamilyThumbnailUrl, ApiError } from '$lib/services/api';
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
@@ -22,7 +24,7 @@
 		listResumableSessionCandidateIds
 	} from '$lib/services/gameplay/session/persistence';
 	import { statsRevision } from '$lib/services/stats';
-	import { CATEGORY_ALL } from '$lib/constants/categories';
+	import { CATEGORY_ALL, PUZZLE_CATEGORIES } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
 	import { bookmarks } from '$lib/stores/bookmarks';
@@ -36,9 +38,19 @@
 	let initialLoadComplete = $state(false);
 	let error: string | null = $state(null);
 	let loadMoreError = $state(false);
-	let selectedCategory: PuzzleCategory | typeof CATEGORY_ALL = $state(CATEGORY_ALL);
-	let searchQuery = $state('');
-	let debouncedQuery = $state('');
+	// The URL is the sole committed source for search and category filters; it
+	// survives reload, deep links, and back/forward. Only the in-progress text
+	// input below is local state, and both the first fetch and loadNextPage
+	// read these URL-derived values.
+	const readCommittedQuery = (): string => (page.url.searchParams.get('q') ?? '').trim();
+	const urlQuery = $derived(readCommittedQuery());
+	const selectedCategory: PuzzleCategory | typeof CATEGORY_ALL = $derived.by(() => {
+		const raw = page.url.searchParams.get('category');
+		return PUZZLE_CATEGORIES.includes(raw as PuzzleCategory)
+			? (raw as PuzzleCategory)
+			: CATEGORY_ALL;
+	});
+	let searchQuery = $state(readCommittedQuery());
 	let total = $state(0);
 	let loadingMore = $state(false);
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
@@ -121,18 +133,36 @@
 		}
 	});
 
-	// Debounce raw input into debouncedQuery (300 ms), trimming whitespace
+	// Debounce raw input (300 ms) into a committed URL query. Typing replaces
+	// the current history entry; a trimmed value already matching the committed
+	// query skips navigation entirely.
 	$effect(() => {
-		const q = searchQuery;
+		const raw = searchQuery;
 		const timer = setTimeout(() => {
-			debouncedQuery = q.trim();
+			const trimmed = raw.trim();
+			if (trimmed === urlQuery) return;
+			const url = new URL(page.url.href);
+			if (trimmed) url.searchParams.set('q', trimmed);
+			else url.searchParams.delete('q');
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
+			void goto(url, { replace: true, reset: false });
 		}, 300);
 		return () => clearTimeout(timer);
 	});
 
-	// Re-fetch whenever debouncedQuery or selectedCategory changes
+	// Bring the text input in line with the committed URL query on back/forward
+	// (or any other external URL change). untrack keeps the raw input out of
+	// this effect's dependencies so it never reverts in-progress typing.
 	$effect(() => {
-		const q = debouncedQuery;
+		const committed = urlQuery;
+		untrack(() => {
+			if (searchQuery !== committed) searchQuery = committed;
+		});
+	});
+
+	// Re-fetch whenever the committed URL query or category changes
+	$effect(() => {
+		const q = urlQuery;
 		const cat = selectedCategory;
 		const version = ++queryVersion;
 		loadMoreController?.abort();
@@ -195,7 +225,7 @@
 			selectedCategory === CATEGORY_ALL ? undefined : (selectedCategory as PuzzleCategory);
 		try {
 			const result = await fetchPuzzles({
-				q: debouncedQuery || undefined,
+				q: urlQuery || undefined,
 				category: catParam,
 				cursor: nextCursor,
 				signal: controller.signal
@@ -218,13 +248,19 @@
 	}
 
 	function handleCategorySelect(category: PuzzleCategory | typeof CATEGORY_ALL) {
-		selectedCategory = category;
+		const url = new URL(page.url.href);
+		if (category === CATEGORY_ALL) url.searchParams.delete('category');
+		else url.searchParams.set('category', category);
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
+		void goto(url, { replace: false, reset: false });
 	}
 
 	function clearFilters() {
-		searchQuery = '';
-		debouncedQuery = '';
-		selectedCategory = CATEGORY_ALL;
+		const url = new URL(page.url.href);
+		url.searchParams.delete('q');
+		url.searchParams.delete('category');
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
+		void goto(url, { replace: false, reset: false });
 	}
 
 	async function openSavedProgress(): Promise<void> {
@@ -483,7 +519,7 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 					RETRY SCAN
 				</button>
 			</div>
-		{:else if total === 0 && !debouncedQuery && selectedCategory === CATEGORY_ALL}
+		{:else if total === 0 && !urlQuery && selectedCategory === CATEGORY_ALL}
 			<div
 				class="flex flex-col items-center gap-4 border border-(--border) bg-(--bg-1) px-8 py-16 text-center"
 				data-testid="empty-state"

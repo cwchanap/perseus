@@ -636,6 +636,44 @@ test.describe('Main Gallery Page', () => {
 		await expect(page.getByTestId('no-results-state')).toBeVisible();
 	});
 
+	test('deep links restore filters, and typing keeps URL and focus in sync', async ({ page }) => {
+		const family = makeFamily('fam-url-deep-link');
+		const requestSearches: string[] = [];
+		await page.route(/\/api\/puzzle-families(?:\?.*)?$/, async (route) => {
+			const url = new URL(route.request().url());
+			requestSearches.push(url.search);
+			if (url.searchParams.get('q') === 'ghost') {
+				await route.fulfill({ json: pagedFamilyResponse([]) });
+				return;
+			}
+			await route.fulfill({ json: pagedFamilyResponse([family]) });
+		});
+
+		// Deep link: the first fetch reads the committed URL filters and the
+		// text input hydrates from the URL.
+		await page.goto('/?q=parrot&category=Animals');
+		await expect(page.getByTestId('loading-state')).toBeHidden();
+		await expect(page.getByTestId('search-input')).toHaveValue('parrot');
+		expect(requestSearches[0]).toContain('q=parrot');
+		expect(requestSearches[0]).toContain('category=Animals');
+
+		// Debounced typing commits to the URL without stealing focus
+		// (goto with reset: false).
+		const searchInput = page.getByTestId('search-input');
+		await searchInput.fill('ghost');
+		await expect(page).toHaveURL(/\?q=ghost/);
+		await expect(page.getByTestId('no-results-state')).toBeVisible();
+		await expect(searchInput).toBeFocused();
+
+		// A category pick adds a history entry; Back restores the committed
+		// query and the input follows.
+		await page.locator('label', { has: page.getByRole('radio', { name: 'Nature' }) }).click();
+		await expect(page).toHaveURL(/q=ghost&category=Nature/);
+		await page.goBack();
+		await expect(page).toHaveURL(/\?q=ghost&category=Animals$/);
+		await expect(searchInput).toHaveValue('ghost');
+	});
+
 	test('should append more puzzles when scrolling to sentinel', async ({ page }) => {
 		const firstPage: PuzzleFamilySummary[] = Array.from({ length: 20 }, (_, i) =>
 			makeFamily(`fam-p${i}`, { name: `Puzzle ${i}` })
