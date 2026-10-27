@@ -102,6 +102,7 @@ describe('Upload Page', () => {
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		vi.useRealTimers();
 	});
 
 	it('shows a Google sign-in action when the player is anonymous', async () => {
@@ -321,7 +322,7 @@ describe('Upload Page', () => {
 		await expect.element(page.getByText('Image preview was aborted')).toBeVisible();
 	});
 
-	it('clears the previous success timeout before starting a new upload', async () => {
+	it('starts a new upload while the success status is still visible', async () => {
 		setAuthenticatedPlayer();
 		const normalized = new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' });
 		vi.mocked(normalizePuzzleImageFile).mockResolvedValue(normalized);
@@ -354,7 +355,7 @@ describe('Upload Page', () => {
 		});
 	});
 
-	it('auto-dismisses the success message after the timeout', async () => {
+	it('keeps the success status visible with a link to my puzzles', async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		setAuthenticatedPlayer();
 		const normalized = new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' });
@@ -363,18 +364,21 @@ describe('Upload Page', () => {
 
 		render(UploadPage);
 
-		await page.getByPlaceholder('Enter puzzle name').fill('Timed Upload');
+		await page.getByPlaceholder('Enter puzzle name').fill('Persisted Upload');
 		await uploadTestImage();
 		await page.getByRole('button', { name: /upload puzzle/i }).click();
 
 		await vi.waitFor(() => {
 			expect(createPlayerPuzzle).toHaveBeenCalled();
 		});
-		await expect.element(page.getByText(/Puzzle family uploaded/)).toBeVisible();
+		await expect.element(page.getByText(/accepted for processing/i)).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: /view my puzzles/i }))
+			.toHaveAttribute('href', '/profile');
 
+		// The success status persists; the old implementation auto-dismissed it after 3 seconds.
 		await vi.advanceTimersByTimeAsync(3000);
 
-		await expect.poll(() => page.getByText(/Puzzle family uploaded/).query()).toBeNull();
-		vi.useRealTimers();
+		await expect.poll(() => page.getByText(/accepted for processing/i).query()).not.toBeNull();
 	});
 });
