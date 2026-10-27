@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { ApiError, createPlayerPuzzle, getGoogleLoginUrl } from '$lib/services/api';
 	import { playerAuth } from '$lib/stores/playerAuth';
@@ -33,7 +33,6 @@
 	let uploading = $state(false);
 	let formError: string | null = $state(null);
 	let successMessage: string | null = $state(null);
-	let successTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	const previewAspectStyle = $derived(ASPECT_STYLE[aspectRatio]);
 	const normalizePieceCount = $derived(getDifficultyPieceCount(aspectRatio, 'hard'));
@@ -41,13 +40,6 @@
 
 	onMount(() => {
 		void playerAuth.refresh();
-	});
-
-	onDestroy(() => {
-		if (successTimeout !== null) {
-			clearTimeout(successTimeout);
-			successTimeout = null;
-		}
 	});
 
 	function clearSelectedImage() {
@@ -123,14 +115,8 @@
 			});
 			await createPlayerPuzzle(name.trim(), normalizedImage, category || undefined, aspectRatio);
 			successMessage =
-				'Puzzle family uploaded. Easy, Normal, and Hard variants will appear in the gallery shortly.';
+				'Puzzle family uploaded and accepted for processing. Easy, Normal, and Hard variants will appear in the gallery when ready.';
 			clearForm();
-
-			if (successTimeout !== null) clearTimeout(successTimeout);
-			successTimeout = setTimeout(() => {
-				successMessage = null;
-				successTimeout = null;
-			}, 3000);
 		} catch (e) {
 			if (e instanceof ApiError) {
 				formError = e.message;
@@ -225,11 +211,19 @@ transition-all duration-200 hover:bg-(--accent-glow)"
 
 				{#if successMessage}
 					<div
-						class="m-4 mb-0 border border-[rgba(0,255,136,0.4)] bg-[rgba(0,255,136,0.06)] px-4 py-3
+						class="m-4 mb-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-1
+border border-[rgba(0,255,136,0.4)] bg-[rgba(0,255,136,0.06)] px-4 py-3
 text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--green)"
 						role="status"
 					>
-						{successMessage}
+						<span>{successMessage}</span>
+						<a
+							href={resolve('/profile')}
+							class="text-[0.65rem] font-(--font-display) font-bold tracking-[0.15em]
+underline decoration-dotted underline-offset-4 transition-opacity duration-150 hover:opacity-80"
+						>
+							View my puzzles
+						</a>
 					</div>
 				{/if}
 
