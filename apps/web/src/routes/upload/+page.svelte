@@ -6,6 +6,7 @@
 	import { PUZZLE_CATEGORIES, type PuzzleCategory } from '$lib/constants/categories';
 	import { normalizePuzzleImageFile } from '$lib/services/puzzleImage';
 	import {
+		ALLOWED_MIME_TYPES,
 		DEFAULT_PUZZLE_ASPECT_RATIO,
 		MAX_IMAGE_DIMENSION,
 		getDifficultyPieceCount,
@@ -33,6 +34,8 @@
 	let uploading = $state(false);
 	let formError: string | null = $state(null);
 	let successMessage: string | null = $state(null);
+	// Fences async selection work (decode probe, FileReader) against newer selections/removals.
+	let selectionGeneration = 0;
 
 	const previewAspectStyle = $derived(ASPECT_STYLE[aspectRatio]);
 	const normalizePieceCount = $derived(getDifficultyPieceCount(aspectRatio, 'hard'));
@@ -45,33 +48,66 @@
 	function clearSelectedImage() {
 		imageFile = null;
 		imagePreview = null;
+		selectionGeneration++;
 		if (imageInput) {
 			imageInput.value = '';
 		}
+	}
+
+	async function previewDecodedImage(file: File, generation: number) {
+		try {
+			const bitmap = await createImageBitmap(file);
+			bitmap.close();
+		} catch {
+			if (generation === selectionGeneration) {
+				clearSelectedImage();
+				formError = "Couldn't read this image";
+			}
+			return;
+		}
+
+		if (generation !== selectionGeneration) return;
+
+		const reader = new FileReader();
+		reader.onload = (e) => {
+			if (generation === selectionGeneration) {
+				imagePreview = e.target?.result as string;
+			}
+		};
+		reader.onerror = () => {
+			console.error('Failed to read image for preview', reader.error);
+			if (generation !== selectionGeneration) return;
+			clearSelectedImage();
+			formError = 'Failed to load image preview';
+		};
+		reader.onabort = () => {
+			console.warn('Image preview read was aborted', reader.error);
+			if (generation !== selectionGeneration) return;
+			clearSelectedImage();
+			formError = 'Image preview was aborted';
+		};
+		reader.readAsDataURL(file);
 	}
 
 	function handleImageSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
 
-		if (file) {
-			imageFile = file;
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				imagePreview = e.target?.result as string;
-			};
-			reader.onerror = () => {
-				console.error('Failed to read image for preview', reader.error);
-				clearSelectedImage();
-				formError = 'Failed to load image preview';
-			};
-			reader.onabort = () => {
-				console.warn('Image preview read was aborted', reader.error);
-				clearSelectedImage();
-				formError = 'Image preview was aborted';
-			};
-			reader.readAsDataURL(file);
+		if (!file) return;
+
+		formError = null;
+		const mime = file.type.toLowerCase();
+		if (!(ALLOWED_MIME_TYPES as readonly string[]).includes(mime)) {
+			clearSelectedImage();
+			formError = 'Please choose a JPEG, PNG, or WebP image.';
+			return;
 		}
+
+		// No size gate here: MAX_FILE_SIZE applies to the normalized image server-side,
+		// so large raw originals must pass through selection to decode.
+		const generation = ++selectionGeneration;
+		imageFile = file;
+		void previewDecodedImage(file, generation);
 	}
 
 	function handleAspectChange(event: Event) {
@@ -341,7 +377,7 @@ focus-within:[outline-offset:4px]"
 										CLICK TO UPLOAD
 									</span>
 									<span class="text-[0.62rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-										JPEG, PNG, WebP - max 10MB
+										JPEG, PNG, WebP - resized automatically
 									</span>
 									<input
 										id="image-upload"

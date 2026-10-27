@@ -74,6 +74,18 @@ class AbortingFileReader {
 	}
 }
 
+class ManualFileReader {
+	static instances: ManualFileReader[] = [];
+	onload: ((event: { target: ManualFileReader }) => void) | null = null;
+	result: string | null = null;
+	readAsDataURL() {
+		ManualFileReader.instances.push(this);
+	}
+	triggerLoad() {
+		this.onload?.({ target: this });
+	}
+}
+
 function setAuthenticatedPlayer() {
 	setAuthState({
 		status: 'authenticated',
@@ -93,11 +105,23 @@ async function uploadTestImage() {
 		.upload(new File(['data'], 'test.jpg', { type: 'image/jpeg' }));
 }
 
+function selectFile(file: File) {
+	const input = page.getByLabelText('CLICK TO UPLOAD').element() as HTMLInputElement;
+	Object.defineProperty(input, 'files', { value: [file], configurable: true });
+	input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 describe('Upload Page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		setAuthState({ status: 'anonymous', user: null, error: null });
 		vi.mocked(getGoogleLoginUrl).mockReturnValue('/api/auth/google/start?returnTo=%2Fupload');
+		// The selection fixtures are not decodable images; stub the decode probe so
+		// selection reaches the FileReader preview. Tests override as needed.
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async () => ({ close: vi.fn() }))
+		);
 	});
 
 	afterEach(() => {
@@ -380,5 +404,142 @@ describe('Upload Page', () => {
 		await vi.advanceTimersByTimeAsync(3000);
 
 		await expect.poll(() => page.getByText(/accepted for processing/i).query()).not.toBeNull();
+	});
+
+	it('rejects unsupported declared MIME types before decoding', async () => {
+		setAuthenticatedPlayer();
+		const probe = vi.fn(async () => ({ close: vi.fn() }));
+		vi.stubGlobal('createImageBitmap', probe);
+
+		render(UploadPage);
+
+		selectFile(new File(['gif'], 'animation.gif', { type: 'image/gif' }));
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent('Please choose a JPEG, PNG, or WebP image.');
+		expect(probe).not.toHaveBeenCalled();
+		expect(page.getByAltText('Preview').query()).toBeNull();
+		await expect.element(page.getByLabelText('CLICK TO UPLOAD')).toBeVisible();
+		expect(
+			(page.getByRole('button', { name: /upload puzzle/i }).element() as HTMLButtonElement).disabled
+		).toBe(true);
+
+		// A later valid selection clears the rejection and shows the preview.
+		selectFile(new File(['valid'], 'valid.jpg', { type: 'image/jpeg' }));
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
+		expect(page.getByRole('alert').query()).toBeNull();
+		expect(probe).toHaveBeenCalledTimes(1);
+	});
+
+	it('allows large raw MIME-valid images through selection to decode', async () => {
+		setAuthenticatedPlayer();
+		render(UploadPage);
+
+		// Larger than the 10 MB MAX_FILE_SIZE the server applies to the normalized image.
+		const oversized = new File([new Uint8Array(11 * 1024 * 1024)], 'large.jpg', {
+			type: 'image/jpeg'
+		});
+		selectFile(oversized);
+
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
+		expect(page.getByText("Couldn't read this image").query()).toBeNull();
+	});
+
+	it('shows an alert without a preview when the image cannot be decoded', async () => {
+		setAuthenticatedPlayer();
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async () => {
+				throw new Error('decode failed');
+			})
+		);
+
+		render(UploadPage);
+		await uploadTestImage();
+
+		await expect.element(page.getByText("Couldn't read this image")).toBeVisible();
+		await expect.element(page.getByRole('alert')).toHaveTextContent("Couldn't read this image");
+		expect(page.getByAltText('Preview').query()).toBeNull();
+		await expect.element(page.getByLabelText('CLICK TO UPLOAD')).toBeVisible();
+		// A failed decode clears the selected file, so submit stays disabled.
+		expect(
+			(page.getByRole('button', { name: /upload puzzle/i }).element() as HTMLButtonElement).disabled
+		).toBe(true);
+	});
+
+	it('closes the decoded bitmap after the probe', async () => {
+		setAuthenticatedPlayer();
+		const close = vi.fn();
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async () => ({ close }))
+		);
+
+		render(UploadPage);
+		await uploadTestImage();
+
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
+		expect(close).toHaveBeenCalledTimes(1);
+	});
+
+	it('ignores a stale bitmap probe after a newer selection', async () => {
+		setAuthenticatedPlayer();
+		let rejectFirst!: (reason?: unknown) => void;
+		let firstCall = true;
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(() => {
+				if (firstCall) {
+					firstCall = false;
+					return new Promise((_resolve, reject) => {
+						rejectFirst = reject;
+					});
+				}
+				return Promise.resolve({ close: vi.fn() });
+			})
+		);
+
+		render(UploadPage);
+
+		selectFile(new File(['stale'], 'stale.jpg', { type: 'image/jpeg' }));
+		selectFile(new File(['fresh'], 'fresh.jpg', { type: 'image/jpeg' }));
+
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
+
+		// The stale probe must not surface an error or clear the fresh preview.
+		rejectFirst(new Error('decode failed'));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(page.getByText("Couldn't read this image").query()).toBeNull();
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
+	});
+
+	it('ignores a stale reader callback after a newer selection', async () => {
+		setAuthenticatedPlayer();
+		ManualFileReader.instances = [];
+		vi.stubGlobal('FileReader', ManualFileReader);
+
+		render(UploadPage);
+
+		// Each selection's read is created while current, then fenced by the
+		// newer selection before its callback fires.
+		selectFile(new File(['first'], 'first.jpg', { type: 'image/jpeg' }));
+		await vi.waitFor(() => {
+			expect(ManualFileReader.instances.length).toBe(1);
+		});
+		selectFile(new File(['second'], 'second.jpg', { type: 'image/jpeg' }));
+		await vi.waitFor(() => {
+			expect(ManualFileReader.instances.length).toBe(2);
+		});
+
+		ManualFileReader.instances[0].result = 'data:image/jpeg;base64,AAAA';
+		ManualFileReader.instances[0].triggerLoad();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(page.getByAltText('Preview').query()).toBeNull();
+
+		ManualFileReader.instances[1].result = 'data:image/jpeg;base64,BBBB';
+		ManualFileReader.instances[1].triggerLoad();
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
 	});
 });
