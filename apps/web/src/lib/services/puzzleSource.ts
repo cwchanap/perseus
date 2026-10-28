@@ -1,3 +1,4 @@
+import { isPuzzleId } from '@perseus/types';
 import { fetchPuzzle, getPieceImageUrl, getReferenceImageUrl } from '$lib/services/api';
 import { ApiError } from '$lib/services/api';
 import { evictBlobUrls, openQuick } from '$lib/services/quickPuzzle';
@@ -53,6 +54,12 @@ export async function loadPuzzleSource(id: string): Promise<LoadedPuzzleSource> 
 		// Throw a 404-equivalent so the puzzle page shows the right message
 		// without leaking a device-local id to the server.
 		throw new ApiError(404, 'not_found', 'Quick puzzle no longer available');
+	}
+
+	if (!__PERSEUS_E2E_HARNESS__ && !isPuzzleId(id)) {
+		// E2E harness fixture ids are non-UUID `e2e-*` and must reach fetchPuzzle for Playwright
+		// interception; harness builds never ship, so every shipped build rejects malformed ids.
+		throw new ApiError(404, 'not_found', 'Mission not found');
 	}
 
 	const fetched = await fetchPuzzle(id);

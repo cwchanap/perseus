@@ -140,6 +140,7 @@
 			<h3
 				class="min-w-0 flex-1 truncate text-[1.05rem] font-(--font-display) font-black tracking-[0.03em]
 				text-(--text-0) [text-shadow:0_2px_10px_rgba(0,0,0,0.7)]"
+				title={family.name}
 				data-testid="puzzle-card-title"
 			>
 				{family.name}

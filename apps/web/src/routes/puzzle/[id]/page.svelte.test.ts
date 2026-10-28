@@ -3008,6 +3008,22 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText(/An error occurred while loading/)).toBeVisible();
 	});
 
+	it('keeps the generic error panel for API 400 and 5xx load failures', async () => {
+		vi.mocked(fetchPuzzle).mockRejectedValueOnce(new ApiError(400, 'bad_request', 'Bad request'));
+		vi.mocked(fetchPuzzle).mockRejectedValueOnce(
+			new ApiError(500, 'internal_error', 'Server error')
+		);
+
+		const view = await render(PuzzlePage);
+		await expect.element(page.getByText('Failed to load mission')).toBeVisible();
+		await expect.element(page.getByText(/An error occurred while loading/)).toBeVisible();
+		await view.unmount();
+
+		render(PuzzlePage);
+		await expect.element(page.getByText('Failed to load mission')).toBeVisible();
+		await expect.element(page.getByText(/An error occurred while loading/)).toBeVisible();
+	});
+
 	it('shows NEW RECORD badge when completion is a new personal best', async () => {
 		vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
 			status: 'recorded',

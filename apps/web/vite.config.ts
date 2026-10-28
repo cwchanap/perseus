@@ -11,6 +11,8 @@ import { gameplayRuntimeOverridePlugin } from './vite-plugins/gameplay-runtime-o
 const harnessEnabled = process.env.PERSEUS_E2E_HARNESS === '1';
 
 export default defineConfig({
+	// Compile-time harness flag: dead-code-eliminated to `false` in prod/unit builds.
+	define: { __PERSEUS_E2E_HARNESS__: JSON.stringify(harnessEnabled) },
 	plugins: [
 		gameplayRuntimeOverridePlugin({
 			harnessEnabled,
