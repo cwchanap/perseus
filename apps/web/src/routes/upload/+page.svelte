@@ -34,8 +34,16 @@
 	let uploading = $state(false);
 	let formError: string | null = $state(null);
 	let successMessage: string | null = $state(null);
-	// Fences async selection work (decode probe, FileReader) against newer selections/removals.
+	// Fences async selection work (decode probe, thumbnail render) against newer
+	// selections/removals.
 	let selectionGeneration = 0;
+
+	// The preview renders a bounded thumbnail, not the original: a full-size
+	// data URL retains ~1.3x the file size as a base64 string and forces a
+	// second full-resolution decode in the <img> — enough to kill a mobile
+	// tab on large captures. The original file still goes through
+	// normalization untouched.
+	const PREVIEW_MAX_DIMENSION = 640;
 
 	const previewAspectStyle = $derived(ASPECT_STYLE[aspectRatio]);
 	const normalizePieceCount = $derived(getDifficultyPieceCount(aspectRatio, 'hard'));
@@ -55,9 +63,9 @@
 	}
 
 	async function previewDecodedImage(file: File, generation: number) {
+		let bitmap: ImageBitmap;
 		try {
-			const bitmap = await createImageBitmap(file);
-			bitmap.close();
+			bitmap = await createImageBitmap(file);
 		} catch {
 			if (generation === selectionGeneration) {
 				clearSelectedImage();
@@ -66,27 +74,29 @@
 			return;
 		}
 
-		if (generation !== selectionGeneration) return;
+		try {
+			if (generation !== selectionGeneration) return;
 
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			if (generation === selectionGeneration) {
-				imagePreview = e.target?.result as string;
-			}
-		};
-		reader.onerror = () => {
-			console.error('Failed to read image for preview', reader.error);
+			const scale = Math.min(1, PREVIEW_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+			const width = Math.max(1, Math.round(bitmap.width * scale));
+			const height = Math.max(1, Math.round(bitmap.height * scale));
+			const canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			const context = canvas.getContext('2d');
+			if (!context) throw new Error('Canvas 2D context unavailable');
+			context.drawImage(bitmap, 0, 0, width, height);
+			// WebP keeps the thumbnail small; encoders without support fall
+			// back to PNG per spec, which is still bounded.
+			imagePreview = canvas.toDataURL('image/webp', 0.85);
+		} catch (e) {
+			console.error('Failed to render image preview', e);
 			if (generation !== selectionGeneration) return;
 			clearSelectedImage();
 			formError = 'Failed to load image preview';
-		};
-		reader.onabort = () => {
-			console.warn('Image preview read was aborted', reader.error);
-			if (generation !== selectionGeneration) return;
-			clearSelectedImage();
-			formError = 'Image preview was aborted';
-		};
-		reader.readAsDataURL(file);
+		} finally {
+			bitmap.close();
+		}
 	}
 
 	function handleImageSelect(event: Event) {

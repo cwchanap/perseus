@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { fetchPuzzles, fetchPuzzle, getFamilyThumbnailUrl, ApiError } from '$lib/services/api';
@@ -133,6 +134,12 @@
 		}
 	});
 
+	// Query values pushed by the debounced goto below that have not committed
+	// yet. The URL-sync effect uses this to tell our own commits apart from
+	// external navigation: an async commit echoing a push must not revert
+	// newer in-progress typing.
+	const pushedQueries = new SvelteSet<string>();
+
 	// Debounce raw input (300 ms) into a committed URL query. Typing replaces
 	// the current history entry; a trimmed value already matching the committed
 	// query skips navigation entirely.
@@ -144,6 +151,7 @@
 			const url = new URL(page.url.href);
 			if (trimmed) url.searchParams.set('q', trimmed);
 			else url.searchParams.delete('q');
+			pushedQueries.add(trimmed);
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
 			void goto(url, { replace: true, reset: false });
 		}, 300);
@@ -156,6 +164,12 @@
 	$effect(() => {
 		const committed = urlQuery;
 		untrack(() => {
+			// Echo of a debounced push: drop the marker and leave the input
+			// alone — it may already hold newer text.
+			if (pushedQueries.delete(committed)) return;
+			// A genuinely external commit ends any expectation about queued
+			// pushes; when they land they sync like any other commit.
+			pushedQueries.clear();
 			if (searchQuery !== committed) searchQuery = committed;
 		});
 	});
@@ -256,6 +270,10 @@
 	}
 
 	function clearFilters() {
+		// Clear the local input too: when only a category was committed, the
+		// URL change leaves urlQuery untouched, so without this a pending
+		// debounced commit would push the typed term right back.
+		searchQuery = '';
 		const url = new URL(page.url.href);
 		url.searchParams.delete('q');
 		url.searchParams.delete('category');

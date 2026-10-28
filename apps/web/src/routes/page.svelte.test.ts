@@ -1686,6 +1686,66 @@ describe('Gallery Page', () => {
 		await expect.element(input).toHaveValue('forest');
 	});
 
+	it('keeps newer input when a delayed commit of a stale search lands', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1', { name: 'Scene' })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+		render(GalleryPage);
+		await expect.element(page.getByText('Scene')).toBeVisible();
+
+		await openGallerySearch();
+		const input = page.getByTestId('search-input');
+
+		// Stall the first debounced push so its URL commit lands late, like a
+		// real async navigation racing continued typing.
+		vi.mocked(goto).mockImplementationOnce(async () => {});
+		await input.fill('abc');
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledTimes(1);
+		});
+
+		await input.fill('abcd');
+		// The stale 'abc' commit now lands; the echo must not revert 'abcd'.
+		mockPage.set({ url: new URL('http://localhost/?q=abc') });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await expect.element(input).toHaveValue('abcd');
+
+		// The debounce commits 'abcd' (default mock updates the URL) and the
+		// input still holds it.
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledTimes(2);
+		});
+		await expect.element(input).toHaveValue('abcd');
+		expect((mockPage.url as unknown as URL).searchParams.get('q')).toBe('abcd');
+	});
+
+	it('clears a pending uncommitted search when filters are cleared', async () => {
+		mockedFetchPuzzles.mockResolvedValue({ families: [], total: 0, offset: 0, limit: 20 });
+		// A category-only filter with no results renders the clear button.
+		mockPage.set({ url: new URL('http://localhost/?category=Nature') });
+		render(GalleryPage);
+		await expect.element(page.getByTestId('no-results-state')).toBeVisible();
+
+		await openGallerySearch();
+		await page.getByTestId('search-input').fill('forest');
+		// Clear before the 300 ms debounce commits the typed term.
+		await page.getByTestId('clear-filters-btn').click();
+
+		await expect.element(page.getByTestId('search-input')).toHaveValue('');
+		// Past the debounce window, the cancelled commit must not resurface:
+		// the only navigation was the clear itself.
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		const pushedTerm = vi
+			.mocked(goto)
+			.mock.calls.some(([url]) => (url as URL).searchParams.get('q') === 'forest');
+		expect(pushedTerm).toBe(false);
+		const fetchedTerm = mockedFetchPuzzles.mock.calls.some(([params]) => params?.q === 'forest');
+		expect(fetchedTerm).toBe(false);
+	});
+
 	it('commits typing as a history replacement and category/clear as new entries', async () => {
 		mockedFetchPuzzles.mockImplementation(async (params) => {
 			const { q, category } = params ?? {};
