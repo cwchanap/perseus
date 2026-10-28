@@ -507,7 +507,7 @@ test.describe('Main Gallery Page', () => {
 	test('opens saved progress and resumes an older off-page save', async ({ gameplayPage }) => {
 		const page = gameplayPage.page;
 		const newestId = STANDARD_EASY_VARIANT;
-		const olderId = 'e2e-landscape-12';
+		const olderId = 'e2e2b000-0000-4000-8000-000000000012';
 		const older = getFixture(olderId);
 		const olderPiece = older.pieces[0]!;
 		const storage = createPersistedStateController();
@@ -576,7 +576,7 @@ test.describe('Main Gallery Page', () => {
 		gameplayPage
 	}) => {
 		const page = gameplayPage.page;
-		const offPageId = 'e2e-landscape-12';
+		const offPageId = 'e2e2b000-0000-4000-8000-000000000012';
 		const fixture = getFixture(offPageId);
 		const firstPiece = fixture.pieces[0]!;
 		const storage = createPersistedStateController();

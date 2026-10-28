@@ -46,9 +46,10 @@ vi.mock('$lib/services/api', () => ({
 	}
 }));
 
-vi.mock('$lib/services/puzzleImage', () => ({
-	normalizePuzzleImageFile: vi.fn()
-}));
+vi.mock('$lib/services/puzzleImage', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/services/puzzleImage')>();
+	return { ...actual, normalizePuzzleImageFile: vi.fn() };
+});
 
 vi.mock('$app/paths', () => ({
 	resolve: (path: string, params?: Record<string, string>) =>
@@ -95,6 +96,9 @@ async function uploadTestImage() {
 	await page
 		.getByLabelText('CLICK TO UPLOAD')
 		.upload(new File(['data'], 'test.jpg', { type: 'image/jpeg' }));
+	// Submit is gated on the decode probe; the preview appearing is the signal
+	// it settled.
+	await expect.element(page.getByAltText('Preview')).toBeVisible();
 }
 
 function selectFile(file: File) {
@@ -210,7 +214,8 @@ describe('Upload Page', () => {
 				expect.objectContaining({
 					aspectRatio: '1:1',
 					pieceCount: 100
-				})
+				}),
+				expect.objectContaining({ width: 800, height: 600 })
 			);
 			expect(createPlayerPuzzle).toHaveBeenCalledWith(
 				'My Player Puzzle',
@@ -247,7 +252,8 @@ describe('Upload Page', () => {
 				expect.objectContaining({
 					aspectRatio: '3:4',
 					pieceCount: 108
-				})
+				}),
+				expect.objectContaining({ width: 800, height: 600 })
 			);
 			expect(createPlayerPuzzle).toHaveBeenCalledWith('Portrait Puzzle', normalized, 'Art', '3:4');
 		});
@@ -264,7 +270,7 @@ describe('Upload Page', () => {
 		await expect.element(page.getByLabelText('CLICK TO UPLOAD')).toBeVisible();
 	});
 
-	it('shows an error when the preview thumbnail cannot be rendered', async () => {
+	it('keeps the file and shows a fallback row when the preview thumbnail cannot be rendered', async () => {
 		setAuthenticatedPlayer();
 		vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockImplementation(() => {
 			throw new Error('encode failed');
@@ -272,6 +278,7 @@ describe('Upload Page', () => {
 
 		render(UploadPage);
 
+		await page.getByPlaceholder('Enter puzzle name').fill('No Preview');
 		const input = page.getByLabelText('CLICK TO UPLOAD').element() as HTMLInputElement;
 		Object.defineProperty(input, 'files', {
 			value: [new File(['data'], 'test.jpg', { type: 'image/jpeg' })],
@@ -279,8 +286,14 @@ describe('Upload Page', () => {
 		});
 		input.dispatchEvent(new Event('change', { bubbles: true }));
 
-		await expect.element(page.getByText('Failed to load image preview')).toBeVisible();
-		expect(page.getByLabelText('CLICK TO UPLOAD').query()).not.toBeNull();
+		// The file passed the decode probe; a cosmetic preview failure must not
+		// discard it or surface a form error.
+		await expect.element(page.getByText('test.jpg')).toBeVisible();
+		await expect.element(page.getByText(/Preview unavailable/)).toBeVisible();
+		expect(page.getByRole('alert').query()).toBeNull();
+		expect(
+			(page.getByRole('button', { name: /upload puzzle/i }).element() as HTMLButtonElement).disabled
+		).toBe(false);
 	});
 
 	it('shows API errors from player upload', async () => {
@@ -344,10 +357,12 @@ describe('Upload Page', () => {
 		});
 		await expect.element(page.getByText(/Puzzle family uploaded/)).toBeVisible();
 
-		// Trigger a second upload while the success message is still visible
+		// Trigger a second upload while the success message is still visible;
+		// selecting a new file clears it so success and error can't coexist.
 		vi.mocked(createPlayerPuzzle).mockClear();
 		await page.getByPlaceholder('Enter puzzle name').fill('Second Upload');
 		await uploadTestImage();
+		expect(page.getByText(/Puzzle family uploaded/).query()).toBeNull();
 		await page.getByRole('button', { name: /upload puzzle/i }).click();
 
 		await vi.waitFor(() => {
@@ -387,30 +402,25 @@ describe('Upload Page', () => {
 		await expect.poll(() => page.getByText(/accepted for processing/i).query()).not.toBeNull();
 	});
 
-	it('rejects unsupported declared MIME types before decoding', async () => {
+	it('lets the decode probe validate files regardless of declared type', async () => {
 		setAuthenticatedPlayer();
 		const probe = vi.fn(async () => makeBitmap());
 		vi.stubGlobal('createImageBitmap', probe);
 
 		render(UploadPage);
 
+		// No declared-type allowlist: GIFs and files with an empty MIME type
+		// reach the probe and preview like any other decodable image.
 		selectFile(new File(['gif'], 'animation.gif', { type: 'image/gif' }));
-
-		await expect
-			.element(page.getByRole('alert'))
-			.toHaveTextContent('Please choose a JPEG, PNG, or WebP image.');
-		expect(probe).not.toHaveBeenCalled();
-		expect(page.getByAltText('Preview').query()).toBeNull();
-		await expect.element(page.getByLabelText('CLICK TO UPLOAD')).toBeVisible();
-		expect(
-			(page.getByRole('button', { name: /upload puzzle/i }).element() as HTMLButtonElement).disabled
-		).toBe(true);
-
-		// A later valid selection clears the rejection and shows the preview.
-		selectFile(new File(['valid'], 'valid.jpg', { type: 'image/jpeg' }));
 		await expect.element(page.getByAltText('Preview')).toBeVisible();
-		expect(page.getByRole('alert').query()).toBeNull();
 		expect(probe).toHaveBeenCalledTimes(1);
+		expect(page.getByRole('alert').query()).toBeNull();
+
+		await page.getByRole('button', { name: /remove image/i }).click();
+		selectFile(new File(['data'], 'no-extension-hint', { type: '' }));
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
+		expect(probe).toHaveBeenCalledTimes(2);
+		expect(page.getByRole('alert').query()).toBeNull();
 	});
 
 	it('allows large raw MIME-valid images through selection to decode', async () => {
@@ -437,7 +447,9 @@ describe('Upload Page', () => {
 		);
 
 		render(UploadPage);
-		await uploadTestImage();
+		await page
+			.getByLabelText('CLICK TO UPLOAD')
+			.upload(new File(['data'], 'test.jpg', { type: 'image/jpeg' }));
 
 		await expect.element(page.getByText("Couldn't read this image")).toBeVisible();
 		await expect.element(page.getByRole('alert')).toHaveTextContent("Couldn't read this image");
@@ -449,18 +461,34 @@ describe('Upload Page', () => {
 		).toBe(true);
 	});
 
-	it('closes the decoded bitmap after rendering the preview', async () => {
+	it('retains the decoded bitmap for submit and closes it when the selection clears', async () => {
 		setAuthenticatedPlayer();
+		const normalized = new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' });
+		vi.mocked(normalizePuzzleImageFile).mockResolvedValue(normalized);
+		vi.mocked(createPlayerPuzzle).mockResolvedValue({} as never);
 		const close = vi.fn();
-		vi.stubGlobal(
-			'createImageBitmap',
-			vi.fn(async () => ({ ...makeBitmap(), close }))
-		);
+		const bitmap = { ...makeBitmap(), close };
+		const probe = vi.fn(async () => bitmap);
+		vi.stubGlobal('createImageBitmap', probe);
 
 		render(UploadPage);
+		await page.getByPlaceholder('Enter puzzle name').fill('Single Decode');
 		await uploadTestImage();
 
-		await expect.element(page.getByAltText('Preview')).toBeVisible();
+		// The probe's decode survives for reuse — submit must not decode again.
+		expect(close).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: /upload puzzle/i }).click();
+		await vi.waitFor(() => {
+			expect(normalizePuzzleImageFile).toHaveBeenCalledWith(
+				expect.any(File),
+				expect.objectContaining({ aspectRatio: '1:1' }),
+				bitmap
+			);
+		});
+		expect(probe).toHaveBeenCalledTimes(1);
+
+		// Successful submit clears the form, which closes the retained bitmap.
+		await expect.element(page.getByText(/Puzzle family uploaded/)).toBeVisible();
 		expect(close).toHaveBeenCalledTimes(1);
 	});
 

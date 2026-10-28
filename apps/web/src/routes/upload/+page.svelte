@@ -4,9 +4,12 @@
 	import { ApiError, createPlayerPuzzle, getGoogleLoginUrl } from '$lib/services/api';
 	import { playerAuth } from '$lib/stores/playerAuth';
 	import { PUZZLE_CATEGORIES, type PuzzleCategory } from '$lib/constants/categories';
-	import { normalizePuzzleImageFile } from '$lib/services/puzzleImage';
 	import {
-		ALLOWED_MIME_TYPES,
+		decodePuzzleImage,
+		createImagePreviewDataUrl,
+		normalizePuzzleImageFile
+	} from '$lib/services/puzzleImage';
+	import {
 		DEFAULT_PUZZLE_ASPECT_RATIO,
 		MAX_IMAGE_DIMENSION,
 		getDifficultyPieceCount,
@@ -30,13 +33,19 @@
 	let aspectRatio = $state<PuzzleAspectRatio>(DEFAULT_PUZZLE_ASPECT_RATIO);
 	let imageFile: File | null = $state(null);
 	let imagePreview: string | null = $state(null);
+	let previewFailed = $state(false);
 	let imageInput: HTMLInputElement | null = $state(null);
 	let uploading = $state(false);
+	let probing = $state(false);
 	let formError: string | null = $state(null);
 	let successMessage: string | null = $state(null);
 	// Fences async selection work (decode probe, thumbnail render) against newer
 	// selections/removals.
 	let selectionGeneration = 0;
+	// The decoded selection, retained from the preview probe so submit does not
+	// decode the full-resolution original a second time. Owned here — closed
+	// when the selection is cleared or replaced.
+	let imageBitmap: ImageBitmap | null = null;
 
 	// The preview renders a bounded thumbnail, not the original: a full-size
 	// data URL retains ~1.3x the file size as a base64 string and forces a
@@ -56,7 +65,11 @@
 	function clearSelectedImage() {
 		imageFile = null;
 		imagePreview = null;
+		previewFailed = false;
+		probing = false;
 		selectionGeneration++;
+		imageBitmap?.close();
+		imageBitmap = null;
 		if (imageInput) {
 			imageInput.value = '';
 		}
@@ -65,37 +78,33 @@
 	async function previewDecodedImage(file: File, generation: number) {
 		let bitmap: ImageBitmap;
 		try {
-			bitmap = await createImageBitmap(file);
+			bitmap = await decodePuzzleImage(file);
 		} catch {
 			if (generation === selectionGeneration) {
 				clearSelectedImage();
 				formError = "Couldn't read this image";
 			}
 			return;
+		} finally {
+			if (generation === selectionGeneration) probing = false;
 		}
 
-		try {
-			if (generation !== selectionGeneration) return;
-
-			const scale = Math.min(1, PREVIEW_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
-			const width = Math.max(1, Math.round(bitmap.width * scale));
-			const height = Math.max(1, Math.round(bitmap.height * scale));
-			const canvas = document.createElement('canvas');
-			canvas.width = width;
-			canvas.height = height;
-			const context = canvas.getContext('2d');
-			if (!context) throw new Error('Canvas 2D context unavailable');
-			context.drawImage(bitmap, 0, 0, width, height);
-			// WebP keeps the thumbnail small; encoders without support fall
-			// back to PNG per spec, which is still bounded.
-			imagePreview = canvas.toDataURL('image/webp', 0.85);
-		} catch (e) {
-			console.error('Failed to render image preview', e);
-			if (generation !== selectionGeneration) return;
-			clearSelectedImage();
-			formError = 'Failed to load image preview';
-		} finally {
+		if (generation !== selectionGeneration) {
 			bitmap.close();
+			return;
+		}
+
+		imageBitmap?.close();
+		imageBitmap = bitmap;
+		try {
+			imagePreview = createImagePreviewDataUrl(bitmap, PREVIEW_MAX_DIMENSION);
+		} catch (e) {
+			// A cosmetic failure is not a reason to discard a file that already
+			// passed the decode probe — keep the selection and show the
+			// filename fallback instead of a thumbnail.
+			console.error('Failed to render image preview', e);
+			imagePreview = null;
+			previewFailed = true;
 		}
 	}
 
@@ -106,17 +115,18 @@
 		if (!file) return;
 
 		formError = null;
-		const mime = file.type.toLowerCase();
-		if (!(ALLOWED_MIME_TYPES as readonly string[]).includes(mime)) {
-			clearSelectedImage();
-			formError = 'Please choose a JPEG, PNG, or WebP image.';
-			return;
-		}
+		successMessage = null;
 
-		// No size gate here: MAX_FILE_SIZE applies to the normalized image server-side,
-		// so large raw originals must pass through selection to decode.
+		// No MIME or size gate here: the decode probe is the real validator
+		// (files with empty or nonstandard types decode fine), normalization
+		// re-encodes to JPEG regardless, and MAX_FILE_SIZE applies to the
+		// normalized image server-side, so large raw originals must pass
+		// through selection to decode.
 		const generation = ++selectionGeneration;
 		imageFile = file;
+		imagePreview = null;
+		previewFailed = false;
+		probing = true;
 		void previewDecodedImage(file, generation);
 	}
 
@@ -152,13 +162,17 @@
 		uploading = true;
 
 		try {
-			const normalizedImage = await normalizePuzzleImageFile(imageFile, {
-				aspectRatio,
-				pieceCount: normalizePieceCount,
-				maxDimension: MAX_IMAGE_DIMENSION,
-				type: 'image/jpeg',
-				quality: 0.88
-			});
+			const normalizedImage = await normalizePuzzleImageFile(
+				imageFile,
+				{
+					aspectRatio,
+					pieceCount: normalizePieceCount,
+					maxDimension: MAX_IMAGE_DIMENSION,
+					type: 'image/jpeg',
+					quality: 0.88
+				},
+				imageBitmap ?? undefined
+			);
 			await createPlayerPuzzle(name.trim(), normalizedImage, category || undefined, aspectRatio);
 			successMessage =
 				'Puzzle family uploaded and accepted for processing. Easy, Normal, and Hard variants will appear in the gallery when ready.';
@@ -374,6 +388,36 @@ transition-opacity duration-150 hover:opacity-80"
 										<span class="text-white">x</span>
 									</button>
 								</div>
+							{:else if imageFile}
+								<div
+									class="mx-auto flex w-full max-w-80 items-center justify-between gap-3 px-2 py-1"
+								>
+									<div class="min-w-0">
+										<p
+											class="truncate text-[0.72rem] font-(--font-mono) tracking-[0.03em] text-(--text-1)"
+										>
+											{imageFile.name}
+										</p>
+										{#if previewFailed}
+											<p class="text-[0.62rem] font-(--font-mono) text-(--text-2)">
+												Preview unavailable — still ready to upload
+											</p>
+										{:else if probing}
+											<p class="text-[0.62rem] font-(--font-mono) text-(--text-2)">
+												Checking image…
+											</p>
+										{/if}
+									</div>
+									<button
+										type="button"
+										onclick={clearSelectedImage}
+										class="flex items-center justify-center bg-(--hot) p-1
+	transition-opacity duration-150 hover:opacity-80"
+										aria-label="Remove image"
+									>
+										<span class="text-white">x</span>
+									</button>
+								</div>
 							{:else}
 								<label
 									for="image-upload"
@@ -387,13 +431,13 @@ focus-within:[outline-offset:4px]"
 										CLICK TO UPLOAD
 									</span>
 									<span class="text-[0.62rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-										JPEG, PNG, WebP - resized automatically
+										Any image - resized automatically
 									</span>
 									<input
 										id="image-upload"
 										bind:this={imageInput}
 										type="file"
-										accept="image/jpeg,image/png,image/webp"
+										accept="image/*"
 										class="sr-only"
 										onchange={handleImageSelect}
 										disabled={uploading}
@@ -405,13 +449,13 @@ focus-within:[outline-offset:4px]"
 
 					<button
 						type="submit"
-						disabled={uploading || !name.trim() || !imageFile}
+						disabled={uploading || probing || !name.trim() || !imageFile}
 						class="w-full border border-(--accent) px-4 py-3 text-[0.65rem]
 font-(--font-display) font-bold tracking-[0.2em] text-(--accent)
 transition-all duration-200 hover:bg-(--accent-glow)
 disabled:cursor-not-allowed disabled:opacity-40"
 					>
-						{uploading ? 'UPLOADING...' : 'UPLOAD PUZZLE'}
+						{uploading ? 'UPLOADING...' : probing ? 'CHECKING IMAGE…' : 'UPLOAD PUZZLE'}
 					</button>
 				</form>
 			</section>

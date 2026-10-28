@@ -64,7 +64,7 @@ export function readGameplayRuntimeOverride(
 	}
 	const raw = global.value;
 	if (raw === undefined || raw === null) {
-		if (context.puzzleId.startsWith('e2e-')) {
+		if (context.puzzleId.startsWith('e2e')) {
 			throw new Error(
 				`${ERROR_PREFIX} missing gameplay config for e2e puzzle "${context.puzzleId}"`
 			);

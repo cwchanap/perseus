@@ -41,9 +41,24 @@ const GALLERY_FAMILIES = [
 		status: 'ready',
 		createdAt: 1,
 		variants: {
-			easy: { id: 'e2e-square-4', difficulty: 'easy', pieceCount: 16, status: 'ready' },
-			normal: { id: 'e2e-landscape-12', difficulty: 'normal', pieceCount: 49, status: 'ready' },
-			hard: { id: 'e2e-square-100', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+			easy: {
+				id: 'e2e2a000-0000-4000-8000-000000000004',
+				difficulty: 'easy',
+				pieceCount: 16,
+				status: 'ready'
+			},
+			normal: {
+				id: 'e2e2b000-0000-4000-8000-000000000012',
+				difficulty: 'normal',
+				pieceCount: 49,
+				status: 'ready'
+			},
+			hard: {
+				id: 'e2e2a000-0000-4000-8000-000000000100',
+				difficulty: 'hard',
+				pieceCount: 100,
+				status: 'ready'
+			}
 		}
 	}
 ] as const;
@@ -125,7 +140,7 @@ test.describe('accessibility @a11y', () => {
 		page
 	}) => {
 		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-square-4',
+			fixtureId: 'e2e2a000-0000-4000-8000-000000000004',
 			seedPreferences: IMMEDIATE_START
 		});
 
@@ -157,7 +172,7 @@ test.describe('accessibility @a11y', () => {
 		page
 	}) => {
 		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-square-4',
+			fixtureId: 'e2e2a000-0000-4000-8000-000000000004',
 			completion: { kind: 'success' },
 			seedPreferences: IMMEDIATE_START
 		});

@@ -4,7 +4,7 @@
 // placement, tap placement, source scoping through piece-slot-${id},
 // and the current completion-dialog role/action/focus behavior.
 //
-// Uses e2e-square-4 (2x2, 4 pieces) for speed.
+// Uses e2e2a000-0000-4000-8000-000000000004 (2x2, 4 pieces) for speed.
 //
 // Tags:
 //   @extended        — mouse drag tests (dragTo unreliable on WebKit; see
@@ -62,7 +62,7 @@ test.describe('Gameplay interactions', () => {
 		gameplayPage,
 		page
 	}) => {
-		const fixture = getFixture('e2e-square-4');
+		const fixture = getFixture('e2e2a000-0000-4000-8000-000000000004');
 		await gameplayPage.gotoFixture({
 			fixtureId: fixture.id,
 			completion: { kind: 'success' },

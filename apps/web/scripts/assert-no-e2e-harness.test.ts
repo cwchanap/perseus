@@ -6,7 +6,7 @@ import { assertNoE2EHarness } from './assert-no-e2e-harness';
 
 const SENTINELS = [
 	'__PERSEUS_E2E_GAMEPLAY_V1__',
-	'e2e-square-4',
+	'e2e2a000-0000-4000-8000-000000000004',
 	'PERSEUS_E2E_CONFIG:',
 	'e2e-gameplay-runtime.ts'
 ] as const;

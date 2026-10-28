@@ -15,18 +15,26 @@ import type { Rotation } from '@perseus/game-core';
 import type { PuzzleDifficulty } from '@perseus/types';
 import { buildFixture, type GameplayFixture } from './builder';
 
+// Fixture ids are `e2e`-prefixed UUIDv4 strings so they pass
+// loadPuzzleSource's `isPuzzleId` gate exactly like production ids — no
+// compile-time bypass. The fifth hex digit tags the fixture family
+// (a: square, b: landscape, c: portrait, d: ad-hoc test ids).
 export type GameplayFixtureId =
-	'e2e-square-4' | 'e2e-landscape-12' | 'e2e-portrait-12' | 'e2e-square-100' | 'e2e-square-225';
+	| 'e2e2a000-0000-4000-8000-000000000004'
+	| 'e2e2b000-0000-4000-8000-000000000012'
+	| 'e2e2c000-0000-4000-8000-000000000012'
+	| 'e2e2a000-0000-4000-8000-000000000100'
+	| 'e2e2a000-0000-4000-8000-000000000225';
 
 export const FIXTURE_IDS: readonly GameplayFixtureId[] = [
-	'e2e-square-4',
-	'e2e-landscape-12',
-	'e2e-portrait-12',
-	'e2e-square-100',
-	'e2e-square-225'
+	'e2e2a000-0000-4000-8000-000000000004',
+	'e2e2b000-0000-4000-8000-000000000012',
+	'e2e2c000-0000-4000-8000-000000000012',
+	'e2e2a000-0000-4000-8000-000000000100',
+	'e2e2a000-0000-4000-8000-000000000225'
 ];
 
-export const DEFAULT_FIXTURE_ID: GameplayFixtureId = 'e2e-square-4';
+export const DEFAULT_FIXTURE_ID: GameplayFixtureId = 'e2e2a000-0000-4000-8000-000000000004';
 
 /** Deterministic family id for the square-4 progression fixture (harness + E2E). */
 export function familyIdForFixtureIndex(fixtureIndex: number): string {
@@ -90,7 +98,7 @@ function allZeroRotations(n: number): Record<number, Rotation> {
 }
 
 const square4 = buildFixture({
-	fixtureId: 'e2e-square-4',
+	fixtureId: 'e2e2a000-0000-4000-8000-000000000004',
 	familyId: familyIdForFixtureIndex(0),
 	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Square 4 (completion)',
@@ -111,7 +119,7 @@ const square4 = buildFixture({
 });
 
 const landscape12 = buildFixture({
-	fixtureId: 'e2e-landscape-12',
+	fixtureId: 'e2e2b000-0000-4000-8000-000000000012',
 	familyId: familyIdForFixtureIndex(1),
 	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Landscape 12',
@@ -129,7 +137,7 @@ const landscape12 = buildFixture({
 });
 
 const portrait12 = buildFixture({
-	fixtureId: 'e2e-portrait-12',
+	fixtureId: 'e2e2c000-0000-4000-8000-000000000012',
 	familyId: familyIdForFixtureIndex(2),
 	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Portrait 12',
@@ -147,7 +155,7 @@ const portrait12 = buildFixture({
 });
 
 const square100 = buildFixture({
-	fixtureId: 'e2e-square-100',
+	fixtureId: 'e2e2a000-0000-4000-8000-000000000100',
 	familyId: familyIdForFixtureIndex(3),
 	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Square 100 (layout)',
@@ -165,7 +173,7 @@ const square100 = buildFixture({
 });
 
 const square225 = buildFixture({
-	fixtureId: 'e2e-square-225',
+	fixtureId: 'e2e2a000-0000-4000-8000-000000000225',
 	familyId: familyIdForFixtureIndex(4),
 	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Square 225 (large layout)',
@@ -183,11 +191,11 @@ const square225 = buildFixture({
 });
 
 export const FIXTURES: Readonly<Record<GameplayFixtureId, GameplayFixture>> = Object.freeze({
-	'e2e-square-4': square4,
-	'e2e-landscape-12': landscape12,
-	'e2e-portrait-12': portrait12,
-	'e2e-square-100': square100,
-	'e2e-square-225': square225
+	'e2e2a000-0000-4000-8000-000000000004': square4,
+	'e2e2b000-0000-4000-8000-000000000012': landscape12,
+	'e2e2c000-0000-4000-8000-000000000012': portrait12,
+	'e2e2a000-0000-4000-8000-000000000100': square100,
+	'e2e2a000-0000-4000-8000-000000000225': square225
 });
 
 export function getFixture(id: GameplayFixtureId): GameplayFixture {

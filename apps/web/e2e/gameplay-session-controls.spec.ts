@@ -34,7 +34,7 @@ const IMMEDIATE_START = {
 	startImmediately: true
 };
 
-const FIXTURE_ID = 'e2e-square-4' as const;
+const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
 const START_AT = new Date('2026-01-01T00:00:00Z');
 
 /** Piece id -> placement coordinates (correctX, correctY) for the 2x2 grid. */

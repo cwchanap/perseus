@@ -40,10 +40,10 @@ import {
 } from '../gameplay-fixtures/fixture-router';
 import { AUTH_PERSONA_SOURCE, type AuthPersonaKind } from '../gameplay-fixtures/auth-persona';
 
-const E2E_PATH = /\/api\/puzzles\/e2e-[a-z0-9-]+/;
-const COMPLETION_PATH = /\/api\/puzzles\/e2e-[a-z0-9-]+\/complete(?:\?.*)?$/;
+const E2E_PATH = /\/api\/puzzles\/e2e[a-z0-9-]+/;
+const COMPLETION_PATH = /\/api\/puzzles\/e2e[a-z0-9-]+\/complete(?:\?.*)?$/;
 /** Extracts the fixture id from an e2e-* completion URL. */
-const FIXTURE_ID_FROM_URL = /\/api\/puzzles\/(e2e-[a-z0-9-]+)\/complete/;
+const FIXTURE_ID_FROM_URL = /\/api\/puzzles\/(e2e[a-z0-9-]+)\/complete/;
 /** The player auth session endpoint (not an e2e-* path). */
 const AUTH_SESSION_PATH = /\/api\/auth\/session(?:\?.*)?$/;
 

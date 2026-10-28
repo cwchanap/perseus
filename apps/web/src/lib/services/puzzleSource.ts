@@ -56,9 +56,7 @@ export async function loadPuzzleSource(id: string): Promise<LoadedPuzzleSource> 
 		throw new ApiError(404, 'not_found', 'Quick puzzle no longer available');
 	}
 
-	if (!__PERSEUS_E2E_HARNESS__ && !isPuzzleId(id)) {
-		// E2E harness fixture ids are non-UUID `e2e-*` and must reach fetchPuzzle for Playwright
-		// interception; harness builds never ship, so every shipped build rejects malformed ids.
+	if (!isPuzzleId(id)) {
 		throw new ApiError(404, 'not_found', 'Mission not found');
 	}
 

@@ -53,7 +53,7 @@ function makeDefinition(
 ): GameplayFixtureDefinition {
 	const { rows, cols } = gridFor(pieceCount, aspectRatio);
 	return {
-		fixtureId: 'e2e-test',
+		fixtureId: 'e2e2d000-0000-4000-8000-000000000001',
 		familyId: validFamilyId(),
 		difficulty: 'easy',
 		name: 'Test fixture',
@@ -143,7 +143,7 @@ describe('buildFixture - pieces', () => {
 	it('stamps puzzleId and imagePath on every piece', () => {
 		const fixture = buildFixture(makeDefinition(4, '1:1'));
 		for (const piece of fixture.pieces) {
-			expect(piece.puzzleId).toBe('e2e-test');
+			expect(piece.puzzleId).toBe('e2e2d000-0000-4000-8000-000000000001');
 			expect(piece.imagePath).toBe(`pieces/${piece.id}.png`);
 		}
 	});

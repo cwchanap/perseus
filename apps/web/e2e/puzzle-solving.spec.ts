@@ -3,7 +3,7 @@
 // The deterministic load/placement/completion coverage that previously lived
 // here as bare skips is now implemented in gameplay-infrastructure.spec.ts
 // (HPA-226): fixture-gated board load, keyboard/drag placement, snap-to-cell,
-// and the full completion celebration flow all run against the e2e-square-4
+// and the full completion celebration flow all run against the e2e2a000-0000-4000-8000-000000000004
 // fixture through the canonical GameplayPage harness.
 import { test, expect } from '@playwright/test';
 

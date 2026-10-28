@@ -46,9 +46,9 @@ export const FIXTURE_ROUTER_SOURCE = 'fixture-router';
 export const HARNESS_VIOLATION_HEADER = 'x-perseus-e2e-violation';
 
 /** Path matcher for page.route: any `/api/puzzles/e2e-<id>` request. */
-const FIXTURE_PATH_PATTERN = /\/api\/puzzles\/e2e-[a-z0-9-]+/;
+const FIXTURE_PATH_PATTERN = /\/api\/puzzles\/e2e[a-z0-9-]+/;
 const KNOWN_FIXTURE_IDS: ReadonlySet<string> = new Set(FIXTURE_IDS);
-const PIECE_IMAGE_PATH = /^\/api\/puzzles\/e2e-[a-z0-9-]+\/pieces\/(\d+)\/image$/;
+const PIECE_IMAGE_PATH = /^\/api\/puzzles\/e2e[a-z0-9-]+\/pieces\/(\d+)\/image$/;
 
 function markerHeaders(): Record<string, string> {
 	return { [FIXTURE_ROUTER_HEADER]: FIXTURE_ROUTER_SOURCE };
@@ -114,7 +114,7 @@ export function createFixtureRouter(): FixtureRouter {
 			return;
 		}
 
-		const idMatch = pathname.match(/\/api\/puzzles\/(e2e-[a-z0-9-]+)/);
+		const idMatch = pathname.match(/\/api\/puzzles\/(e2e[a-z0-9-]+)/);
 		if (!idMatch) {
 			// Not a fixture request at all — let ordinary traffic through.
 			await route.fallback();

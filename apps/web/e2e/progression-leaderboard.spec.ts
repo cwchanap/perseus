@@ -6,7 +6,7 @@ import { AUTHENTICATED_PLAYER } from './gameplay-fixtures/auth-persona';
 import { getFixture } from './gameplay-fixtures/catalog';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
-const FIXTURE_ID = 'e2e-square-4' as const;
+const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
 const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 
 const PROGRESSION_AWARDS = {

@@ -48,8 +48,8 @@ test.describe('large fixtures @extended', () => {
 		gameplayPage,
 		page
 	}) => {
-		const fixture = getFixture('e2e-landscape-12');
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-landscape-12' });
+		const fixture = getFixture('e2e2b000-0000-4000-8000-000000000012');
+		await gameplayPage.gotoFixture({ fixtureId: 'e2e2b000-0000-4000-8000-000000000012' });
 
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(fixture.pieceCount);
@@ -65,8 +65,8 @@ test.describe('large fixtures @extended', () => {
 		gameplayPage,
 		page
 	}) => {
-		const fixture = getFixture('e2e-portrait-12');
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-portrait-12' });
+		const fixture = getFixture('e2e2c000-0000-4000-8000-000000000012');
+		await gameplayPage.gotoFixture({ fixtureId: 'e2e2c000-0000-4000-8000-000000000012' });
 
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(fixture.pieceCount);
@@ -85,7 +85,7 @@ test.describe('large fixtures @extended', () => {
 		// Runs once per Playwright project (desktop / tablet / mobile across
 		// chromium and webkit) via the @extended matrix, so this single test
 		// body exercises the full responsive range.
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-landscape-12' });
+		await gameplayPage.gotoFixture({ fixtureId: 'e2e2b000-0000-4000-8000-000000000012' });
 
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 		await expect(page.locator('[data-testid^="piece-slot-"]').first()).toBeVisible();
@@ -103,14 +103,14 @@ test.describe('large fixtures @extended', () => {
 	});
 
 	test('100-piece fixture: exactly 100 tray slots render', async ({ gameplayPage, page }) => {
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-square-100' });
+		await gameplayPage.gotoFixture({ fixtureId: 'e2e2a000-0000-4000-8000-000000000100' });
 		// gotoFixture's ready check already waits for the full tray, but assert
 		// the exact count explicitly so this test's intent is self-documenting.
 		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(100);
 	});
 
 	test('225-piece fixture: exactly 225 tray slots render', async ({ gameplayPage, page }) => {
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-square-225' });
+		await gameplayPage.gotoFixture({ fixtureId: 'e2e2a000-0000-4000-8000-000000000225' });
 		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(225);
 	});
 
@@ -118,7 +118,7 @@ test.describe('large fixtures @extended', () => {
 		gameplayPage
 	}) => {
 		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-square-100',
+			fixtureId: 'e2e2a000-0000-4000-8000-000000000100',
 			seedPreferences: IMMEDIATE_START
 		});
 		// Piece 0's correct cell is (0,0) on every fixture. Place just one
@@ -133,7 +133,7 @@ test.describe('gameplay workspace polish smoke', () => {
 		test.skip(testInfo.project.name !== 'chromium-desktop', 'desktop-only split layout');
 
 		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-square-100',
+			fixtureId: 'e2e2a000-0000-4000-8000-000000000100',
 			seedPreferences: IMMEDIATE_START
 		});
 
@@ -190,7 +190,7 @@ test.describe('gameplay workspace polish smoke', () => {
 		// the gap that produced the hidden downscaling.
 		await page.setViewportSize({ width: 1920, height: 1000 });
 		await gameplayPage.gotoFixture({
-			fixtureId: 'e2e-landscape-12',
+			fixtureId: 'e2e2b000-0000-4000-8000-000000000012',
 			seedPreferences: IMMEDIATE_START
 		});
 

@@ -199,7 +199,12 @@ vi.mock('$app/paths', () => ({
 
 vi.mock('$app/state', async () => {
 	const { mockPage: page } = await import('$lib/testing/app-state-mock.svelte');
-	return { page };
+	// No navigation is ever in flight in this harness — goto resolves the URL
+	// synchronously into mockPage — so navigating exposes the idle shape.
+	return {
+		page,
+		navigating: { to: null, from: null, type: null, willUnload: null, delta: null, complete: null }
+	};
 });
 
 // Stands in for SvelteKit completing the navigation: once goto resolves the
@@ -211,7 +216,9 @@ vi.mock('$app/navigation', async () => {
 		goto: vi.fn(async (url: URL | string) => {
 			const next = typeof url === 'string' ? new URL(url, 'http://localhost') : new URL(url.href);
 			mockPage.set({ url: next });
-		})
+		}),
+		beforeNavigate: vi.fn(),
+		afterNavigate: vi.fn()
 	};
 });
 
