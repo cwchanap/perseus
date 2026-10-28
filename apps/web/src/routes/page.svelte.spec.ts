@@ -1,6 +1,7 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
+import { mockPage } from '$lib/testing/app-state-mock.svelte';
 import Page from './+page.svelte';
 import { fetchPuzzles } from '$lib/services/api';
 import type { PuzzleFamilyListResponse, PuzzleFamilySummary } from '$lib/types/puzzle';
@@ -67,6 +68,24 @@ vi.mock('$lib/stores/bookmarks', () => ({
 	}
 }));
 
+vi.mock('$app/state', async () => {
+	const { mockPage: page } = await import('$lib/testing/app-state-mock.svelte');
+	return { page };
+});
+
+// Stands in for SvelteKit completing the navigation: once goto resolves the
+// router has committed the URL, so the mock patches the reactive page state
+// with the destination URL.
+vi.mock('$app/navigation', async () => {
+	const { mockPage } = await import('$lib/testing/app-state-mock.svelte');
+	return {
+		goto: vi.fn(async (url: URL | string) => {
+			const next = typeof url === 'string' ? new URL(url, 'http://localhost') : new URL(url.href);
+			mockPage.set({ url: next });
+		})
+	};
+});
+
 function makeFamily(id: string, name: string, category?: string): PuzzleFamilySummary {
 	return {
 		id,
@@ -90,6 +109,7 @@ const mockFamilies: PuzzleFamilySummary[] = [
 
 describe('/+page.svelte', () => {
 	beforeEach(() => {
+		mockPage.set({ url: new URL('http://localhost/') });
 		vi.mocked(fetchPuzzles).mockResolvedValue({
 			families: [],
 			total: 0,
