@@ -4,7 +4,7 @@ import { page } from 'vitest/browser';
 import GalleryPage from './+page.svelte';
 import type { PuzzleFamilySummary } from '@perseus/types';
 import { fetchPuzzles, ApiError } from '$lib/services/api';
-import { goto } from '$app/navigation';
+import { beforeNavigate, goto } from '$app/navigation';
 import { mockPage } from '$lib/testing/app-state-mock.svelte';
 import { listQuick } from '$lib/services/quickPuzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
@@ -1691,6 +1691,75 @@ describe('Gallery Page', () => {
 		// The URL-sync effect must not track the raw input: with the URL
 		// untouched and the debounce still pending, the field keeps the text.
 		await expect.element(input).toHaveValue('forest');
+	});
+
+	it('resyncs the search input when history navigation cancels a pending edit', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => ({
+			families: [makeFamily('p1', { name: `${params?.category ?? 'All'} Result` })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		}));
+		mockPage.set({ url: new URL('http://localhost/?category=Nature') });
+		render(GalleryPage);
+		await expect.element(page.getByText('Nature Result')).toBeVisible();
+
+		await openGallerySearch();
+		const input = page.getByTestId('search-input');
+		await input.fill('forest');
+
+		// Simulate browser Back while the debounce is still pending: the router
+		// notifies via beforeNavigate, then restores the previous entry — here
+		// a category-only change that keeps the committed query ('').
+		const onBeforeNavigate = vi.mocked(beforeNavigate).mock.calls.at(-1)?.[0];
+		expect(onBeforeNavigate).toBeTypeOf('function');
+		onBeforeNavigate?.({
+			type: 'popstate',
+			to: { route: { id: '/' }, url: new URL('http://localhost/'), params: {} }
+		} as never);
+		mockPage.set({ url: new URL('http://localhost/') });
+
+		// The committed query is unchanged (''), so the URL-sync effect never
+		// runs — the navigation hook itself must have restored the input.
+		await expect.element(input).toHaveValue('');
+
+		// And the cancelled term must never resurface after the debounce window.
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		const pushedTerm = vi
+			.mocked(goto)
+			.mock.calls.some(([url]) => (url as URL).searchParams.get('q') === 'forest');
+		expect(pushedTerm).toBe(false);
+		const fetchedTerm = mockedFetchPuzzles.mock.calls.some(([params]) => params?.q === 'forest');
+		expect(fetchedTerm).toBe(false);
+	});
+
+	it('keeps the search disclosure open while editing after a committed query clears', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			families: [makeFamily('p1', { name: 'Macaw Puzzle' })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+		mockPage.set({ url: new URL('http://localhost/?q=macaw') });
+		render(GalleryPage);
+		await expect.element(page.getByText('Macaw Puzzle')).toBeVisible();
+
+		const disclosure = (await page
+			.getByTestId('gallery-search-disclosure')
+			.element()) as HTMLDetailsElement;
+		expect(disclosure.open).toBe(true);
+
+		const input = page.getByTestId('search-input');
+		await input.fill('');
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledTimes(1);
+		});
+		expect((mockPage.url as unknown as URL).searchParams.get('q')).toBeNull();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		// The emptied commit must not collapse the disclosure — mobile layouts
+		// hide the toggle entirely, so a closed state would strand the editor.
+		expect(disclosure.open).toBe(true);
 	});
 
 	it('keeps newer input when a delayed commit of a stale search lands', async () => {

@@ -21,7 +21,7 @@ function clearConfig(): void {
 	delete windowRecord()[CONFIG_KEY];
 }
 
-function ctx(puzzleId = 'e2e-abc') {
+function ctx(puzzleId = 'e2e2a000-0000-4000-8000-000000000004') {
 	return { puzzleId, pieceIds: PIECE_IDS };
 }
 
@@ -30,7 +30,7 @@ function ctx(puzzleId = 'e2e-abc') {
 function validConfig(): Record<string, unknown> {
 	return {
 		version: 1,
-		fixtureId: 'e2e-abc',
+		fixtureId: 'e2e2a000-0000-4000-8000-000000000004',
 		runIds: ['run-1', 'run-2'],
 		initialTrayOrder: [30, 10, 20],
 		restartTrayOrders: [
@@ -55,8 +55,21 @@ describe('readGameplayRuntimeOverride', () => {
 			expect(readGameplayRuntimeOverride({ puzzleId: 'q-xyz', pieceIds: PIECE_IDS })).toBeNull();
 		});
 
-		it('throws with PERSEUS_E2E_CONFIG: for an unconfigured e2e-* puzzle id', () => {
-			expect(() => readGameplayRuntimeOverride(ctx('e2e-abc'))).toThrow(/PERSEUS_E2E_CONFIG:/);
+		it('returns null for a real puzzle id that merely shares the e2e prefix', () => {
+			// A random v4 id can start with `e2e`; only the zero-padded fixture
+			// signature marks a puzzle as e2e-owned.
+			expect(
+				readGameplayRuntimeOverride({
+					puzzleId: 'e2e11234-1234-4123-8123-123456789abc',
+					pieceIds: PIECE_IDS
+				})
+			).toBeNull();
+		});
+
+		it('throws with PERSEUS_E2E_CONFIG: for an unconfigured fixture-signature puzzle id', () => {
+			expect(() =>
+				readGameplayRuntimeOverride(ctx('e2e2d000-0000-4000-8000-000000000099'))
+			).toThrow(/PERSEUS_E2E_CONFIG:/);
 		});
 	});
 
@@ -116,8 +129,8 @@ describe('readGameplayRuntimeOverride', () => {
 
 	describe('fixture mismatch', () => {
 		it('rejects when fixtureId does not match the puzzleId', () => {
-			setConfig({ ...validConfig(), fixtureId: 'e2e-different' });
-			expect(() => readGameplayRuntimeOverride(ctx('e2e-abc'))).toThrow(/PERSEUS_E2E_CONFIG:/);
+			setConfig({ ...validConfig(), fixtureId: 'e2e2d000-0000-4000-8000-000000000099' });
+			expect(() => readGameplayRuntimeOverride(ctx())).toThrow(/PERSEUS_E2E_CONFIG:/);
 		});
 	});
 

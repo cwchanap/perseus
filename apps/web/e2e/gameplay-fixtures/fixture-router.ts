@@ -1,7 +1,9 @@
 // Total-interception fixture router for deterministic gameplay E2E.
 //
-// The router intercepts EVERY request whose path carries an `e2e-*` fixture id
-// BEFORE either backend sees it:
+// The router intercepts EVERY request whose path carries an id inside the
+// shared fixture signature (`E2E_PUZZLE_API_PATH` — `e2e2?000-0000-4000-8000-…`,
+// the zero-padded namespace no real v4 id can practically reproduce) BEFORE
+// either backend sees it:
 //
 //   - known fixture id  → fulfill immediately (metadata JSON, padded piece SVG,
 //     reference/thumbnail SVG). The completion POST is fulfilled with a 403
@@ -14,10 +16,16 @@
 //     only reached when no controller intercepts. Any OTHER sub-path under a
 //     known id (e.g. a future API endpoint) is fulfilled with a 404, never
 //     passed through.
-//   - unknown `e2e-*` id → fulfill 404 immediately. It NEVER calls `fallback()`,
-//     so a typo'd fixture id can never leak to the real API.
+//   - unregistered signature-shaped id → fulfill 404 immediately. It NEVER
+//     calls `fallback()`, so a typo'd fixture id can never leak to the real
+//     API.
 //   - any other path → `route.fallback()` so ordinary traffic (gallery list,
-//     auth session, real puzzle ids) reaches the backend untouched.
+//     auth session, real puzzle ids — including real ids that merely share
+//     the `e2e` prefix) reaches the backend untouched.
+//
+// Matching is case-insensitive and the captured id is normalized to lowercase
+// for lookup, sub-path comparison, and diagnostics payloads, so an uppercase
+// fixture request is served rather than leaking to the real backend.
 //
 // Every router-fulfilled response carries the `x-perseus-e2e-source:
 // fixture-router` header so tests can prove who answered a request. Harness
@@ -40,15 +48,20 @@ import type { Page, Route } from '@playwright/test';
 import type { ReadyPuzzle } from '@perseus/types';
 import { FIXTURE_IDS, getFixture, type GameplayFixtureId } from './catalog';
 import { buildPieceSvg, buildReferenceSvg, SVG_CONTENT_TYPE } from './assets';
+import {
+	E2E_PUZZLE_API_PATH,
+	E2E_PUZZLE_ID_IN_PATH,
+	E2E_PUZZLE_ID_SOURCE
+} from '../../src/lib/testing/e2e-fixture-id';
 
 export const FIXTURE_ROUTER_HEADER = 'x-perseus-e2e-source';
 export const FIXTURE_ROUTER_SOURCE = 'fixture-router';
 export const HARNESS_VIOLATION_HEADER = 'x-perseus-e2e-violation';
 
-/** Path matcher for page.route: any `/api/puzzles/e2e-<id>` request. */
-const FIXTURE_PATH_PATTERN = /\/api\/puzzles\/e2e[a-z0-9-]+/;
+/** Path matcher for page.route: any `/api/puzzles/<fixture-signature>` request. */
+const FIXTURE_PATH_PATTERN = E2E_PUZZLE_API_PATH;
 const KNOWN_FIXTURE_IDS: ReadonlySet<string> = new Set(FIXTURE_IDS);
-const PIECE_IMAGE_PATH = /^\/api\/puzzles\/e2e[a-z0-9-]+\/pieces\/(\d+)\/image$/;
+const PIECE_IMAGE_PATH = new RegExp(`^/api/puzzles/${E2E_PUZZLE_ID_SOURCE}/pieces/(\\d+)/image$`);
 
 function markerHeaders(): Record<string, string> {
 	return { [FIXTURE_ROUTER_HEADER]: FIXTURE_ROUTER_SOURCE };
@@ -108,13 +121,16 @@ export function createFixtureRouter(): FixtureRouter {
 		const url = route.request().url();
 		let pathname: string;
 		try {
-			pathname = new URL(url).pathname;
+			// Normalize once: lookup, sub-path comparison, and diagnostics
+			// payloads all operate on the lowercase id, so uppercase fixture
+			// requests are claimed instead of leaking to the real backend.
+			pathname = new URL(url).pathname.toLowerCase();
 		} catch {
 			await route.fallback();
 			return;
 		}
 
-		const idMatch = pathname.match(/\/api\/puzzles\/(e2e[a-z0-9-]+)/);
+		const idMatch = pathname.match(E2E_PUZZLE_ID_IN_PATH);
 		if (!idMatch) {
 			// Not a fixture request at all — let ordinary traffic through.
 			await route.fallback();
@@ -123,10 +139,10 @@ export function createFixtureRouter(): FixtureRouter {
 		const id = idMatch[1] as string;
 
 		if (!KNOWN_FIXTURE_IDS.has(id)) {
-			// Unknown e2e-* id: fail immediately, never reach the backend. This
-			// is a harness misconfiguration (a typo'd fixture id), so it stamps
-			// the violation header — diagnostics fails teardown so a typo cannot
-			// pass E2E silently.
+			// Signature-shaped but unregistered id: fail immediately, never
+			// reach the backend. This is a harness misconfiguration (a typo'd
+			// fixture id), so it stamps the violation header — diagnostics
+			// fails teardown so a typo cannot pass E2E silently.
 			await route.fulfill({
 				status: 404,
 				json: { error: 'unknown_e2e_fixture', fixtureId: id },
@@ -146,7 +162,8 @@ export function createFixtureRouter(): FixtureRouter {
 		// reverse-registration-order precedence means the controller route
 		// runs first and owns the outcome; this 403 is only reached when no
 		// controller intercepts. This preserves the total-interception
-		// invariant: no e2e-* request can ever leak to the real backend.
+		// invariant: no fixture-signature request can ever leak to the real
+		// backend.
 		if (pathname === `/api/puzzles/${id}/complete`) {
 			if (method !== 'POST') {
 				await methodNotAllowed(route, 'POST');

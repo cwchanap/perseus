@@ -17,8 +17,9 @@
 
 	let { children } = $props();
 
-	const isOnPuzzleRoute = $derived(page.url.pathname.startsWith('/puzzle/'));
-	const shellVisible = $derived(!isOnPuzzleRoute && page.url.pathname !== '/admin');
+	const shellPathname = $derived(page.url.pathname);
+	const isOnPuzzleRoute = $derived(shellPathname.startsWith('/puzzle/'));
+	const shellVisible = $derived(!isOnPuzzleRoute && shellPathname !== '/admin');
 	const playerDisplayName = $derived($playerAuth.user?.name ?? $playerAuth.user?.email ?? '');
 	let shellScore = $state<number | null>(null);
 	let shellRank = $state<number | null>(null);
@@ -27,13 +28,17 @@
 		void playerAuth.refresh();
 	});
 
-	// shellVisible is a stable derived: query-only navigations on the same
-	// route (gallery search/category commits) leave it unchanged, so this
+	// shellPathname is a value-stable derived: query-only navigations on the
+	// same route (gallery search/category commits) reassign page.url but
+	// leave the pathname equal, so the derived does not change and this
 	// effect does not abort and refetch progression on every one of them.
+	// Depending on the pathname — not just shellVisible — is what lets a
+	// route change between two shell-visible routes still refresh.
 	$effect(() => {
 		const authenticated = $playerAuth.status === 'authenticated';
+		const canShowShell = !shellPathname.startsWith('/puzzle/') && shellPathname !== '/admin';
 
-		if (!authenticated || !shellVisible) {
+		if (!authenticated || !canShowShell) {
 			shellScore = null;
 			shellRank = null;
 			return;
