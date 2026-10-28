@@ -34,7 +34,7 @@
 		"prepare": "husky"
 	},
 	"devDependencies": {
-		"@eslint/compat": "^1.4.0",
+		"@eslint/compat": "^2.1.1",
 		"@eslint/js": "^10.0.1",
 		"@perseus/shared": "workspace:*",
 		"@perseus/types": "workspace:*",
