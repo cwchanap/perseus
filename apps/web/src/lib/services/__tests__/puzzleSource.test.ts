@@ -35,7 +35,7 @@ describe('loadPuzzleSource', () => {
 		vi.clearAllMocks();
 	});
 
-	it('uses the API source for non-quick IDs', async () => {
+	it('uses the API source for valid non-quick IDs', async () => {
 		const fakePuzzle = {
 			id: 'server-id',
 			name: 'Server',
@@ -50,13 +50,22 @@ describe('loadPuzzleSource', () => {
 		};
 		(api.fetchPuzzle as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fakePuzzle);
 
-		const result = await loadPuzzleSource('server-id');
+		const result = await loadPuzzleSource('123e4567-e89b-42d3-a456-426614174000');
 		expect(result.source).toBe('api');
 		expect(result.puzzle).toEqual(fakePuzzle);
 		expect(result.resolvePieceImage({ id: 1 } as never)).toContain(
 			'/api/puzzles/server-id/pieces/1/image'
 		);
 		expect(result.resolveReferenceImage()).toContain('/api/puzzles/server-id/reference');
+	});
+
+	it('throws 404 locally for malformed ids without calling the API', async () => {
+		await expect(loadPuzzleSource('not-a-uuid')).rejects.toMatchObject({
+			status: 404,
+			error: 'not_found',
+			message: 'Mission not found'
+		});
+		expect(api.fetchPuzzle).not.toHaveBeenCalled();
 	});
 
 	it('throws 404 for quick-puzzle ids that are not found locally', async () => {

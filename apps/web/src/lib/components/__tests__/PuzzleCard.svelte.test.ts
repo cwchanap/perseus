@@ -30,6 +30,16 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByText('Test Puzzle')).toBeVisible();
 	});
 
+	it('exposes the full family name as a title on the truncated heading', async () => {
+		render(PuzzleCard, {
+			family: { ...mockFamily, name: 'A Very Long Mission Name That Truncates' }
+		});
+
+		await expect
+			.element(page.getByTestId('puzzle-card-title'))
+			.toHaveAttribute('title', 'A Very Long Mission Name That Truncates');
+	});
+
 	it('renders an art-first card with a compact category icon and three actions', async () => {
 		render(PuzzleCard, { family: { ...mockFamily, category: 'Nature' } });
 
