@@ -94,17 +94,17 @@ literal for the completion fixture and a fixed-seed LCG Fisher–Yates shuffle f
 the larger layouts, so the catalog is byte-stable across runs. Rotations are
 non-zero only on the rotation-enabled completion fixture.
 
-| Fixture ID         | Aspect | Grid (rows × cols) | Piece count | Piece IDs | Image     | Role                  |
-| ------------------ | ------ | ------------------ | ----------- | --------- | --------- | --------------------- |
-| `e2e-square-4`     | `1:1`  | 2 × 2              | 4           | 0–3       | 200×200   | Completion + rotation |
-| `e2e-landscape-12` | `4:3`  | 3 × 4              | 12          | 0–11      | 400×300   | Landscape layout      |
-| `e2e-portrait-12`  | `3:4`  | 4 × 3              | 12          | 0–11      | 300×400   | Portrait layout       |
-| `e2e-square-100`   | `1:1`  | 10 × 10            | 100         | 0–99      | 1000×1000 | Large layout          |
-| `e2e-square-225`   | `1:1`  | 15 × 15            | 225         | 0–224     | 1500×1500 | Large layout          |
+| Fixture ID                             | Aspect | Grid (rows × cols) | Piece count | Piece IDs | Image     | Role                  |
+| -------------------------------------- | ------ | ------------------ | ----------- | --------- | --------- | --------------------- |
+| `e2e2a000-0000-4000-8000-000000000004` | `1:1`  | 2 × 2              | 4           | 0–3       | 200×200   | Completion + rotation |
+| `e2e2b000-0000-4000-8000-000000000012` | `4:3`  | 3 × 4              | 12          | 0–11      | 400×300   | Landscape layout      |
+| `e2e2c000-0000-4000-8000-000000000012` | `3:4`  | 4 × 3              | 12          | 0–11      | 300×400   | Portrait layout       |
+| `e2e2a000-0000-4000-8000-000000000100` | `1:1`  | 10 × 10            | 100         | 0–99      | 1000×1000 | Large layout          |
+| `e2e2a000-0000-4000-8000-000000000225` | `1:1`  | 15 × 15            | 225         | 0–224     | 1500×1500 | Large layout          |
 
 **Piece IDs are zero-based and assigned as `row * cols + col`**, matching the
-production puzzle generator. So in `e2e-square-4` (2 cols), piece `2` is at
-correct cell `(x=0, y=1)`; in `e2e-landscape-12` (4 cols), piece `7` is at
+production puzzle generator. So in `e2e2a000-0000-4000-8000-000000000004` (2 cols), piece `2` is at
+correct cell `(x=0, y=1)`; in `e2e2b000-0000-4000-8000-000000000012` (4 cols), piece `7` is at
 `(x=3, y=1)`. The `correctX`/`correctY` on each piece is the source of truth.
 
 Rows and columns are **derived** from the shared production grid contract
@@ -116,7 +116,7 @@ construction, and the builder additionally validates flat outer edges and
 complementary neighbors as defense-in-depth.
 
 The fixture catalog lives in `e2e/gameplay-fixtures/catalog.ts`; the builder in
-`e2e/gameplay-fixtures/builder.ts`. The default fixture is `e2e-square-4`.
+`e2e/gameplay-fixtures/builder.ts`. The default fixture is `e2e2a000-0000-4000-8000-000000000004`.
 
 ---
 
@@ -201,7 +201,7 @@ different module bodies depending on the build:
 The reader consumes the frozen `window.__PERSEUS_E2E_GAMEPLAY_V1__` global
 planted by the E2E init script. `bun run --cwd apps/web
 test:e2e:assert-production-bundle` builds the normal bundle and scans every
-`.js` file for harness sentinels (`__PERSEUS_E2E_GAMEPLAY_V1__`, `e2e-square-4`,
+`.js` file for harness sentinels (`__PERSEUS_E2E_GAMEPLAY_V1__`, `e2e2a000-0000-4000-8000-000000000004`,
 `PERSEUS_E2E_CONFIG:`, `e2e-gameplay-runtime.ts`), failing if any leak through.
 
 ---
@@ -293,8 +293,8 @@ under `puzzle-stats-<puzzleId>`.
 
 Key format:
 
-- Session: `puzzle-progress-e2e-square-4` (prefix `puzzle-progress-` + fixture id).
-- Stats: `puzzle-stats-e2e-square-4` (prefix `puzzle-stats-` + fixture id).
+- Session: `puzzle-progress-e2e2a000-0000-4000-8000-000000000004` (prefix `puzzle-progress-` + fixture id).
+- Stats: `puzzle-stats-e2e2a000-0000-4000-8000-000000000004` (prefix `puzzle-stats-` + fixture id).
 
 The persisted-state helpers (`e2e/gameplay-fixtures/persisted-state.ts`) provide:
 

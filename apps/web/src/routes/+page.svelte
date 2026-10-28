@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
-	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { page, navigating } from '$app/state';
+	import { goto, beforeNavigate } from '$app/navigation';
 	import { fetchPuzzles, fetchPuzzle, getFamilyThumbnailUrl, ApiError } from '$lib/services/api';
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
@@ -138,24 +137,54 @@
 	// yet. The URL-sync effect uses this to tell our own commits apart from
 	// external navigation: an async commit echoing a push must not revert
 	// newer in-progress typing.
-	const pushedQueries = new SvelteSet<string>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- marker set only; never read reactively
+	const pushedQueries = new Set<string>();
+
+	// New gotos must be built from the in-flight same-route destination when
+	// one exists: cloning page.url mid-navigation produces a URL that lacks
+	// the pending commit's params, so the later navigation would drop them.
+	const galleryTargetUrl = (): URL => {
+		const inflight = navigating.to;
+		return new URL((inflight?.route.id === '/' ? inflight.url : page.url).href);
+	};
+
+	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// Any navigation that is not one of this page's own same-route gotos —
+	// leaving the gallery, browser back/forward, a link — must not be
+	// superseded by a debounced commit still on the clock. Those pushes can
+	// never land once this navigation wins, so drop their markers too.
+	beforeNavigate((nav) => {
+		if (nav.type === 'goto' && nav.to?.route.id === '/') return;
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
+			debounceTimer = null;
+		}
+		pushedQueries.clear();
+	});
 
 	// Debounce raw input (300 ms) into a committed URL query. Typing replaces
 	// the current history entry; a trimmed value already matching the committed
 	// query skips navigation entirely.
 	$effect(() => {
 		const raw = searchQuery;
-		const timer = setTimeout(() => {
+		debounceTimer = setTimeout(() => {
+			debounceTimer = null;
 			const trimmed = raw.trim();
 			if (trimmed === urlQuery) return;
-			const url = new URL(page.url.href);
+			const url = galleryTargetUrl();
 			if (trimmed) url.searchParams.set('q', trimmed);
 			else url.searchParams.delete('q');
 			pushedQueries.add(trimmed);
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
 			void goto(url, { replace: true, reset: false });
 		}, 300);
-		return () => clearTimeout(timer);
+		return () => {
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
+				debounceTimer = null;
+			}
+		};
 	});
 
 	// Bring the text input in line with the committed URL query on back/forward
@@ -262,7 +291,7 @@
 	}
 
 	function handleCategorySelect(category: PuzzleCategory | typeof CATEGORY_ALL) {
-		const url = new URL(page.url.href);
+		const url = galleryTargetUrl();
 		if (category === CATEGORY_ALL) url.searchParams.delete('category');
 		else url.searchParams.set('category', category);
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
@@ -274,7 +303,7 @@
 		// URL change leaves urlQuery untouched, so without this a pending
 		// debounced commit would push the typed term right back.
 		searchQuery = '';
-		const url = new URL(page.url.href);
+		const url = galleryTargetUrl();
 		url.searchParams.delete('q');
 		url.searchParams.delete('category');
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same-route query update
@@ -360,6 +389,12 @@
 	<title>Puzzle Arcade | Perseus</title>
 </svelte:head>
 
+{#snippet deviceSaveNote()}
+	<p class="mt-1 text-[0.7rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
+		Saved on this device — not part of search results
+	</p>
+{/snippet}
+
 <main
 	inert={discardTarget !== null || savedProgressOpen}
 	aria-hidden={discardTarget !== null || savedProgressOpen}
@@ -370,7 +405,11 @@
 			<h1 class="sr-only">Puzzle Arcade</h1>
 			{#if initialLoadComplete}
 				<div class="gallery-search-container">
-					<details class="gallery-search-disclosure" data-testid="gallery-search-disclosure">
+					<details
+						class="gallery-search-disclosure"
+						data-testid="gallery-search-disclosure"
+						open={urlQuery.length > 0}
+					>
 						<summary
 							class="gallery-search-toggle"
 							aria-label="Open puzzle search"
@@ -438,9 +477,7 @@
 						<span class="continue-stats">
 							{latestProgress.placedCount}/{latestProgress.pieceCount} PLACED
 						</span>
-						<p class="mt-1 text-[0.7rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-							Saved on this device — not part of search results
-						</p>
+						{@render deviceSaveNote()}
 					</div>
 					<a
 						href={resolve('/puzzle/[id]', { id: latestProgress.puzzleId })}
@@ -480,9 +517,7 @@
 					<div class="continue-details">
 						<h2 id="continue-on-device-title" class="continue-kicker">CONTINUE ON THIS DEVICE</h2>
 						<p class="continue-title">SAVED PROGRESS AVAILABLE</p>
-						<p class="mt-1 text-[0.7rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-							Saved on this device — not part of search results
-						</p>
+						{@render deviceSaveNote()}
 					</div>
 				{/if}
 				{#if savedProgressCandidateIds.length > 0 && !latestProgress}

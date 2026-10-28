@@ -172,7 +172,7 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 test('phone keeps enabled Redo behind More after Undo @smoke', async ({ gameplayPage, page }) => {
 	test.skip(!isChromiumMobile(), 'Redo placement proof uses chromium-mobile');
 	await gameplayPage.gotoFixture({
-		fixtureId: 'e2e-square-4',
+		fixtureId: 'e2e2a000-0000-4000-8000-000000000004',
 		seedPreferences: IMMEDIATE_START
 	});
 	await gameplayPage.placeWithTap(0, 0, 0);
@@ -201,7 +201,7 @@ test('canonical phone workspace keeps the board above the half sheet and exposes
 }) => {
 	test.skip(!isChromiumMobile(), 'canonical phone proof uses chromium-mobile');
 	await gameplayPage.gotoFixture({
-		fixtureId: 'e2e-portrait-12',
+		fixtureId: 'e2e2c000-0000-4000-8000-000000000012',
 		seedPreferences: IMMEDIATE_START
 	});
 
@@ -289,7 +289,7 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 }) => {
 	test.skip(!isChromiumMobile(), 'browser-level touch swipe uses Chromium CDP');
 	await gameplayPage.gotoFixture({
-		fixtureId: 'e2e-square-100',
+		fixtureId: 'e2e2a000-0000-4000-8000-000000000100',
 		seedPreferences: IMMEDIATE_START
 	});
 

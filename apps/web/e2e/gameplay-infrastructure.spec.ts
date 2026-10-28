@@ -1,6 +1,6 @@
 // Deterministic gameplay smoke coverage (HPA-226 Task 9).
 //
-// Exercises the full completion lifecycle against the e2e-square-4 fixture
+// Exercises the full completion lifecycle against the e2e2a000-0000-4000-8000-000000000004 fixture
 // (2x2 grid, 4 pieces) via the canonical GameplayPage harness: fixture load +
 // placement, authenticated/anonymous completion, deferred retry, timer
 // integration, and persistence seed/reset. Supersedes the bare skips in
@@ -22,10 +22,10 @@ import { getFixture } from './gameplay-fixtures/catalog';
 import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
-const FIXTURE_ID = 'e2e-square-4' as const;
+const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
 const START_AT = new Date('2026-01-01T00:00:00Z');
 const STATS_KEY = `puzzle-stats-${FIXTURE_ID}`;
-const COMPLETION_URL = /\/api\/puzzles\/e2e-square-4\/complete(?:\?.*)?$/;
+const COMPLETION_URL = /\/api\/puzzles\/e2e2a000-0000-4000-8000-000000000004\/complete(?:\?.*)?$/;
 
 /**
  * Device preferences that auto-start fresh sessions. HPA-221 made Mission

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { navigating } from '$app/state';
 	import { PUZZLE_CATEGORIES, CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import CategoryBadge from './CategoryBadge.svelte';
@@ -15,6 +16,21 @@
 		CATEGORY_ALL,
 		...PUZZLE_CATEGORIES
 	];
+
+	// A category click applies through an async URL navigation, so the
+	// one-way `checked` binding can diverge: the browser checks the radio
+	// natively on click, and if the goto is superseded the committed
+	// selection never changes and Svelte never reverts the DOM state.
+	// `chosen` is the immediate intent; once no navigation is in flight —
+	// committed OR aborted — it resyncs to whatever `selected` says, so a
+	// stale intent reverts to the committed category.
+	// svelte-ignore state_referenced_locally
+	// The prop is the intended initial intent; later resync is driven by the
+	// navigation-settle effect below.
+	let chosen = $state(selected);
+	$effect(() => {
+		if (navigating.to === null) chosen = selected;
+	});
 </script>
 
 <fieldset class="category-filter" data-testid="category-filter">
@@ -25,8 +41,11 @@
 				type="radio"
 				name="puzzle-category"
 				value={cat}
-				checked={selected === cat}
-				onchange={() => onSelect(cat)}
+				checked={chosen === cat}
+				onchange={() => {
+					chosen = cat;
+					onSelect(cat);
+				}}
 				class="sr-only"
 			/>
 			{#if cat === CATEGORY_ALL}

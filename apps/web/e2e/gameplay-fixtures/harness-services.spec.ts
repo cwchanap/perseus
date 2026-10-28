@@ -30,7 +30,7 @@ import { buildMinimalSeed, createPersistedStateController, progressKey } from '.
 import { createPageDiagnostics, type PageDiagnostics } from '../support/diagnostics';
 
 const API_ORIGIN = process.env.PUBLIC_API_BASE ?? 'http://localhost:3999';
-const FIXTURE_ID = 'e2e-square-4' as const;
+const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
 
 /**
  * Navigate the page to the API host's public gallery endpoint so the page origin
@@ -110,7 +110,7 @@ test.describe('FixtureRouter @smoke', () => {
 		await router.install(page);
 		await gotoApiOrigin(page);
 
-		const res = await fetchApi(page, `/api/puzzles/e2e-does-not-exist`);
+		const res = await fetchApi(page, `/api/puzzles/e2e2d000-0000-4000-8000-000000000000`);
 
 		expect(res.status).toBe(404);
 		// The router fulfilled it (marker present) — it never reached fallback.
@@ -765,7 +765,7 @@ test.describe('PageDiagnostics @smoke', () => {
 	test('Finding 1: network-abort suppression is narrow to the configured fixture', async ({
 		page
 	}) => {
-		// Declare network-abort for e2e-square-4. A failed POST to a DIFFERENT
+		// Declare network-abort for e2e2a000-0000-4000-8000-000000000004. A failed POST to a DIFFERENT
 		// e2e fixture's /complete must NOT be suppressed.
 		const diagnostics = createPageDiagnostics(page);
 		const router = createFixtureRouter();
@@ -775,7 +775,7 @@ test.describe('PageDiagnostics @smoke', () => {
 
 		// Simulate a failed request to a different fixture's completion URL.
 		// The router returns 403 for this (undeclared), which is a violation.
-		await fetchApi(page, `/api/puzzles/e2e-landscape-12/complete`, {
+		await fetchApi(page, `/api/puzzles/e2e2b000-0000-4000-8000-000000000012/complete`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(COMPLETION_BODY)
@@ -783,7 +783,7 @@ test.describe('PageDiagnostics @smoke', () => {
 		await waitForResponses(diagnostics, 1);
 
 		// The other fixture's completion is a harness violation (undeclared),
-		// NOT suppressed by the network-abort allowlist for e2e-square-4.
+		// NOT suppressed by the network-abort allowlist for e2e2a000-0000-4000-8000-000000000004.
 		expect(diagnostics.harnessViolations).toHaveLength(1);
 		expect(diagnostics.harnessViolations[0]!.violation).toBe('undeclared_completion');
 		diagnostics.dispose();
@@ -804,13 +804,16 @@ test.describe('PageDiagnostics @smoke', () => {
 		// Install a custom route that impersonates the controller: it stamps
 		// the api-scenario marker and returns 500 then 200, exactly the abuse
 		// pattern the review flagged.
-		await page.route(/\/api\/puzzles\/e2e-square-4\/complete(?:\?.*)?$/, async (route) => {
-			await route.fulfill({
-				status: 500,
-				json: { error: 'internal_error' },
-				headers: { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE }
-			});
-		});
+		await page.route(
+			/\/api\/puzzles\/e2e2a000-0000-4000-8000-000000000004\/complete(?:\?.*)?$/,
+			async (route) => {
+				await route.fulfill({
+					status: 500,
+					json: { error: 'internal_error' },
+					headers: { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE }
+				});
+			}
+		);
 		diagnostics.setCompletion(FIXTURE_ID, { kind: 'network-abort' });
 		await gotoApiOrigin(page);
 
@@ -846,7 +849,7 @@ test.describe('PageDiagnostics @smoke', () => {
 	}) => {
 		const diagnostics = await setup(page);
 
-		await fetchApi(page, `/api/puzzles/e2e-does-not-exist`);
+		await fetchApi(page, `/api/puzzles/e2e2d000-0000-4000-8000-000000000000`);
 		await waitForResponses(diagnostics, 1);
 
 		expect(diagnostics.harnessViolations).toHaveLength(1);

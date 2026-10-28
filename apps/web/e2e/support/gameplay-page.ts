@@ -47,7 +47,7 @@ import { buildSessionValidationContext, progressKey } from '../gameplay-fixtures
 import { createPageDiagnostics, type PageDiagnostics } from './diagnostics';
 
 export interface GotoFixtureOptions {
-	/** Fixture to load. Defaults to DEFAULT_FIXTURE_ID ('e2e-square-4'). */
+	/** Fixture to load. Defaults to DEFAULT_FIXTURE_ID ('e2e2a000-0000-4000-8000-000000000004'). */
 	fixtureId?: GameplayFixtureId;
 	/**
 	 * Auth persona to install. Defaults to `anonymous` so the harness never

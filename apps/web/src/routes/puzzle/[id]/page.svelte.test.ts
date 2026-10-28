@@ -71,6 +71,12 @@ const testRunId = (index: number) =>
 	`223e4567-e89b-42d3-a456-${String(426614174000 + index).padStart(12, '0')}`;
 const TEST_RUN_ID = testRunId(0);
 
+// Deterministic UUIDv4 route ids: the production isPuzzleId gate in
+// loadPuzzleSource (mirrored by the mock above) rejects malformed ids with a
+// local 404 before fetchPuzzle runs, so spec route ids must be valid.
+const TEST_PUZZLE_ID = '11111111-1111-4111-8111-111111111111';
+const NEXT_PUZZLE_ID = '22222222-2222-4222-8222-222222222222';
+
 // Hoisted spies shared with the createSessionStorageAdapter mock so tests can
 // assert checkpoint behavior directly. vi.clearAllMocks() only clears call
 // history, so these references remain valid across tests.
@@ -131,6 +137,13 @@ vi.mock('$lib/services/puzzleSource', () => ({
 		const override = puzzleSourceState.override;
 		if (override) {
 			return override();
+		}
+		// Mirror the production guardrails: quick-puzzle ids never reach the
+		// API, and malformed non-quick ids fail locally with a 404 rather than
+		// calling fetchPuzzle. Route ids in this spec are UUIDv4-shaped for
+		// exactly this reason.
+		if (id.startsWith(QUICK_PUZZLE_ID_PREFIX) || !isPuzzleId(id)) {
+			return Promise.reject(new ApiError(404, 'not_found', 'Mission not found'));
 		}
 		// Default: delegate to the real api-source path by calling the mocked
 		// fetchPuzzle. The bindings below are initialized by the time this
@@ -301,7 +314,7 @@ vi.mock('$lib/services/stats', () => ({
 			isNewStandardBest: false,
 			stats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: null,
 				standardBestCompletedAt: null,
 				totalCompletions: 1,
@@ -372,6 +385,8 @@ import {
 	getPieceImageUrl,
 	getReferenceImageUrl
 } from '$lib/services/api';
+import { isPuzzleId } from '@perseus/types';
+import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
 import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
@@ -416,7 +431,7 @@ function createPiece(
 ): PuzzlePiece {
 	return {
 		id,
-		puzzleId: 'test-puzzle',
+		puzzleId: TEST_PUZZLE_ID,
 		correctX,
 		correctY,
 		edges: {
@@ -432,7 +447,7 @@ function createPiece(
 
 function createMockPuzzle(): Puzzle {
 	return {
-		id: 'test-puzzle',
+		id: TEST_PUZZLE_ID,
 		name: 'Test Mission',
 		pieceCount: 2,
 		gridCols: 2,
@@ -447,7 +462,7 @@ function createMockPuzzle(): Puzzle {
 
 function setSavedProgress(progress: Partial<GameProgress>) {
 	progressState.value = {
-		puzzleId: 'test-puzzle',
+		puzzleId: TEST_PUZZLE_ID,
 		placedPieces: [],
 		rotationEnabled: false,
 		pieceRotations: {},
@@ -571,8 +586,8 @@ describe('Puzzle route gameplay integration', () => {
 		restoredLifecycleState.value = 'active';
 		restoredModeState.value = 'timed';
 		mockPageStore.set({
-			url: { pathname: '/puzzle/test-puzzle' },
-			params: { id: 'test-puzzle' },
+			url: { pathname: `/puzzle/${TEST_PUZZLE_ID}` },
+			params: { id: TEST_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -1762,16 +1777,16 @@ describe('Puzzle route gameplay integration', () => {
 	it('clears hint state when navigating to a different puzzle', async () => {
 		const nextPuzzle: Puzzle = {
 			...createMockPuzzle(),
-			id: 'next-puzzle',
+			id: NEXT_PUZZLE_ID,
 			name: 'Next Mission',
 			pieces: [
-				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
-				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
 			]
 		};
 
 		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
-			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+			id === NEXT_PUZZLE_ID ? nextPuzzle : createMockPuzzle()
 		);
 
 		render(PuzzlePage);
@@ -1783,8 +1798,8 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 
 		mockPageStore.set({
-			url: { pathname: '/puzzle/next-puzzle' },
-			params: { id: 'next-puzzle' },
+			url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+			params: { id: NEXT_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -1799,16 +1814,16 @@ describe('Puzzle route gameplay integration', () => {
 	it('clears rejected-piece state when navigating to a different puzzle', async () => {
 		const nextPuzzle: Puzzle = {
 			...createMockPuzzle(),
-			id: 'next-puzzle',
+			id: NEXT_PUZZLE_ID,
 			name: 'Next Mission',
 			pieces: [
-				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
-				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
 			]
 		};
 
 		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
-			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+			id === NEXT_PUZZLE_ID ? nextPuzzle : createMockPuzzle()
 		);
 
 		render(PuzzlePage);
@@ -1822,8 +1837,8 @@ describe('Puzzle route gameplay integration', () => {
 
 		// Navigate to a different puzzle
 		mockPageStore.set({
-			url: { pathname: '/puzzle/next-puzzle' },
-			params: { id: 'next-puzzle' },
+			url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+			params: { id: NEXT_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -1838,16 +1853,16 @@ describe('Puzzle route gameplay integration', () => {
 	it('resets reference state when navigating to a different puzzle', async () => {
 		const nextPuzzle: Puzzle = {
 			...createMockPuzzle(),
-			id: 'next-puzzle',
+			id: NEXT_PUZZLE_ID,
 			name: 'Next Mission',
 			pieces: [
-				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
-				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
 			]
 		};
 
 		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
-			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+			id === NEXT_PUZZLE_ID ? nextPuzzle : createMockPuzzle()
 		);
 
 		render(PuzzlePage);
@@ -1859,8 +1874,8 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
 		mockPageStore.set({
-			url: { pathname: '/puzzle/next-puzzle' },
-			params: { id: 'next-puzzle' },
+			url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+			params: { id: NEXT_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -1880,20 +1895,20 @@ describe('Puzzle route gameplay integration', () => {
 		const secondLoad = createDeferred<Puzzle>();
 		const nextPuzzle: Puzzle = {
 			...createMockPuzzle(),
-			id: 'next-puzzle',
+			id: NEXT_PUZZLE_ID,
 			name: 'Next Mission',
 			pieces: [
-				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
-				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
 			]
 		};
 
 		vi.mocked(fetchPuzzle).mockImplementation((id: string) => {
-			if (id === 'test-puzzle') {
+			if (id === TEST_PUZZLE_ID) {
 				return firstLoad.promise;
 			}
 
-			if (id === 'next-puzzle') {
+			if (id === NEXT_PUZZLE_ID) {
 				return secondLoad.promise;
 			}
 
@@ -1904,8 +1919,8 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => vi.mocked(fetchPuzzle).mock.calls.length).toBe(1);
 
 		mockPageStore.set({
-			url: { pathname: '/puzzle/next-puzzle' },
-			params: { id: 'next-puzzle' },
+			url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+			params: { id: NEXT_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -1924,7 +1939,7 @@ describe('Puzzle route gameplay integration', () => {
 
 	it('clears an open session dialog when navigating to a puzzle that fails to load', async () => {
 		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) => {
-			if (id === 'test-puzzle') return createMockPuzzle();
+			if (id === TEST_PUZZLE_ID) return createMockPuzzle();
 			throw new Error('Network error');
 		});
 
@@ -1940,8 +1955,8 @@ describe('Puzzle route gameplay integration', () => {
 		// the prior session and its dialogs BEFORE the fetch so no stale
 		// dialog lingers over the loading screen or the error panel.
 		mockPageStore.set({
-			url: { pathname: '/puzzle/next-puzzle' },
-			params: { id: 'next-puzzle' },
+			url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+			params: { id: NEXT_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -2523,15 +2538,15 @@ describe('Puzzle route gameplay integration', () => {
 		setPrefersReducedMotion(false);
 		const nextPuzzle: Puzzle = {
 			...createMockPuzzle(),
-			id: 'next-puzzle',
+			id: NEXT_PUZZLE_ID,
 			name: 'Next Mission',
 			pieces: [
-				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
-				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
 			]
 		};
 		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
-			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+			id === NEXT_PUZZLE_ID ? nextPuzzle : createMockPuzzle()
 		);
 		vi.useFakeTimers();
 		try {
@@ -2544,8 +2559,8 @@ describe('Puzzle route gameplay integration', () => {
 			// SvelteKit reuses the route component for the new puzzle id; the
 			// reveal timer is still pending at the moment of the switch.
 			mockPageStore.set({
-				url: { pathname: '/puzzle/next-puzzle' },
-				params: { id: 'next-puzzle' },
+				url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+				params: { id: NEXT_PUZZLE_ID },
 				route: { id: '/puzzle/[id]' },
 				status: 200,
 				error: null
@@ -2716,7 +2731,7 @@ describe('Puzzle route gameplay integration', () => {
 			isNewStandardBest: true,
 			stats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: 42,
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
@@ -2767,7 +2782,7 @@ describe('Puzzle route gameplay integration', () => {
 			isNewStandardBest: true,
 			stats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: 42,
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
@@ -3030,7 +3045,7 @@ describe('Puzzle route gameplay integration', () => {
 			isNewStandardBest: true,
 			stats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: 42,
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
@@ -3058,7 +3073,7 @@ describe('Puzzle route gameplay integration', () => {
 			isNewStandardBest: false,
 			stats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: 42,
 				standardBestCompletedAt: 1704067200000,
 				totalCompletions: 2,
@@ -3087,7 +3102,7 @@ describe('Puzzle route gameplay integration', () => {
 			isNewStandardBest: false,
 			stats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: 42,
 				standardBestCompletedAt: 1704067200000,
 				totalCompletions: 2,
@@ -3256,7 +3271,7 @@ describe('Puzzle route gameplay integration', () => {
 			isNewStandardBest: true,
 			inMemoryStats: {
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				standardBestTime: 42,
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
@@ -3284,7 +3299,7 @@ describe('Puzzle route gameplay integration', () => {
 		// Make serializeSession return a non-null snapshot so saveSession is called.
 		vi.mocked(serializeSession).mockReturnValue({
 			schemaVersion: 1,
-			puzzleId: 'test-puzzle',
+			puzzleId: TEST_PUZZLE_ID,
 			source: 'api',
 			lifecycle: 'active',
 			mode: 'timed',
@@ -3316,7 +3331,7 @@ describe('Puzzle route gameplay integration', () => {
 		try {
 			vi.mocked(serializeSession).mockReturnValue({
 				schemaVersion: 1,
-				puzzleId: 'test-puzzle',
+				puzzleId: TEST_PUZZLE_ID,
 				source: 'api',
 				lifecycle: 'active',
 				mode: 'timed',
@@ -3457,7 +3472,7 @@ describe('Puzzle route gameplay integration', () => {
 			.getByRole('dialog', { name: 'Discard saved progress' })
 			.getByRole('button', { name: 'Discard' })
 			.click();
-		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith(TEST_PUZZLE_ID);
 		expect(goto).toHaveBeenCalledWith('/');
 	});
 
@@ -3485,7 +3500,7 @@ describe('Puzzle route gameplay integration', () => {
 			.getByRole('button', { name: 'Discard' })
 			.click();
 
-		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith(TEST_PUZZLE_ID);
 		sessionStorageSpies.saveSession.mockClear();
 		await view.unmount();
 		expect(sessionStorageSpies.saveSession).not.toHaveBeenCalled();
@@ -3668,8 +3683,8 @@ describe('Puzzle page defensive guard coverage', () => {
 		restoredLifecycleState.value = 'active';
 		restoredModeState.value = 'timed';
 		mockPageStore.set({
-			url: { pathname: '/puzzle/test-puzzle' },
-			params: { id: 'test-puzzle' },
+			url: { pathname: `/puzzle/${TEST_PUZZLE_ID}` },
+			params: { id: TEST_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -3779,7 +3794,7 @@ describe('Puzzle page defensive guard coverage', () => {
 	it('persists the session on pagehide', async () => {
 		vi.mocked(serializeSession).mockReturnValue({
 			schemaVersion: 1,
-			puzzleId: 'test-puzzle',
+			puzzleId: TEST_PUZZLE_ID,
 			source: 'api',
 			lifecycle: 'active',
 			mode: 'timed',
@@ -3841,7 +3856,7 @@ describe('Puzzle page defensive guard coverage', () => {
 	it('persists the session immediately when the document becomes hidden', async () => {
 		vi.mocked(serializeSession).mockReturnValue({
 			schemaVersion: 1,
-			puzzleId: 'test-puzzle',
+			puzzleId: TEST_PUZZLE_ID,
 			source: 'api',
 			lifecycle: 'active',
 			mode: 'timed',
@@ -3954,8 +3969,8 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		restoredLifecycleState.value = 'active';
 		restoredModeState.value = 'timed';
 		mockPageStore.set({
-			url: { pathname: '/puzzle/test-puzzle' },
-			params: { id: 'test-puzzle' },
+			url: { pathname: `/puzzle/${TEST_PUZZLE_ID}` },
+			params: { id: TEST_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null
@@ -4186,16 +4201,16 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 	it('clears the announcement when navigating directly to a different puzzle', async () => {
 		const nextPuzzle: Puzzle = {
 			...createMockPuzzle(),
-			id: 'next-puzzle',
+			id: NEXT_PUZZLE_ID,
 			name: 'Next Mission',
 			pieces: [
-				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
-				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
 			]
 		};
 
 		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
-			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+			id === NEXT_PUZZLE_ID ? nextPuzzle : createMockPuzzle()
 		);
 
 		render(PuzzlePage);
@@ -4210,8 +4225,8 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		// SvelteKit reuses the route component for the new puzzle id: the
 		// stale announcement must not survive the switch.
 		mockPageStore.set({
-			url: { pathname: '/puzzle/next-puzzle' },
-			params: { id: 'next-puzzle' },
+			url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+			params: { id: NEXT_PUZZLE_ID },
 			route: { id: '/puzzle/[id]' },
 			status: 200,
 			error: null

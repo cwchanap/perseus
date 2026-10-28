@@ -6,7 +6,7 @@
 // UUIDv4 run ids) for every shipped fixture. A catalog change that breaks any
 // invariant fails here before reaching a Playwright run.
 import { describe, expect, it } from 'bun:test';
-import { aspectRatiosMatch } from '@perseus/types';
+import { aspectRatiosMatch, isPuzzleId } from '@perseus/types';
 import {
 	DEFAULT_FIXTURE_ID,
 	FIXTURES,
@@ -21,11 +21,11 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const OPPOSITE: Record<string, string> = { tab: 'blank', blank: 'tab', flat: 'flat' };
 
 const EXPECTED_GRIDS: Record<GameplayFixtureId, { rows: number; cols: number; pieces: number }> = {
-	'e2e-square-4': { rows: 2, cols: 2, pieces: 4 },
-	'e2e-landscape-12': { rows: 3, cols: 4, pieces: 12 },
-	'e2e-portrait-12': { rows: 4, cols: 3, pieces: 12 },
-	'e2e-square-100': { rows: 10, cols: 10, pieces: 100 },
-	'e2e-square-225': { rows: 15, cols: 15, pieces: 225 }
+	'e2e2a000-0000-4000-8000-000000000004': { rows: 2, cols: 2, pieces: 4 },
+	'e2e2b000-0000-4000-8000-000000000012': { rows: 3, cols: 4, pieces: 12 },
+	'e2e2c000-0000-4000-8000-000000000012': { rows: 4, cols: 3, pieces: 12 },
+	'e2e2a000-0000-4000-8000-000000000100': { rows: 10, cols: 10, pieces: 100 },
+	'e2e2a000-0000-4000-8000-000000000225': { rows: 15, cols: 15, pieces: 225 }
 };
 
 function expectPermutation(order: readonly number[], n: number): void {
@@ -58,22 +58,28 @@ describe('catalog - family id and difficulty', () => {
 describe('catalog - fixture registry', () => {
 	it('ships exactly the five documented fixture ids', () => {
 		expect(FIXTURE_IDS).toEqual([
-			'e2e-square-4',
-			'e2e-landscape-12',
-			'e2e-portrait-12',
-			'e2e-square-100',
-			'e2e-square-225'
+			'e2e2a000-0000-4000-8000-000000000004',
+			'e2e2b000-0000-4000-8000-000000000012',
+			'e2e2c000-0000-4000-8000-000000000012',
+			'e2e2a000-0000-4000-8000-000000000100',
+			'e2e2a000-0000-4000-8000-000000000225'
 		]);
 	});
 
 	it('defaults to the completion fixture', () => {
-		expect(DEFAULT_FIXTURE_ID).toBe('e2e-square-4');
+		expect(DEFAULT_FIXTURE_ID).toBe('e2e2a000-0000-4000-8000-000000000004');
 	});
 
 	it('registers every id and getFixture round-trips', () => {
 		for (const id of FIXTURE_IDS) {
 			expect(getFixture(id).fixtureId).toBe(id);
 			expect(FIXTURES[id].fixtureId).toBe(id);
+		}
+	});
+
+	it('every fixture id passes the production isPuzzleId gate', () => {
+		for (const id of FIXTURE_IDS) {
+			expect(isPuzzleId(id)).toBe(true);
 		}
 	});
 });
@@ -166,7 +172,7 @@ describe('catalog - tray permutations and rotations', () => {
 
 describe('catalog - square-4 completion fixture specifics', () => {
 	it('carries the documented rotation map and initial tray order', () => {
-		const fixture = getFixture('e2e-square-4');
+		const fixture = getFixture('e2e2a000-0000-4000-8000-000000000004');
 		expect(fixture.initialTrayOrder).toEqual([3, 1, 0, 2]);
 		expect(fixture.rotations).toEqual({ 0: 0, 1: 90, 2: 180, 3: 270 });
 	});

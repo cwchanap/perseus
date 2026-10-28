@@ -82,48 +82,81 @@ export function getNormalizedPuzzleDimensions(
 	};
 }
 
+export async function decodePuzzleImage(file: File): Promise<ImageBitmap> {
+	try {
+		return await createImageBitmap(file);
+	} catch {
+		throw new Error("Couldn't read this image. Try a different file.");
+	}
+}
+
+/**
+ * Render a bounded preview of a decoded image as a data URL. Synchronous —
+ * decoding is the caller's job (see decodePuzzleImage). WebP keeps the
+ * thumbnail small; encoders without support fall back to PNG per spec.
+ */
+export function createImagePreviewDataUrl(source: ImageBitmap, maxDimension: number): string {
+	const scale = Math.min(1, maxDimension / Math.max(source.width, source.height));
+	const width = Math.max(1, Math.round(source.width * scale));
+	const height = Math.max(1, Math.round(source.height * scale));
+	const canvas = document.createElement('canvas');
+	canvas.width = width;
+	canvas.height = height;
+	const context = canvas.getContext('2d');
+	if (!context) {
+		throw new Error('Canvas 2D context unavailable');
+	}
+	context.drawImage(source, 0, 0, width, height);
+	return canvas.toDataURL('image/webp', 0.85);
+}
+
+/**
+ * Normalize an already-decoded image. The caller owns `source` and is
+ * responsible for closing it.
+ */
+export async function normalizePuzzleImageSource(
+	source: ImageBitmap,
+	options: NormalizePuzzleImageOptions
+): Promise<NormalizedPuzzleImage> {
+	const crop = getCoverCropBounds(source.width, source.height, options.aspectRatio);
+	const dimensions = getNormalizedPuzzleDimensions(source.width, source.height, options);
+	const canvas = createRenderCanvas(dimensions.width, dimensions.height);
+	const ctx = canvas.getContext('2d');
+	if (!ctx) {
+		throw new Error("Your browser doesn't support image resizing.");
+	}
+
+	ctx.drawImage(
+		source,
+		crop.x,
+		crop.y,
+		crop.width,
+		crop.height,
+		0,
+		0,
+		dimensions.width,
+		dimensions.height
+	);
+
+	const blob = await canvasToBlob(canvas, {
+		type: options.type ?? 'image/jpeg',
+		quality: options.quality ?? 0.88
+	});
+
+	return {
+		blob,
+		width: dimensions.width,
+		height: dimensions.height
+	};
+}
+
 export async function normalizePuzzleImage(
 	file: File,
 	options: NormalizePuzzleImageOptions
 ): Promise<NormalizedPuzzleImage> {
-	let source: ImageBitmap;
+	const source = await decodePuzzleImage(file);
 	try {
-		source = await createImageBitmap(file);
-	} catch {
-		throw new Error("Couldn't read this image. Try a different file.");
-	}
-
-	try {
-		const crop = getCoverCropBounds(source.width, source.height, options.aspectRatio);
-		const dimensions = getNormalizedPuzzleDimensions(source.width, source.height, options);
-		const canvas = createRenderCanvas(dimensions.width, dimensions.height);
-		const ctx = canvas.getContext('2d');
-		if (!ctx) {
-			throw new Error("Your browser doesn't support image resizing.");
-		}
-
-		ctx.drawImage(
-			source,
-			crop.x,
-			crop.y,
-			crop.width,
-			crop.height,
-			0,
-			0,
-			dimensions.width,
-			dimensions.height
-		);
-
-		const blob = await canvasToBlob(canvas, {
-			type: options.type ?? 'image/jpeg',
-			quality: options.quality ?? 0.88
-		});
-
-		return {
-			blob,
-			width: dimensions.width,
-			height: dimensions.height
-		};
+		return await normalizePuzzleImageSource(source, options);
 	} finally {
 		source.close?.();
 	}
@@ -137,9 +170,15 @@ function getExtensionForMimeType(mimeType: string): string {
 
 export async function normalizePuzzleImageFile(
 	file: File,
-	options: NormalizePuzzleImageOptions
+	options: NormalizePuzzleImageOptions,
+	decoded?: ImageBitmap
 ): Promise<File> {
-	const normalized = await normalizePuzzleImage(file, options);
+	// A caller that already decoded the file (e.g. the upload preview probe)
+	// passes the bitmap in so the full-resolution decode happens once. The
+	// caller retains ownership and closes it.
+	const normalized = decoded
+		? await normalizePuzzleImageSource(decoded, options)
+		: await normalizePuzzleImage(file, options);
 	const stem = file.name.replace(/\.[^.]*$/, '') || 'puzzle';
 	const mimeType = normalized.blob.type || 'image/jpeg';
 	const ext = getExtensionForMimeType(mimeType);

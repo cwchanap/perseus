@@ -68,7 +68,7 @@ describe('assets - piece SVG padding model', () => {
 
 describe('assets - identity and determinism', () => {
 	it('embeds fixture id, piece id, row, and col in the desc', () => {
-		const fixture = getFixture('e2e-landscape-12');
+		const fixture = getFixture('e2e2b000-0000-4000-8000-000000000012');
 		const piece = fixture.pieces[5]!;
 		const svg = buildPieceSvg(fixture, piece.id);
 		expect(svg).toContain(`fixture=${fixture.fixtureId}`);
@@ -78,21 +78,21 @@ describe('assets - identity and determinism', () => {
 	});
 
 	it('is byte-stable for identical inputs', () => {
-		const fixture = getFixture('e2e-square-225');
+		const fixture = getFixture('e2e2a000-0000-4000-8000-000000000225');
 		const a = buildPieceSvg(fixture, 7);
 		const b = buildPieceSvg(fixture, 7);
 		expect(a).toBe(b);
 	});
 
 	it('distinguishes pieces by color', () => {
-		const fixture = getFixture('e2e-square-4');
+		const fixture = getFixture('e2e2a000-0000-4000-8000-000000000004');
 		const a = buildPieceSvg(fixture, 0);
 		const b = buildPieceSvg(fixture, 1);
 		expect(a).not.toBe(b);
 	});
 
 	it('throws for an unknown piece id', () => {
-		const fixture = getFixture('e2e-square-4');
+		const fixture = getFixture('e2e2a000-0000-4000-8000-000000000004');
 		expect(() => buildPieceSvg(fixture, 99)).toThrow(/piece with id 99/);
 	});
 });
@@ -141,7 +141,7 @@ describe('assets - reference SVG', () => {
 	}
 
 	it('is byte-stable for identical inputs', () => {
-		const fixture = getFixture('e2e-square-100');
+		const fixture = getFixture('e2e2a000-0000-4000-8000-000000000100');
 		expect(buildReferenceSvg(fixture)).toBe(buildReferenceSvg(fixture));
 	});
 });

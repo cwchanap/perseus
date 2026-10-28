@@ -13,7 +13,7 @@ import { FIXTURE_ROUTER_SOURCE } from '../gameplay-fixtures/fixture-router';
 import { buildMinimalSeed, progressKey } from '../gameplay-fixtures/persisted-state';
 import { test, expect } from './test';
 
-const FIXTURE_ID = 'e2e-square-4' as const;
+const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
 const STATS_KEY = `puzzle-stats-${FIXTURE_ID}`;
 
 /** Read the piece-slot ids in DOM order (the deterministic tray order). */
@@ -63,7 +63,7 @@ test.describe('gotoFixture lifecycle @smoke', () => {
 
 		await gameplayPage.gotoFixture();
 
-		// The real backend has no e2e-square-4; only the router could answer.
+		// The real backend has no e2e2a000-0000-4000-8000-000000000004; only the router could answer.
 		await expect(gameplayPage.page.getByTestId('puzzle-board')).toBeVisible();
 		expect(metadataMarkers).toContain(FIXTURE_ROUTER_SOURCE);
 	});

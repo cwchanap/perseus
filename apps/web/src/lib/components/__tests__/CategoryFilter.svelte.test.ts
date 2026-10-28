@@ -4,6 +4,13 @@ import { page } from 'vitest/browser';
 import CategoryFilter from '../CategoryFilter.svelte';
 import { PUZZLE_CATEGORIES, CATEGORY_ALL } from '$lib/constants/categories';
 
+// CategoryFilter reads `navigating` to resync its click intent once
+// navigation settles; outside a router an always-idle object keeps the
+// resync effect a plain `chosen = selected` tracker.
+vi.mock('$app/state', () => ({
+	navigating: { to: null, from: null, type: null, willUnload: null, delta: null, complete: null }
+}));
+
 describe('CategoryFilter', () => {
 	it('renders a radio option for each category including All', async () => {
 		render(CategoryFilter, { selected: CATEGORY_ALL, onSelect: vi.fn() });

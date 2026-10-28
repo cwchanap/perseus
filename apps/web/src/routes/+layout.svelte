@@ -27,12 +27,13 @@
 		void playerAuth.refresh();
 	});
 
+	// shellVisible is a stable derived: query-only navigations on the same
+	// route (gallery search/category commits) leave it unchanged, so this
+	// effect does not abort and refetch progression on every one of them.
 	$effect(() => {
-		const pathname = page.url.pathname;
 		const authenticated = $playerAuth.status === 'authenticated';
-		const canShowShell = !pathname.startsWith('/puzzle/') && pathname !== '/admin';
 
-		if (!authenticated || !canShowShell) {
+		if (!authenticated || !shellVisible) {
 			shellScore = null;
 			shellRank = null;
 			return;
