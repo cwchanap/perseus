@@ -254,7 +254,7 @@ describe('Root Layout', () => {
 		}
 	});
 
-	it('refetches progression when authenticated navigation changes routes', async () => {
+	it('refetches progression when the shell becomes visible again', async () => {
 		mockPlayerAuth.set({
 			status: 'authenticated',
 			user: {
@@ -269,11 +269,35 @@ describe('Root Layout', () => {
 		render(RootLayout, { children: makeChildren() });
 		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(1));
 
+		setPathname('/puzzle/puzzle-1');
+		await expect.poll(() => page.getByTestId('arcade-shell').query()).toBeNull();
+
 		setPathname('/leaderboard');
 		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(2));
 	});
 
-	it('aborts a superseded progression request', async () => {
+	it('does not refetch progression on query-only navigation', async () => {
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				name: 'Player One',
+				createdAt: 1779530400000,
+				lastLoginAt: 1779530400000
+			},
+			error: null
+		});
+		render(RootLayout, { children: makeChildren() });
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(1));
+
+		setPathname('/?q=forest');
+		await expect.element(page.getByTestId('arcade-shell')).toBeVisible();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(mockProgression).toHaveBeenCalledTimes(1);
+	});
+
+	it('aborts the in-flight progression request when the shell hides', async () => {
 		const signals: AbortSignal[] = [];
 		mockProgression.mockImplementation((signal: AbortSignal) => {
 			signals.push(signal);
@@ -293,8 +317,12 @@ describe('Root Layout', () => {
 		render(RootLayout, { children: makeChildren() });
 		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(1));
 
+		setPathname('/puzzle/puzzle-1');
+		await expect.poll(() => page.getByTestId('arcade-shell').query()).toBeNull();
+		expect(signals[0]?.aborted).toBe(true);
+
 		setPathname('/upload');
 		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(2));
-		expect(signals[0]?.aborted).toBe(true);
+		expect(signals[1]?.aborted).toBe(false);
 	});
 });
