@@ -18,7 +18,12 @@ import { buildFixture, type GameplayFixture } from './builder';
 // Fixture ids are `e2e`-prefixed UUIDv4 strings so they pass
 // loadPuzzleSource's `isPuzzleId` gate exactly like production ids — no
 // compile-time bypass. The fifth hex digit tags the fixture family
-// (a: square, b: landscape, c: portrait, d: ad-hoc test ids).
+// (a: square, b: landscape, c: portrait, d: ad-hoc test ids). The
+// zero-padded `e2e2?000-0000-4000-8000-…` signature is the shared
+// interception namespace (`E2E_PUZZLE_ID_PATTERN` in
+// src/lib/testing/e2e-fixture-id): a random v4 id cannot practically
+// reproduce it, so real puzzle ids never get claimed as fixtures. New
+// fixture ids must keep the signature — catalog.test.ts enforces it.
 export type GameplayFixtureId =
 	| 'e2e2a000-0000-4000-8000-000000000004'
 	| 'e2e2b000-0000-4000-8000-000000000012'

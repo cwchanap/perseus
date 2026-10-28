@@ -51,6 +51,13 @@
 			: CATEGORY_ALL;
 	});
 	let searchQuery = $state(readCommittedQuery());
+	// Disclosure state is sticky by design: mobile and mid-width layouts hide
+	// the search input behind it, and on mobile the toggle itself is
+	// invisible — gating `open` on the committed query would collapse the
+	// input mid-edit when a cleared search commits. Initialize from the
+	// deep-link query, open whenever a query materializes, and leave closing
+	// to the explicit summary toggle.
+	let searchDisclosureOpen = $state(readCommittedQuery().length > 0);
 	let total = $state(0);
 	let loadingMore = $state(false);
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
@@ -161,6 +168,11 @@
 			debounceTimer = null;
 		}
 		pushedQueries.clear();
+		// A cancelled pending commit leaves its text in the input; when the
+		// settled URL keeps the same committed query (e.g. a category-only
+		// history move) the sync effect never runs, so restore it here. A
+		// changed committed query resyncs through the effect instead.
+		searchQuery = urlQuery;
 	});
 
 	// Debounce raw input (300 ms) into a committed URL query. Typing replaces
@@ -201,6 +213,13 @@
 			pushedQueries.clear();
 			if (searchQuery !== committed) searchQuery = committed;
 		});
+	});
+
+	// Reveal the search input whenever a committed query materializes — own
+	// debounced commits included. Never auto-close: an emptied input mid-edit
+	// must not hide the control the user is typing into.
+	$effect(() => {
+		if (urlQuery.length > 0) searchDisclosureOpen = true;
 	});
 
 	// Re-fetch whenever the committed URL query or category changes
@@ -408,7 +427,7 @@
 					<details
 						class="gallery-search-disclosure"
 						data-testid="gallery-search-disclosure"
-						open={urlQuery.length > 0}
+						bind:open={searchDisclosureOpen}
 					>
 						<summary
 							class="gallery-search-toggle"

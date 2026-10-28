@@ -60,6 +60,14 @@
 
 	onMount(() => {
 		void playerAuth.refresh();
+		return () => {
+			// Fence pending decode probes (a late resolution must take the
+			// stale-generation path so its bitmap is closed, not stored) and
+			// release the retained bitmap — no other cleanup runs on unmount.
+			selectionGeneration++;
+			imageBitmap?.close();
+			imageBitmap = null;
+		};
 	});
 
 	function clearSelectedImage() {

@@ -276,6 +276,27 @@ describe('Root Layout', () => {
 		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(2));
 	});
 
+	it('refetches progression when navigating between shell-visible routes', async () => {
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				name: 'Player One',
+				createdAt: 1779530400000,
+				lastLoginAt: 1779530400000
+			},
+			error: null
+		});
+		render(RootLayout, { children: makeChildren() });
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(1));
+
+		// '/' → '/leaderboard' keeps the shell visible, but the route change
+		// itself is a reason to refresh — the score may have moved meanwhile.
+		setPathname('/leaderboard');
+		await vi.waitFor(() => expect(mockProgression).toHaveBeenCalledTimes(2));
+	});
+
 	it('does not refetch progression on query-only navigation', async () => {
 		mockPlayerAuth.set({
 			status: 'authenticated',

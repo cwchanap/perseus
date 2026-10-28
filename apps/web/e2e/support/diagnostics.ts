@@ -6,11 +6,13 @@
 // an aborted submission) are suppressed via narrow scenario allowlists so a
 // deliberate failure does not look like a regression.
 //
-// Fixture-request leak detection: every `e2e-*` response must be answered by
-// the fixture router (it stamps the `x-perseus-e2e-source` marker) or, for the
-// `/complete` path, by the ApiScenarioController (marker `api-scenario`). Any
-// `e2e-*` response that reaches the real backend (no marker, not a completion
-// path) is a leak and fails teardown.
+// Fixture-request leak detection: every fixture-signature response must be
+// answered by the fixture router (it stamps the `x-perseus-e2e-source` marker)
+// or, for the `/complete` path, by the ApiScenarioController (marker
+// `api-scenario`). Any fixture-signature response that reaches the real
+// backend (no marker, not a completion path) is a leak and fails teardown.
+// The signature is the shared `E2E_PUZZLE_API_PATH` namespace — a real puzzle
+// id that merely starts with `e2e` is ordinary traffic, not a leak.
 //
 // Harness violation detection: responses carrying `x-perseus-e2e-violation`
 // (undeclared completion, wrong HTTP method, unknown fixture id/piece/sub-path)
@@ -39,11 +41,12 @@ import {
 	HARNESS_VIOLATION_HEADER
 } from '../gameplay-fixtures/fixture-router';
 import { AUTH_PERSONA_SOURCE, type AuthPersonaKind } from '../gameplay-fixtures/auth-persona';
+import { E2E_PUZZLE_API_PATH, E2E_PUZZLE_ID_SOURCE } from '../../src/lib/testing/e2e-fixture-id';
 
-const E2E_PATH = /\/api\/puzzles\/e2e[a-z0-9-]+/;
-const COMPLETION_PATH = /\/api\/puzzles\/e2e[a-z0-9-]+\/complete(?:\?.*)?$/;
-/** Extracts the fixture id from an e2e-* completion URL. */
-const FIXTURE_ID_FROM_URL = /\/api\/puzzles\/(e2e[a-z0-9-]+)\/complete/;
+const E2E_PATH = E2E_PUZZLE_API_PATH;
+const COMPLETION_PATH = new RegExp(`/api/puzzles/${E2E_PUZZLE_ID_SOURCE}/complete(?:\\?.*)?$`, 'i');
+/** Extracts the fixture id from a fixture-signature completion URL. */
+const FIXTURE_ID_FROM_URL = new RegExp(`/api/puzzles/(${E2E_PUZZLE_ID_SOURCE})/complete`, 'i');
 /** The player auth session endpoint (not an e2e-* path). */
 const AUTH_SESSION_PATH = /\/api\/auth\/session(?:\?.*)?$/;
 
@@ -102,7 +105,7 @@ export interface PageDiagnostics {
 	readonly harnessViolations: readonly HarnessViolationRecord[];
 	/** Throw if any non-allowlisted console/page/failed/unexpected error occurred. */
 	assertNoUnexpectedErrors(): void;
-	/** Throw if any e2e-* request leaked past the router to the real backend. */
+	/** Throw if any fixture-signature request leaked past the router to the real backend. */
 	assertNoUnexpectedFixtureRequests(): void;
 	dispose(): void;
 }

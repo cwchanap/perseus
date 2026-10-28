@@ -7,6 +7,7 @@
 // invariant fails here before reaching a Playwright run.
 import { describe, expect, it } from 'bun:test';
 import { aspectRatiosMatch, isPuzzleId } from '@perseus/types';
+import { E2E_PUZZLE_ID_PATTERN } from '../../src/lib/testing/e2e-fixture-id';
 import {
 	DEFAULT_FIXTURE_ID,
 	FIXTURES,
@@ -81,6 +82,15 @@ describe('catalog - fixture registry', () => {
 		for (const id of FIXTURE_IDS) {
 			expect(isPuzzleId(id)).toBe(true);
 		}
+	});
+
+	it('every fixture id stays inside the shared interception signature', () => {
+		for (const id of FIXTURE_IDS) {
+			expect(E2E_PUZZLE_ID_PATTERN.test(id)).toBe(true);
+		}
+		// A real UUIDv4 that merely shares the `e2e` prefix must NOT be
+		// claimed by the fixture namespace.
+		expect(E2E_PUZZLE_ID_PATTERN.test('e2e11234-1234-4123-8123-123456789abc')).toBe(false);
 	});
 });
 

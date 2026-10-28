@@ -24,6 +24,7 @@ import type {
 	GameplayRuntimeDependencies,
 	GameplayRuntimeOverrideContext
 } from '$lib/services/gameplay/runtime.types';
+import { isE2EPuzzleId } from './e2e-fixture-id';
 
 /**
  * Frozen gameplay configuration planted on the window global by the E2E init
@@ -64,7 +65,7 @@ export function readGameplayRuntimeOverride(
 	}
 	const raw = global.value;
 	if (raw === undefined || raw === null) {
-		if (context.puzzleId.startsWith('e2e')) {
+		if (isE2EPuzzleId(context.puzzleId)) {
 			throw new Error(
 				`${ERROR_PREFIX} missing gameplay config for e2e puzzle "${context.puzzleId}"`
 			);

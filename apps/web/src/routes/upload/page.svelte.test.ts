@@ -524,6 +524,43 @@ describe('Upload Page', () => {
 		await expect.element(page.getByAltText('Preview')).toBeVisible();
 	});
 
+	it('closes the retained bitmap when the page unmounts', async () => {
+		setAuthenticatedPlayer();
+		const close = vi.fn();
+		const bitmap = { ...makeBitmap(), close };
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async () => bitmap)
+		);
+
+		const { unmount } = await render(UploadPage);
+		await uploadTestImage();
+		expect(close).not.toHaveBeenCalled();
+
+		await unmount();
+		expect(close).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes a bitmap whose decode resolves after the page unmounts', async () => {
+		setAuthenticatedPlayer();
+		let resolveProbe!: (bitmap: ReturnType<typeof makeBitmap>) => void;
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(() => new Promise<ReturnType<typeof makeBitmap>>((resolve) => (resolveProbe = resolve)))
+		);
+
+		const { unmount } = await render(UploadPage);
+		selectFile(new File(['data'], 'pending.jpg', { type: 'image/jpeg' }));
+
+		await unmount();
+		// The unmount fence bumps the generation, so the late resolution takes
+		// the stale path: closed, never stored.
+		const lateBitmap = makeBitmap();
+		resolveProbe(lateBitmap);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(lateBitmap.close).toHaveBeenCalledTimes(1);
+	});
+
 	it('ignores a stale probe resolution after a newer selection', async () => {
 		setAuthenticatedPlayer();
 		const staleBitmap = makeBitmap();
