@@ -25,7 +25,7 @@
 	},
 	"devDependencies": {
 		"@cf-wasm/photon": "^0.4.0",
-		"@cloudflare/workers-types": "^5.20261023.1",
+		"@cloudflare/workers-types": "^5.20261025.1",
 		"@types/bun": "^1.4.4",
 		"drizzle-kit": "^0.31.11",
 		"esbuild": "^0.28.2",
