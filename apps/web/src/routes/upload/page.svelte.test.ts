@@ -59,32 +59,24 @@ function setAuthState(state: unknown) {
 	mockPlayerAuth.set(state);
 }
 
-class FailingFileReader {
-	error = new Error('Preview failed');
-	onerror: (() => void) | null = null;
-	readAsDataURL() {
-		this.onerror?.();
-	}
-}
+const THUMBNAIL_DATA_URL = 'data:image/webp;base64,cHJldmlldw==';
 
-class AbortingFileReader {
-	onabort: (() => void) | null = null;
-	readAsDataURL() {
-		this.onabort?.();
-	}
-}
+const makeBitmap = (width = 800, height = 600) => ({
+	width,
+	height,
+	close: vi.fn()
+});
 
-class ManualFileReader {
-	static instances: ManualFileReader[] = [];
-	onload: ((event: { target: ManualFileReader }) => void) | null = null;
-	result: string | null = null;
-	readAsDataURL() {
-		ManualFileReader.instances.push(this);
-	}
-	triggerLoad() {
-		this.onload?.({ target: this });
-	}
-}
+const stubCanvasPreview = () => {
+	const drawImage = vi.fn();
+	vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+		drawImage
+	} as unknown as CanvasRenderingContext2D);
+	const toDataURL = vi
+		.spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+		.mockReturnValue(THUMBNAIL_DATA_URL);
+	return { drawImage, toDataURL };
+};
 
 function setAuthenticatedPlayer() {
 	setAuthState({
@@ -117,15 +109,18 @@ describe('Upload Page', () => {
 		setAuthState({ status: 'anonymous', user: null, error: null });
 		vi.mocked(getGoogleLoginUrl).mockReturnValue('/api/auth/google/start?returnTo=%2Fupload');
 		// The selection fixtures are not decodable images; stub the decode probe so
-		// selection reaches the FileReader preview. Tests override as needed.
+		// selection reaches the thumbnail render, and stub the canvas calls the
+		// thumbnail path makes. Tests override as needed.
 		vi.stubGlobal(
 			'createImageBitmap',
-			vi.fn(async () => ({ close: vi.fn() }))
+			vi.fn(async () => makeBitmap())
 		);
+		stubCanvasPreview();
 	});
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 		vi.useRealTimers();
 	});
 
@@ -269,9 +264,11 @@ describe('Upload Page', () => {
 		await expect.element(page.getByLabelText('CLICK TO UPLOAD')).toBeVisible();
 	});
 
-	it('shows an error when image preview reading fails', async () => {
+	it('shows an error when the preview thumbnail cannot be rendered', async () => {
 		setAuthenticatedPlayer();
-		vi.stubGlobal('FileReader', FailingFileReader);
+		vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockImplementation(() => {
+			throw new Error('encode failed');
+		});
 
 		render(UploadPage);
 
@@ -328,22 +325,6 @@ describe('Upload Page', () => {
 		await page.getByRole('button', { name: /upload puzzle/i }).click();
 
 		await expect.element(page.getByText('Failed to upload puzzle')).toBeVisible();
-	});
-
-	it('shows an error when image preview reading is aborted', async () => {
-		setAuthenticatedPlayer();
-		vi.stubGlobal('FileReader', AbortingFileReader);
-
-		render(UploadPage);
-
-		const input = page.getByLabelText('CLICK TO UPLOAD').element() as HTMLInputElement;
-		Object.defineProperty(input, 'files', {
-			value: [new File(['data'], 'test.jpg', { type: 'image/jpeg' })],
-			configurable: true
-		});
-		input.dispatchEvent(new Event('change', { bubbles: true }));
-
-		await expect.element(page.getByText('Image preview was aborted')).toBeVisible();
 	});
 
 	it('starts a new upload while the success status is still visible', async () => {
@@ -408,7 +389,7 @@ describe('Upload Page', () => {
 
 	it('rejects unsupported declared MIME types before decoding', async () => {
 		setAuthenticatedPlayer();
-		const probe = vi.fn(async () => ({ close: vi.fn() }));
+		const probe = vi.fn(async () => makeBitmap());
 		vi.stubGlobal('createImageBitmap', probe);
 
 		render(UploadPage);
@@ -468,12 +449,12 @@ describe('Upload Page', () => {
 		).toBe(true);
 	});
 
-	it('closes the decoded bitmap after the probe', async () => {
+	it('closes the decoded bitmap after rendering the preview', async () => {
 		setAuthenticatedPlayer();
 		const close = vi.fn();
 		vi.stubGlobal(
 			'createImageBitmap',
-			vi.fn(async () => ({ close }))
+			vi.fn(async () => ({ ...makeBitmap(), close }))
 		);
 
 		render(UploadPage);
@@ -496,7 +477,7 @@ describe('Upload Page', () => {
 						rejectFirst = reject;
 					});
 				}
-				return Promise.resolve({ close: vi.fn() });
+				return Promise.resolve(makeBitmap());
 			})
 		);
 
@@ -515,31 +496,38 @@ describe('Upload Page', () => {
 		await expect.element(page.getByAltText('Preview')).toBeVisible();
 	});
 
-	it('ignores a stale reader callback after a newer selection', async () => {
+	it('ignores a stale probe resolution after a newer selection', async () => {
 		setAuthenticatedPlayer();
-		ManualFileReader.instances = [];
-		vi.stubGlobal('FileReader', ManualFileReader);
+		const staleBitmap = makeBitmap();
+		let resolveFirst!: (bitmap: ReturnType<typeof makeBitmap>) => void;
+		let firstCall = true;
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(() => {
+				if (firstCall) {
+					firstCall = false;
+					return new Promise<ReturnType<typeof makeBitmap>>((resolve) => {
+						resolveFirst = resolve;
+					});
+				}
+				return Promise.resolve(makeBitmap());
+			})
+		);
+		const toDataURL = vi.mocked(HTMLCanvasElement.prototype.toDataURL);
 
 		render(UploadPage);
 
-		// Each selection's read is created while current, then fenced by the
-		// newer selection before its callback fires.
 		selectFile(new File(['first'], 'first.jpg', { type: 'image/jpeg' }));
-		await vi.waitFor(() => {
-			expect(ManualFileReader.instances.length).toBe(1);
-		});
 		selectFile(new File(['second'], 'second.jpg', { type: 'image/jpeg' }));
-		await vi.waitFor(() => {
-			expect(ManualFileReader.instances.length).toBe(2);
-		});
+		await expect.element(page.getByAltText('Preview')).toBeVisible();
 
-		ManualFileReader.instances[0].result = 'data:image/jpeg;base64,AAAA';
-		ManualFileReader.instances[0].triggerLoad();
+		// The stale bitmap resolving late must not render a second preview or
+		// clear the fresh selection; its bitmap is still closed.
+		resolveFirst(staleBitmap);
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(page.getByAltText('Preview').query()).toBeNull();
 
-		ManualFileReader.instances[1].result = 'data:image/jpeg;base64,BBBB';
-		ManualFileReader.instances[1].triggerLoad();
+		expect(toDataURL).toHaveBeenCalledTimes(1);
+		expect(staleBitmap.close).toHaveBeenCalledTimes(1);
 		await expect.element(page.getByAltText('Preview')).toBeVisible();
 	});
 });
