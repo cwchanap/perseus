@@ -19,8 +19,8 @@
 		"@perseus/types": "workspace:*"
 	},
 	"devDependencies": {
-		"@vitest/coverage-v8": "^5.0.5",
+		"@vitest/coverage-v8": "^5.1.0",
 		"typescript": "^5.9.0",
-		"vitest": "^5.0.5"
+		"vitest": "^5.1.0"
 	}
 }
