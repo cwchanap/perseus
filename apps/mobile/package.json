@@ -28,7 +28,7 @@
 		"css-loader": "^7.0.0",
 		"postcss-loader": "^8.0.0",
 		"raw-loader": "^4.0.0",
-		"sass-loader": "^16.0.0",
+		"sass-loader": "^17.1.0",
 		"svelte": "~4.2.20",
 		"svelte-loader": "^3.2.4",
 		"svelte-preprocess": "^6.0.3",
