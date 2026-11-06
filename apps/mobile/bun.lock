@@ -12,7 +12,7 @@
         "@nativescript/secure-storage": "^4.0.2",
         "@perseus/game-core": "file:../../packages/game-core",
         "@perseus/types": "file:../../packages/types",
-        "tslib": "^2.8.1",
+        "tslib": "^2.9.1",
       },
       "devDependencies": {
         "@nativescript-community/svelte-native-preprocessor": "^1.0.1",
@@ -745,7 +745,7 @@
 
     "ts-loader": ["ts-loader@9.6.2", "", { "dependencies": { "chalk": "^4.1.0", "picomatch": "^4.0.0", "source-map": "^0.7.4" }, "peerDependencies": { "loader-utils": "*", "typescript": "*", "webpack": "^4.0.0 || ^5.0.0" }, "optionalPeers": ["loader-utils"] }, "sha512-R4iuczmtgxvtuI556s+hTZ6/7Ee03VCAk/l/M8LY1OAsUgB7YydsCxkgq9D9pKRaD7GJqUi2u8fp9zZP/ufjKA=="],
 
-    "tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
+    "tslib": ["tslib@2.9.1", "", {}, "sha512-a4Ux9VKuIMHsOS7ENbEq6hK2ZGYIT27Rtl0E4eD9KqwxhKiQeMZE/9xb3IdYwWaSOyIBQLExhQgXDTYoiCxnWA=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
