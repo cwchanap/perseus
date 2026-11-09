@@ -22,10 +22,10 @@
 		"@cf-wasm/photon": "^0.4.0",
 		"@cf-wasm/resvg": "^0.4.0",
 		"drizzle-orm": "^0.45.4",
-		"hono": "^4.13.14"
+		"hono": "^4.13.16"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^5.20261030.1",
+		"@cloudflare/workers-types": "^5.20261106.1",
 		"@eslint/compat": "^2.1.1",
 		"@eslint/js": "^10.0.1",
 		"@perseus/web": "workspace:*",
@@ -37,7 +37,7 @@
 		"prettier": "^3.9.10",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.72.1",
-		"vitest": "^5.0.5",
-		"wrangler": "4.156.0"
+		"vitest": "^5.1.0",
+		"wrangler": "4.158.0"
 	}
 }
