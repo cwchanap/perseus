@@ -6,7 +6,7 @@
       "name": "mobile",
       "dependencies": {
         "@nativescript-community/svelte-native": "~1.0.30",
-        "@nativescript/canvas": "^2.1.18",
+        "@nativescript/canvas": "^3.0.3",
         "@nativescript/core": "^9.1.3",
         "@nativescript/google-signin": "^2.1.1",
         "@nativescript/secure-storage": "^4.0.2",
@@ -107,7 +107,7 @@
 
     "@nativescript/android": ["@nativescript/android@9.1.1", "", {}, "sha512-oDWfVnQtgQ0ctbfFWSugqGEZnYVjls82FqlO5UbA9HNwTNqdP4gqWwqHR80WKQngrbxlRHYDIuYv5S9kQfKhcw=="],
 
-    "@nativescript/canvas": ["@nativescript/canvas@2.1.18", "", { "dependencies": { "@nativescript/font-manager": "*" } }, "sha512-wj4gbG+YW6GXTAc5zKW6D7CBjIywLKBryWIbhERjSI7+9reFdnyWjtof4Bp7J1uieQn+6e7IlQdJUuO0ZJt0jA=="],
+    "@nativescript/canvas": ["@nativescript/canvas@3.0.3", "", { "dependencies": { "@nativescript/font-manager": "*" } }, "sha512-SzNFLxXuxU2/lS9EA4HJXZ58/XprV+5yGhg9v0YrMVEZDudQU92dSjAAQVwfuZOeHSLMcPyDLkkJOF3v1LN5cw=="],
 
     "@nativescript/core": ["@nativescript/core@9.1.3", "", { "dependencies": { "@csstools/css-calc": "~2.1.4", "@csstools/css-color-parser": "^3.0.10", "@csstools/css-parser-algorithms": "^3.0.5", "@csstools/css-tokenizer": "^3.0.4", "@nativescript/hook": "~3.0.4", "acorn": "^8.15.0", "css-tree": "^3.1.0", "css-what": "^7.0.0", "emoji-regex": "^10.2.1", "semver": "^7.0.0", "source-map": "0.7.6", "source-map-js": "^1.2.1", "tslib": "^2.0.0" } }, "sha512-Vh6j6z8m0d+NXVzy3ibHxHf+khQ+1Oa+Uil2hBqZKrD3Z+uvULbt9O7WmTiBwoWiJwRe4C8byrCbkHzkrQzk1w=="],
 
