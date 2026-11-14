@@ -17,7 +17,7 @@
 // the app read it (or vice versa) would be non-deterministic. One script does
 // clear -> seed -> freeze-config, synchronously, before any app script runs.
 import type { Locator, Page } from '@playwright/test';
-import { expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { loadPersistedSession, type PersistedPuzzleSessionV1 } from '@perseus/game-core';
 import {
 	buildGameplayConfig,
@@ -339,14 +339,14 @@ export class GameplayPage {
 	// --- Mouse -----------------------------------------------------------------
 
 	/**
-	 * Place a piece via mouse HTML5 drag-and-drop. Uses Playwright's dragTo()
-	 * as the primary path. On browsers where dragTo() does not produce a drop
-	 * event for HTML5 DnD (e.g. WebKit, mobile Chromium), falls back to
-	 * dispatching the DnD event sequence directly. The drop's outcome is then
-	 * verified: a placed piece's tray slot detaches, an engine-rejected drop
-	 * (e.g. an occupied or wrong slot) shakes the piece and is accepted as
-	 * handled, and a drop that never registered throws an enriched error with
-	 * source/target bounding boxes.
+	 * Place a piece via mouse HTML5 drag-and-drop.
+	 *
+	 * Desktop Chromium is strict: dragTo() must trigger the source's native
+	 * dragstart and the board's drop. Synthetic events would mask regressions
+	 * in draggable/setData on the actual piece. On mobile/WebKit projects,
+	 * dragTo() may not dispatch HTML5 DnD, so use the documented synthetic
+	 * fallback only there. Both paths accept a placed piece or an explicit
+	 * engine rejection, but never a silently ignored drop.
 	 */
 	async placeWithMouse(pieceId: number, x: number, y: number): Promise<void> {
 		const source = this.pieceSource(pieceId);
@@ -355,6 +355,22 @@ export class GameplayPage {
 		await target.waitFor({ state: 'visible' });
 		const sourceBox = await source.boundingBox();
 		const targetBox = await target.boundingBox();
+
+		if (test.info().project.name === 'chromium-desktop') {
+			try {
+				await source.dragTo(target);
+				const outcome = await this.awaitPlacementOutcome(pieceId);
+				if (outcome === 'ignored') {
+					throw new Error(
+						`native dragTo did not place or reject piece ${pieceId} at (${x}, ${y}); ` +
+							'desktop Chromium cannot use the synthetic DnD fallback'
+					);
+				}
+			} catch (error) {
+				throw this.enrichDragError(error, sourceBox, targetBox);
+			}
+			return;
+		}
 
 		let placed = false;
 		try {
