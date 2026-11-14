@@ -683,30 +683,30 @@ export class GameplayPage {
 	}
 
 	/**
-	 * Classify the engine's response to a dispatched drop. The engine answers
-	 * synchronously: a placed piece's tray slot detaches, a rejected drop
-	 * shakes the slot via the `.rejected` class for REJECTED_DURATION_MS
-	 * (500ms) before the piece returns to the tray, and an unhandled drop
-	 * changes nothing. Detachment and rejection are watched concurrently so a
-	 * rejection is not missed after the detach wait times out.
+	 * Classify an accepted, rejected, or ignored drop without waiting on a
+	 * detached Playwright locator. An accepted placement removes the tray slot;
+	 * a rejected drop briefly adds `.rejected` (500 ms) to the existing slot.
+	 * One DOM snapshot sees either outcome immediately, and polling is bounded
+	 * when neither outcome occurred.
 	 */
 	private async awaitPlacementOutcome(pieceId: number): Promise<'placed' | 'rejected' | 'ignored'> {
-		const slot = this.pieceSource(pieceId);
-		const placed = this.isSlotGone(pieceId);
-		const rejected = expect
-			.poll(() => slot.evaluate((el) => el.classList.contains('rejected')), {
-				timeout: 1500,
-				intervals: [100]
-			})
-			.toBe(true)
-			.then(() => true)
-			.catch(() => false);
-		const [wasPlaced, wasRejected] = await Promise.all([placed, rejected]);
-		if (wasPlaced) return 'placed';
-		if (wasRejected) return 'rejected';
-		// The drop never registered: the slot stayed attached and the engine
-		// never signalled a rejection. Report it as an error at the call site.
-		return 'ignored';
+		let outcome: 'placed' | 'rejected' | 'ignored' = 'ignored';
+		await expect
+			.poll(
+				async () => {
+					outcome = await this.page.evaluate((id) => {
+						const slot = document.querySelector(`[data-testid="piece-slot-${id}"]`);
+						if (!slot) return 'placed' as const;
+						if (slot.classList.contains('rejected')) return 'rejected' as const;
+						return 'ignored' as const;
+					}, pieceId);
+					return outcome;
+				},
+				{ timeout: 1500, intervals: [50, 100] }
+			)
+			.not.toBe('ignored')
+			.catch(() => undefined);
+		return outcome;
 	}
 
 	/**
