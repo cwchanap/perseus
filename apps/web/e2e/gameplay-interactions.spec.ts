@@ -27,9 +27,7 @@ const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: tru
 test.describe('Gameplay interactions', () => {
 	// Outside @extended so the default desktop E2E and automatic smoke both
 	// cover native dragstart/drop. Touch/mobile projects cannot prove this path.
-	test('correct placement places the piece at its target cell @smoke', async ({
-		gameplayPage
-	}) => {
+	test('correct placement places the piece at its target cell @smoke', async ({ gameplayPage }) => {
 		test.skip(PROJECT() !== 'chromium-desktop', 'native HTML5 drag is desktop Chromium only');
 		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 		await gameplayPage.placeWithMouse(0, 0, 0);
