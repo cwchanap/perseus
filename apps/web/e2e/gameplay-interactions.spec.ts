@@ -25,7 +25,11 @@ const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: tru
 
 test.describe('Gameplay interactions', () => {
 	test.describe('mouse @extended', () => {
-		test('correct placement places the piece at its target cell', async ({ gameplayPage }) => {
+		// Also runs in automatic Chromium smoke: desktop must exercise real
+		// dragTo() without the synthetic fallback, while mobile may use it.
+		test('correct placement places the piece at its target cell @smoke', async ({
+			gameplayPage
+		}) => {
 			await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 			await gameplayPage.placeWithMouse(0, 0, 0);
 			await gameplayPage.expectPiecePlaced(0, 0, 0);
