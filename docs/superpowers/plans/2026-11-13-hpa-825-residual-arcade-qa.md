@@ -12,7 +12,7 @@ There are three **open verification questions**, not three proven bugs. The tabl
 | Question | Status | Current evidence / disposition |
 | --- | --- | --- |
 | Signed-in upload persistence | **Pending** | PR #138's persistent success notice exists in source, but authenticated production POST, owned list and **terminal status** have not been checked. A temporary `processing` row is insufficient. |
-| Native pointer placement | **Pending** | Desktop Chromium helper is now strict and its placement test participates in smoke, but passing CI/native `dragTo` and human Safari drag have **not** yet been verified in this plan. |
+| Native pointer placement | **Pending** | Desktop Chromium has a strict no-fallback `dragTo` check in default E2E and desktop-only `@smoke`; its passing CI result and Safari physical drag have **not** yet been verified in this plan. |
 | Cold first paint | **Pending** | Dark CSS + theme color exist; no new cold-navigation frame capture. No white-flash reproduction claimed. |
 
 Use exactly one final disposition per question: **fixed**, **not reproducible**, **intended**, or **explicitly deferred** (with the missing access/environment and next action). `failed` generation may be an observed terminal status while **owned persistence works**; describe both facts without conflating them.
@@ -20,16 +20,16 @@ Use exactly one final disposition per question: **fixed**, **not reproducible**,
 ## Step 0 — Confirm current build and deployment before testing
 
 1. Compare current `main` and this PR head; do not assume the original `0fe71b87` draft base remains the active baseline. At 2026-11-14T02:10Z, `main` was `4b582ae9` (dependency/workflow files changed since the draft).
-2. Check the successful production deploy using `gh run list --workflow deploy-infrastructure.yml -L 5` (or GitHub Actions). At review time [Deploy Infrastructure run 43544192168](https://github.com/cwchanap/perseus/actions/runs/43544192168) **succeeded** for `ca379441` (2026-11-14). This supersedes the reviewer's older 2026-11-06 `d927ee86` result, but a successful workflow **alone does not prove which bundle a user actually receives**. Recheck the latest success and served revision on test day.
-3. Record `https://perseus.cwchanap.dev/`, UTC time, browser/OS, cache state and deployed revision or an explicit verification limitation. Do not treat staging, Playwright fixtures, or an old local build as equivalent to authenticated production.
+2. Check the latest successful production deploy using `gh run list --workflow deploy-infrastructure.yml -L 5` (or GitHub Actions). At the initial review, [Deploy Infrastructure run 43544192168](https://github.com/cwchanap/perseus/actions/runs/43544192168) **succeeded** for `ca379441` (2026-11-14), superseding the older `d927ee86` report. Recheck on test day. The application's `/health`, `/api/health` and `/api` endpoints **do not expose a deployed commit SHA**; do not search for a nonexistent version header or require exact served-SHA verification. Use the successful deployment run as the candidate revision and compare visible app behavior/bundle assets with that build where practical.
+3. Record `https://perseus.cwchanap.dev/`, UTC time, browser/OS, cache state, successful deploy-run SHA and any observable asset/build evidence. If the exact served revision cannot be confirmed, record that limitation; do not treat staging, Playwright fixtures, or an old local build as equivalent to authenticated production.
 4. The Linear ticket has **no UI mockup attached**. Visually compare against the current arcade design; if a mockup is attached later, compare against it before closure.
 
 ## Step 1 — Authorized upload: require stable terminal ownership
 
 Run **once in one authorized production browser** with a unique throwaway title and a non-sensitive ~1024px JPEG.
 
-1. Capture `POST /api/puzzle-families` HTTP status, returned family ID and UTC T+0. The upload form should show the persistent "accepted for processing" status and `View my puzzles` link. Do not save cookies/tokens or private account details in the evidence.
-2. Immediately inspect `GET /api/player/puzzle-families` (follow `nextCursor` if present) and the `/profile` uploaded count, then reload. The new ID should appear as `processing`, `ready`, or `failed`. The count includes `processing`, so zero after a successful 201 for a genuinely new family is a **candidate defect**, not a pass.
+1. In the browser's DevTools **Network** tab, capture the `POST /api/puzzle-families` status and the response JSON's **`id`** (family ID) with UTC T+0. The upload UI deliberately displays only a generic success message, not that ID; if the response was missed, find the newest matching family in `GET /api/player/puzzle-families` instead. The form should show persistent "accepted for processing" feedback and a `View my puzzles` link. Do not save cookies/tokens or private account details in the evidence.
+2. Immediately inspect `GET /api/player/puzzle-families` (follow `nextCursor` if present), the `/profile` uploaded count and the new card after a reload. Owned puzzle cards can show `PROCESSING…` or `FAILED` until ready. The new ID should appear as `processing`, `ready`, or `failed`; zero uploaded after a successful 201 for a genuinely new family is a **candidate defect**, not a pass.
 3. Record elapsed time and recheck the **same family ID** until a terminal `ready` or `failed` state. `ready` confirms upload and generation; `failed` confirms owned persistence but identifies a generation failure requiring diagnosis/disposition. Neither a 201 nor a T+0 `processing` row closes this check.
 4. If it remains `processing` unusually long or approaches the reaper's **2-hour age threshold**, inspect the Workflow instance, Durable Object authority and status mirrors for the family ID. This indicates possible stuck processing, **not an automatic proof of data loss**: the reaper removes it only if the workflow is confirmed dead, the authoritative DO is not `ready`, and cleanup succeeds. If it disappears from the owned list, investigate the reaper/ownership path as a reproduced persistence failure.
 5. For non-2xx or 201 + missing owned row on reload, first isolate the failed step (auth, R2, KV, D1 ownership, workflow start, player-identity/owned-list filtering). Patch only that specific failure with a focused regression. Public gallery omission while `processing` is expected.
@@ -42,12 +42,13 @@ Only on a proven failure inspect `apps/web/src/routes/upload/+page.svelte`, `app
 **Harness change included in this PR:**
 
 - In `apps/web/e2e/support/gameplay-page.ts`, `placeWithMouse` **must not synthesize DnD events in `chromium-desktop`**. Real `dragTo` must produce an engine-accepted placement or an explicit rejection; ignored drops fail with source/target diagnostics. Keep the existing fallback for mobile Chromium/WebKit, where Playwright HTML5 DnD is documented unreliable.
-- In `apps/web/e2e/gameplay-interactions.spec.ts`, tag the existing correct-placement `@extended` test as `@smoke` so automatic Chromium desktop runs exercise the native `dragstart` → `drop` path. The same mobile smoke scenario may still use its documented fallback; **only the desktop result is native-path evidence**.
+- In `apps/web/e2e/gameplay-interactions.spec.ts`, keep correct-placement `@smoke` **outside the `@extended` describe**, and skip non-`chromium-desktop` projects. Both the default desktop E2E and automatic Chromium desktop smoke now exercise native `dragstart` → `drop`; mobile fallback adds no proof. The rejected-placement test remains `@extended`-only and is **not** part of automatic smoke.
 - Preserve the existing wrong-drop, keyboard, tap, session-restore and gallery-resume tests; they already cover those rules. Do not add an entire second manual matrix.
 
 Run:
 
 ```bash
+bun run --cwd apps/web test:e2e
 bun run --cwd apps/web test:e2e:smoke
 bun run --cwd apps/web test:e2e:extended -- gameplay-interactions.spec.ts --project=chromium-desktop
 ```
@@ -73,6 +74,7 @@ Then manually try **one desktop Safari physical mouse/trackpad drag**, since the
 Verification commands for touched code:
 
 ```bash
+bun run --cwd apps/web test:e2e
 bun run --cwd apps/web test:e2e:smoke
 bun run --cwd apps/web test:e2e:extended -- gameplay-interactions.spec.ts --project=chromium-desktop
 bun run --cwd apps/web test:unit -- src/routes/upload/page.svelte.test.ts  # upload UI only
@@ -86,7 +88,7 @@ Run `bun run test:unit` **root-wide** if shared types or gameplay-core change; r
 ## End-to-end acceptance (bounded, not a repeated full matrix)
 
 - [ ] **macOS:** Chromium desktop native `dragTo` smoke passes without a synthetic fallback; a physical mouse/trackpad drag in **Safari** places a piece, updates visible progress, and matches the current board/tray UI. A cold gallery navigation is visually compared with existing arcade styling.
-- [ ] **Windows:** Chrome/Edge end-to-end smoke confirms the puzzle opens and a piece can be placed with a mouse; confirm the arcade shell does not show an unexplained white/blank navigation. No separate exhaustive wrong-drop/resume run; those are already tested.
+- [ ] **Windows (minimal spot check):** Chrome or Edge opens a puzzle, places one piece with mouse input and renders the dark arcade shell without an unexplained white/blank navigation. Keep this supported-platform end-to-end check small; do not repeat the full Chromium test matrix already covered in automation.
 - [ ] **iOS:** Safari tap-to-place and puzzle navigation remain usable; inspect cold gallery first paint against the existing dark theme. Touch is **not** required to perform desktop HTML5 DnD.
 - [ ] **Production upload (one authorized browser on any supported desktop OS):** capture 201/non-2xx + family ID, immediate owned row/count and **terminal** `ready`/`failed` (or evidence of a stuck/deleted state); a reload shows the correct family. An expected public-gallery delay while processing is not a persistence failure.
 - [ ] **Visual check:** upload status and profile, board/tray placement, and cold arcade background match the shipped UI; HPA-825 has **no attached mockup** as of this plan, but compare directly with one if attached later.
