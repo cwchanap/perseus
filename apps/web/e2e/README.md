@@ -424,13 +424,19 @@ WebKit; every attempt left the piece in the tray.
 
 Action taken:
 
-- Native **mouse drag** tests are tagged `@extended` (all five projects), not
-  in the manual WebKit suite.
-- **Keyboard, tap placement, and completion dialog** tests are included in the
-  WebKit suite (reliable on WebKit).
-- `placeWithMouse` falls back to dispatching the DnD event sequence
-  (`dragover` + `drop`) directly when `dragTo()` does not register a drop, so the
-  helper remains usable across all browsers.
+- Mouse drag tests are tagged `@extended` for the full manual matrix. The
+  **correct-placement** test is additionally `@smoke`, so the automatic
+  Chromium desktop/mobile lane now runs it as well.
+- On **`chromium-desktop`**, `placeWithMouse` requires Playwright's real
+  `dragTo()` path to place or explicitly reject a piece: **no synthetic
+  fallback is allowed**. This catches broken `draggable`/`dragstart`/`setData`
+  on the source (HPA-825). A passing desktop smoke test does not replace
+  one human desktop Safari mouse/trackpad check.
+- On mobile Chromium and WebKit projects, `placeWithMouse` may fall back
+  to dispatching `dragover` + `drop` when `dragTo()` does not register a
+  placement. This is a test-harness workaround, **not** proof of native drag.
+- **Keyboard, tap placement, and completion dialog** tests are included in
+  the WebKit suite (reliable on WebKit).
 
 Follow-up: [HPA-517](https://linear.app/cwchanap/issue/HPA-517) — WebKit HTML5
 drag-and-drop does not fire drop events via Playwright.
