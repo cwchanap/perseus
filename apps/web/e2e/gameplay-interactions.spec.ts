@@ -7,8 +7,9 @@
 // Uses e2e2a000-0000-4000-8000-000000000004 (2x2, 4 pieces) for speed.
 //
 // Tags:
-//   @extended        — mouse drag tests (dragTo unreliable on WebKit; see
-//                      webkit-drag-spike.spec.ts — 0/20 pass on webkit-mobile).
+//   @smoke           — correct native mouse drag on desktop Chromium only.
+//   @extended        — rejected mouse drag and other optional mouse tests.
+//                      WebKit dragTo is unreliable (0/20 on webkit-mobile).
 //   @webkit-critical — keyboard, tap placement, and dialog tests (reliable on WebKit).
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';
@@ -24,13 +25,16 @@ const PROJECT = () => test.info().project.name;
 const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 
 test.describe('Gameplay interactions', () => {
-	test.describe('mouse @extended', () => {
-		test('correct placement places the piece at its target cell', async ({ gameplayPage }) => {
-			await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
-			await gameplayPage.placeWithMouse(0, 0, 0);
-			await gameplayPage.expectPiecePlaced(0, 0, 0);
-		});
+	// Outside @extended so the default desktop E2E and automatic smoke both
+	// cover native dragstart/drop. Touch/mobile projects cannot prove this path.
+	test('correct placement places the piece at its target cell @smoke', async ({ gameplayPage }) => {
+		test.skip(PROJECT() !== 'chromium-desktop', 'native HTML5 drag is desktop Chromium only');
+		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
+		await gameplayPage.placeWithMouse(0, 0, 0);
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+	});
 
+	test.describe('mouse @extended', () => {
 		test('rejected placement keeps the piece in the tray', async ({ gameplayPage, page }) => {
 			await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 			// Piece 0 correct position is (0,0); (1,1) is wrong.

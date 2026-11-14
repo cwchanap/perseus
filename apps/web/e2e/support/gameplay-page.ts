@@ -17,7 +17,7 @@
 // the app read it (or vice versa) would be non-deterministic. One script does
 // clear -> seed -> freeze-config, synchronously, before any app script runs.
 import type { Locator, Page } from '@playwright/test';
-import { expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { loadPersistedSession, type PersistedPuzzleSessionV1 } from '@perseus/game-core';
 import {
 	buildGameplayConfig,
@@ -339,14 +339,14 @@ export class GameplayPage {
 	// --- Mouse -----------------------------------------------------------------
 
 	/**
-	 * Place a piece via mouse HTML5 drag-and-drop. Uses Playwright's dragTo()
-	 * as the primary path. On browsers where dragTo() does not produce a drop
-	 * event for HTML5 DnD (e.g. WebKit, mobile Chromium), falls back to
-	 * dispatching the DnD event sequence directly. The drop's outcome is then
-	 * verified: a placed piece's tray slot detaches, an engine-rejected drop
-	 * (e.g. an occupied or wrong slot) shakes the piece and is accepted as
-	 * handled, and a drop that never registered throws an enriched error with
-	 * source/target bounding boxes.
+	 * Place a piece via mouse HTML5 drag-and-drop.
+	 *
+	 * Desktop Chromium is strict: dragTo() must trigger the source's native
+	 * dragstart and the board's drop. Synthetic events would mask regressions
+	 * in draggable/setData on the actual piece. On mobile/WebKit projects,
+	 * dragTo() may not dispatch HTML5 DnD, so use the documented synthetic
+	 * fallback only there. Both paths accept a placed piece or an explicit
+	 * engine rejection, but never a silently ignored drop.
 	 */
 	async placeWithMouse(pieceId: number, x: number, y: number): Promise<void> {
 		const source = this.pieceSource(pieceId);
@@ -355,6 +355,22 @@ export class GameplayPage {
 		await target.waitFor({ state: 'visible' });
 		const sourceBox = await source.boundingBox();
 		const targetBox = await target.boundingBox();
+
+		if (test.info().project.name === 'chromium-desktop') {
+			try {
+				await source.dragTo(target);
+				const outcome = await this.awaitPlacementOutcome(pieceId);
+				if (outcome === 'ignored') {
+					throw new Error(
+						`native dragTo did not place or reject piece ${pieceId} at (${x}, ${y}); ` +
+							'desktop Chromium cannot use the synthetic DnD fallback'
+					);
+				}
+			} catch (error) {
+				throw this.enrichDragError(error, sourceBox, targetBox);
+			}
+			return;
+		}
 
 		let placed = false;
 		try {
@@ -667,30 +683,30 @@ export class GameplayPage {
 	}
 
 	/**
-	 * Classify the engine's response to a dispatched drop. The engine answers
-	 * synchronously: a placed piece's tray slot detaches, a rejected drop
-	 * shakes the slot via the `.rejected` class for REJECTED_DURATION_MS
-	 * (500ms) before the piece returns to the tray, and an unhandled drop
-	 * changes nothing. Detachment and rejection are watched concurrently so a
-	 * rejection is not missed after the detach wait times out.
+	 * Classify an accepted, rejected, or ignored drop without waiting on a
+	 * detached Playwright locator. An accepted placement removes the tray slot;
+	 * a rejected drop briefly adds `.rejected` (500 ms) to the existing slot.
+	 * One DOM snapshot sees either outcome immediately, and polling is bounded
+	 * when neither outcome occurred.
 	 */
 	private async awaitPlacementOutcome(pieceId: number): Promise<'placed' | 'rejected' | 'ignored'> {
-		const slot = this.pieceSource(pieceId);
-		const placed = this.isSlotGone(pieceId);
-		const rejected = expect
-			.poll(() => slot.evaluate((el) => el.classList.contains('rejected')), {
-				timeout: 1500,
-				intervals: [100]
-			})
-			.toBe(true)
-			.then(() => true)
-			.catch(() => false);
-		const [wasPlaced, wasRejected] = await Promise.all([placed, rejected]);
-		if (wasPlaced) return 'placed';
-		if (wasRejected) return 'rejected';
-		// The drop never registered: the slot stayed attached and the engine
-		// never signalled a rejection. Report it as an error at the call site.
-		return 'ignored';
+		let outcome: 'placed' | 'rejected' | 'ignored' = 'ignored';
+		await expect
+			.poll(
+				async () => {
+					outcome = await this.page.evaluate((id) => {
+						const slot = document.querySelector(`[data-testid="piece-slot-${id}"]`);
+						if (!slot) return 'placed' as const;
+						if (slot.classList.contains('rejected')) return 'rejected' as const;
+						return 'ignored' as const;
+					}, pieceId);
+					return outcome;
+				},
+				{ timeout: 1500, intervals: [50, 100] }
+			)
+			.not.toBe('ignored')
+			.catch(() => undefined);
+		return outcome;
 	}
 
 	/**
