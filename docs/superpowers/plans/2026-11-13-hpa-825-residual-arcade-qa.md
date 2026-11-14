@@ -1,101 +1,95 @@
 # HPA-825 — Remaining Arcade QA: Implementation and Verification Plan
 
 **Linear:** [HPA-825](https://linear.app/cwchanap/issue/HPA-825/verify-remaining-arcade-qa-upload-persistence-drag-and-cold-paint)  
-**Design:** [2026-11-13 design spec](../specs/2026-11-13-hpa-825-residual-arcade-qa-design.md)  
-**Origin:** [GitHub #86](https://github.com/cwchanap/perseus/issues/86), including follow-ups; prior remediation [PR #138](https://github.com/cwchanap/perseus/pull/138)  
-**Baseline:** `main` at `0fe71b87ac43cc3e275d1c8834c0506099650eb2` on 2026-11-13; current **production deployment not yet confirmed**.  
-**PR strategy:** **One PR for HPA-825**. This PR begins with these documents; put evidence, any confirmed fixes, regressions, and closeout updates on this **same branch and PR**. No follow-up implementation PR for the same ticket.
+**Design:** [HPA-825 design spec](../specs/2026-11-13-hpa-825-residual-arcade-qa-design.md)  
+**Origins:** [GitHub #86](https://github.com/cwchanap/perseus/issues/86); previous frontend fixes [PR #138](https://github.com/cwchanap/perseus/pull/138)  
+**Delivery:** **One PR for the ticket**. This draft carries design/plan and the focused drag-harness correction. Keep future evidence and any reproduced application fix on **this PR**, not a second implementation PR.
 
-## Delivery contract
+## Outcome and canonical evidence record
 
-Investigate only these three residual questions: signed-in production upload ownership visibility, real-pointer placement, and cold first paint. Source review proves neither a deployed fix nor a runtime defect. In particular, the previous implementation already shipped persistent upload feedback, safe previews, gallery filters, invalid-ID handling, and theme color. Do **not** redo these.
+There are three **open verification questions**, not three proven bugs. The table below is the **only place to update the results**; keep the design document stable. Record UTC test date, deployed revision, OS/browser and redacted evidence links as observations become available.
 
-Record a small disposition table in the PR (or update the table below) with the deployed revision, test date, browser/OS, a redacted screenshot/recording/network observation, and the decision. Each row ends as **fixed**, **not reproducible**, **intended**, or **explicitly deferred**; unrun work is `pending`, not `passed`. This is a bounded QA closure ticket, not an architecture project.
+| Question | Status | Current evidence / disposition |
+| --- | --- | --- |
+| Signed-in upload persistence | **Pending** | PR #138's persistent success notice exists in source, but authenticated production POST, owned list and **terminal status** have not been checked. A temporary `processing` row is insufficient. |
+| Native pointer placement | **Pending** | Desktop Chromium helper is now strict and its placement test participates in smoke, but passing CI/native `dragTo` and human Safari drag have **not** yet been verified in this plan. |
+| Cold first paint | **Pending** | Dark CSS + theme color exist; no new cold-navigation frame capture. No white-flash reproduction claimed. |
 
-| Area | Current result | Evidence needed | Final disposition |
-| --- | --- | --- | --- |
-| Signed-in upload persistence | **Pending; authenticated production run not performed** | POST status/ID, owned-family API response, profile on reload, eventual status; deployed revision | Pending |
-| Native pointer drag | **Pending; physical input not rechecked** | Real drag video/observation, progress and board/tray state; distinguish E2E fallback | Pending |
-| Cold first paint | **Pending; no recent frame capture** | Repeat direct-navigation captures + dark/white paint classification | Pending |
+Use exactly one final disposition per question: **fixed**, **not reproducible**, **intended**, or **explicitly deferred** (with the missing access/environment and next action). `failed` generation may be an observed terminal status while **owned persistence works**; describe both facts without conflating them.
 
-## Step 0 — Establish the runtime baseline
+## Step 0 — Confirm current build and deployment before testing
 
-1. Read current `main`, check the production deployment revision if available, and record URL, UTC time, OS/browser and whether the test uses a local build, deployed production, or Playwright fixture.
-2. Prefer the real production site `https://perseus.cwchanap.dev/` for the previously reported behaviors. Use a disposable puzzle/image only with an **authorized signed-in test account**. No credentials or tokens go into documents or logs.
-3. Compare observed UI to the existing arcade look. No ticket mockup is attached today; if one is added later in Linear, perform the visual comparison against it before sign-off.
-4. Keep this PR documentation-only until actual evidence establishes a fix worth making.
+1. Compare current `main` and this PR head; do not assume the original `0fe71b87` draft base remains the active baseline. At 2026-11-14T02:10Z, `main` was `4b582ae9` (dependency/workflow files changed since the draft).
+2. Check the successful production deploy using `gh run list --workflow deploy-infrastructure.yml -L 5` (or GitHub Actions). At review time [Deploy Infrastructure run 43544192168](https://github.com/cwchanap/perseus/actions/runs/43544192168) **succeeded** for `ca379441` (2026-11-14). This supersedes the reviewer's older 2026-11-06 `d927ee86` result, but a successful workflow **alone does not prove which bundle a user actually receives**. Recheck the latest success and served revision on test day.
+3. Record `https://perseus.cwchanap.dev/`, UTC time, browser/OS, cache state and deployed revision or an explicit verification limitation. Do not treat staging, Playwright fixtures, or an old local build as equivalent to authenticated production.
+4. The Linear ticket has **no UI mockup attached**. Visually compare against the current arcade design; if a mockup is attached later, compare against it before closure.
 
-**Gate:** Do not infer the live site is on `main` just because the repository is updated.
+## Step 1 — Authorized upload: require stable terminal ownership
 
-## Step 1 — Upload: authenticated persistence, not just a success toast
+Run **once in one authorized production browser** with a unique throwaway title and a non-sensitive ~1024px JPEG.
 
-Manual end-to-end on production with an authorized account:
+1. Capture `POST /api/puzzle-families` HTTP status, returned family ID and UTC T+0. The upload form should show the persistent "accepted for processing" status and `View my puzzles` link. Do not save cookies/tokens or private account details in the evidence.
+2. Immediately inspect `GET /api/player/puzzle-families` (follow `nextCursor` if present) and the `/profile` uploaded count, then reload. The new ID should appear as `processing`, `ready`, or `failed`. The count includes `processing`, so zero after a successful 201 for a genuinely new family is a **candidate defect**, not a pass.
+3. Record elapsed time and recheck the **same family ID** until a terminal `ready` or `failed` state. `ready` confirms upload and generation; `failed` confirms owned persistence but identifies a generation failure requiring diagnosis/disposition. Neither a 201 nor a T+0 `processing` row closes this check.
+4. If it remains `processing` unusually long or approaches the reaper's **2-hour age threshold**, inspect the Workflow instance, Durable Object authority and status mirrors for the family ID. This indicates possible stuck processing, **not an automatic proof of data loss**: the reaper removes it only if the workflow is confirmed dead, the authoritative DO is not `ready`, and cleanup succeeds. If it disappears from the owned list, investigate the reaper/ownership path as a reproduced persistence failure.
+5. For non-2xx or 201 + missing owned row on reload, first isolate the failed step (auth, R2, KV, D1 ownership, workflow start, player-identity/owned-list filtering). Patch only that specific failure with a focused regression. Public gallery omission while `processing` is expected.
+6. **Cleanup:** there is no player-facing family delete. If authorized as an operator, after terminal state remove the disposable family through the protected `POST /api/admin/puzzle-family-delete/:familyId` endpoint. A stuck `processing` family needs the route's explicit `force=true` path and appropriate authorization; do not force-delete an active workflow as routine cleanup. Otherwise document that a non-sensitive throwaway will remain public, or do not perform a production upload if that cannot be accepted. Never directly edit production D1.
 
-1. Open `/upload` signed in. Pick a valid JPEG around 1024 px with a unique throwaway title, submit once, and capture the response status and family ID for `POST /api/puzzle-families` in a **redacted** Network trace.
-2. Check that UI reports **accepted for processing** and offers **View my puzzles**. Navigate to `/profile` and reload. Inspect `GET /api/player/puzzle-families` (follow `nextCursor` if applicable) for the **same family ID**, including `processing`, `ready` or `failed` state. `GET /api/player/profile` is supporting context, not a substitute for the owned list.
-3. If `processing`, distinguish a legitimately asynchronous workflow from missing persistence. Check again after processing has had a chance to finish; a temporary absence from the **public gallery** while processing is expected.
-4. If the upload returns a non-2xx response, capture its error category and isolate normalization, auth, R2, KV, D1 ownership, or workflow-start failure. If 201 succeeds but the owned list still omits the family after reload/pagination, check session identity, repository filtering, and server logs for **that family ID** before changing code. If it appears in the owned API but not `/profile`, inspect the profile mapping/render path instead.
-5. Record the observed result, and remove a test puzzle afterward if supported by the normal UI. Never modify production D1 directly as a testing shortcut. If authenticated access is unavailable, mark **deferred: authorized session required**, with no fabricated trace.
+Only on a proven failure inspect `apps/web/src/routes/upload/+page.svelte`, `apps/web/src/lib/services/api.ts`, `apps/web/src/routes/profile/+page.svelte`, `apps/api/src/routes/puzzle-families.worker.ts`, `apps/api/src/routes/player.worker.ts`, and shared ownership repositories. No speculative backend rewrite, schema change or polling architecture.
 
-**Code seams only if failure is reproduced:** `apps/web/src/routes/upload/+page.svelte`, `apps/web/src/lib/services/api.ts`, `apps/web/src/routes/profile/+page.svelte`, `apps/api/src/routes/puzzle-families.worker.ts`, `apps/api/src/routes/player.worker.ts`, and existing shared ownership repositories. Add one focused frontend/API regression for the actual failure; do not create a new upload pipeline or database migration.
+## Step 2 — Mouse drag: strict Chromium smoke + one human Safari check
 
-## Step 2 — Drag: distinguish physical mouse from the harness
+**Harness change included in this PR:**
 
-1. Use a ready, small puzzle on a **desktop browser with real mouse/trackpad**. Start a session, note the placed count, drag a visible tray piece to its correct cell, then check: drop accepted, piece leaves the tray, board cell fills, and count increases (for example 0/16 to 1/16).
-2. Navigate away and resume to verify that already-existing saved progress reflects that placement. Verify an intentionally wrong drop is rejected without advancing progress. Use mouse/trackpad on macOS and Windows; test tap-to-place separately on iOS Safari.
-3. Run the existing `@extended` mouse test to protect drop handling, but **do not count its pass as physical drag proof**: `e2e/support/gameplay-page.ts::placeWithMouse` may dispatch a synthetic `drop` after `dragTo` fails. The documented WebKit `dragTo` spike (0/20) is an automation limitation until human input demonstrates otherwise.
-4. If real input fails repeatably, capture source/target, browser, event evidence and session feedback. Restrict changes to `PuzzlePiece.svelte`, `PuzzleBoard.svelte`, `PuzzleInventoryPanel.svelte` or `routes/puzzle/[id]/+page.svelte` as the evidence requires. Retain the shared `PuzzleSession` placement rules; no new drag engine or generic input state machine.
+- In `apps/web/e2e/support/gameplay-page.ts`, `placeWithMouse` **must not synthesize DnD events in `chromium-desktop`**. Real `dragTo` must produce an engine-accepted placement or an explicit rejection; ignored drops fail with source/target diagnostics. Keep the existing fallback for mobile Chromium/WebKit, where Playwright HTML5 DnD is documented unreliable.
+- In `apps/web/e2e/gameplay-interactions.spec.ts`, tag the existing correct-placement `@extended` test as `@smoke` so automatic Chromium desktop runs exercise the native `dragstart` → `drop` path. The same mobile smoke scenario may still use its documented fallback; **only the desktop result is native-path evidence**.
+- Preserve the existing wrong-drop, keyboard, tap, session-restore and gallery-resume tests; they already cover those rules. Do not add an entire second manual matrix.
 
-**Regression only if needed:** add a narrow test that exercises the failing delivery path and checks board/tray/progress; reuse the existing gameplay fixture. Preserve keyboard/tap coverage. Avoid brittle WebKit synthetic-drag assertions.
-
-## Step 3 — First paint: capture before fixing
-
-1. Open the gallery URL in a fresh tab/clean browser context with a real **cold document navigation**, not just a SvelteKit client transition. Record short screen video/frame captures including first paint. Repeat after hard reload with cache disabled, and once on a normal warm revisit.
-2. Compare macOS Chrome/Safari, Windows Chrome/Edge, and iOS Safari as accessible. Record whether the reported flash is white browser canvas before CSS, an empty dark shell before hydration, or slow route content after shell paint. Note network/console evidence if it helps.
-3. Existing `app.html` uses `theme-color: #0a0620`; `routes/layout.css` already paints `html/body` dark. A speculative inline style or splash screen is **not justified** by the historical observation alone.
-4. Only if reproducible, fix the precise paint stage, likely within `apps/web/src/app.html`, `apps/web/src/routes/layout.css`, `apps/web/src/routes/+layout.svelte` or the existing `ArcadeShell.svelte`. Add a deterministic first-paint/assertion only if it proves the measured failure; otherwise retain the manual capture as evidence.
-
-## Step 4 — Implement just the reproduced fixes
-
-Follow these branches **conditionally**, in the same PR:
-
-- **No reproduction:** change no application code. Document the checked environment, evidence and disposition; do not declare untested devices verified.
-- **Upload reproduced:** patch one demonstrated failing operation; add one regression at the web route, player API, or shared repository seam that would have failed before the fix. Keep normalized file-size and async processing semantics unchanged unless they are the demonstrated cause.
-- **Drag reproduced:** fix the event/interaction path, not the session engine unless engine behavior itself is proven wrong. Check real pointer behavior after the change.
-- **Cold paint reproduced:** address the classified paint gap and verify visually under the same cold conditions; avoid unrelated theme redesign.
-
-If a fix changes gameplay-core or shared types, run the full `bun run test:unit` (root `test` skips these workspaces). If only web/API code changes, run focused unit tests for the touched area plus the existing relevant E2E lanes.
-
-## Step 5 — Verification and closeout
-
-**Automated regression commands (as applicable to changed code):**
+Run:
 
 ```bash
-# Current browser E2E paths; note native-pointer evidence still needs a human check
-bun run --cwd apps/web test:e2e:extended -- gameplay-interactions.spec.ts
-bun run --cwd apps/web test:e2e:webkit
+bun run --cwd apps/web test:e2e:smoke
+bun run --cwd apps/web test:e2e:extended -- gameplay-interactions.spec.ts --project=chromium-desktop
+```
 
-# Existing upload, API and profile suites when their code is touched
-bun run --cwd apps/web test:unit -- src/routes/upload/page.svelte.test.ts
-bun run --cwd apps/api test -- src/routes/puzzle-families.worker.test.ts
+Then manually try **one desktop Safari physical mouse/trackpad drag**, since the existing Playwright projects have mobile WebKit but no desktop WebKit. Record whether the piece leaves the tray, fills the correct cell and advances the placed count. If it fails, capture dragstart/dragover/drop behavior and fix the proven seam (`PuzzlePiece.svelte`, `PuzzleBoard.svelte`, `PuzzleInventoryPanel.svelte`, route callback) **on this same PR**. Do not rewrite `PuzzleSession` unless the engine itself is demonstrated wrong. Synthetic fallback success or iOS tap success alone cannot clear desktop Safari drag.
 
-# When code is changed (full test:unit if game-core/types are touched)
+## Step 3 — Cold first paint: classify, then patch only if observed
+
+1. Capture first frames on **cold direct navigation** to `/` in desktop Chromium and **iOS Safari**. Repeat hard reload/cache-disabled and normal warm revisits; record any white frame, dark empty shell, late gallery data or persistent blank, with environment and timing.
+2. The static adapter emits `200.html` SPA fallback, which the API Worker serves for missing asset routes. On a fresh `bun run build`, check the fallback's head for the render-blocking CSS asset and confirm its `html/body` dark paint. Existing `app.html` `theme-color` and `layout.css` already use `#0a0620`.
+3. **If white default browser canvas before CSS is proven**, assess the small `<meta name="color-scheme" content="dark">` change in `app.html`, re-capture on the same browser, and only keep it if it improves the reproduced issue.
+4. **If the page is briefly dark/empty while the SPA hydrates**, record it as intended if the UI reliably resolves. **If it stays empty excessively or errors**, investigate the actual hydration/data problem; do not mask it with a splash screen. Route content loading can be intended or an evidenced defect depending on duration and errors.
+5. No change merely because the old September report mentioned a flash.
+
+## Step 4 — Conditional implementation and tests
+
+- A reproduced upload failure receives a **single focused regression** at its failing web/API/repository seam; preserve normalized byte limit and async processing behavior unless the evidence implicates them.
+- A reproduced native-drag failure receives a focused input-path fix; use the already-existing smoke/extended test, including the strict desktop gate. Do not add a new engine.
+- A reproduced paint defect receives the smallest cause-specific change plus a visual recheck with the same cold conditions.
+- If nothing reproduces, leave production code unchanged and close with evidence, not a speculative patch.
+- Never add new image art or SFX to this coding task; any requested asset belongs in a separate task.
+
+Verification commands for touched code:
+
+```bash
+bun run --cwd apps/web test:e2e:smoke
+bun run --cwd apps/web test:e2e:extended -- gameplay-interactions.spec.ts --project=chromium-desktop
+bun run --cwd apps/web test:unit -- src/routes/upload/page.svelte.test.ts  # upload UI only
+bun run --cwd apps/api test -- src/routes/puzzle-families.worker.test.ts   # API only
 bun run check
 bun run lint
 ```
 
-A **docs-only** draft does not claim these tests were executed. `test:e2e:extended` is a manual/pre-release lane, not an automatic pointer certification. Prefer tests at the failing seam over broad new suites.
+Run `bun run test:unit` **root-wide** if shared types or gameplay-core change; root `bun run test` alone skips them. Run `test:e2e:webkit` only if tap/keyboard/WebKit behavior is touched. Existing CI provides Android/Linux coverage; no separate manual acceptance on those platforms.
 
-### End-to-end acceptance criteria
+## End-to-end acceptance (bounded, not a repeated full matrix)
 
-- [ ] **macOS (Chrome and Safari):** an authorized signed-in upload returns an observable result and its owned puzzle appears on `/profile` after reload, or a precise, evidenced defect is fixed; physical mouse/trackpad placement advances progress and survives resume; repeated cold navigations do not exhibit the original unexplained flash, or the issue is captured and fixed.
-- [ ] **Windows (Chrome or Edge):** real mouse drag places a piece, wrong placement does not increment progress, and resume retains the result; cold gallery navigation is visually checked for unintended white/blank paint; signed-in upload/profile behavior is rechecked when a test account is available.
-- [ ] **iOS (Safari):** the supported **tap/select-to-place** path advances progress and resumes correctly; direct cold navigation is visually inspected for light/blank flash; upload success and profile list are spot-checked if the authorized session is available. Desktop HTML5 drag is **not** an iOS touch acceptance requirement.
-- [ ] **Visual comparison:** inspect uploaded-puzzle feedback, board/tray placement state, and first-paint arcade styling against the existing shipped UI. There is currently **no mockup attached to HPA-825**; if Linear gains one, compare with it explicitly.
-- [ ] **Evidence and disposition:** every residual finding has a dated environment/build reference, redacted observation, and one of `fixed`, `not reproducible`, `intended` or an **explicit deferral** identifying the missing environment/access and follow-up action. A reproduced bug has a focused regression and post-fix check.
+- [ ] **macOS:** Chromium desktop native `dragTo` smoke passes without a synthetic fallback; a physical mouse/trackpad drag in **Safari** places a piece, updates visible progress, and matches the current board/tray UI. A cold gallery navigation is visually compared with existing arcade styling.
+- [ ] **Windows:** Chrome/Edge end-to-end smoke confirms the puzzle opens and a piece can be placed with a mouse; confirm the arcade shell does not show an unexplained white/blank navigation. No separate exhaustive wrong-drop/resume run; those are already tested.
+- [ ] **iOS:** Safari tap-to-place and puzzle navigation remain usable; inspect cold gallery first paint against the existing dark theme. Touch is **not** required to perform desktop HTML5 DnD.
+- [ ] **Production upload (one authorized browser on any supported desktop OS):** capture 201/non-2xx + family ID, immediate owned row/count and **terminal** `ready`/`failed` (or evidence of a stuck/deleted state); a reload shows the correct family. An expected public-gallery delay while processing is not a persistence failure.
+- [ ] **Visual check:** upload status and profile, board/tray placement, and cold arcade background match the shipped UI; HPA-825 has **no attached mockup** as of this plan, but compare directly with one if attached later.
+- [ ] **Evidence:** each of the three canonical table rows records date, revision/environment, observed outcome and final disposition (`fixed`, `not reproducible`, `intended`, or `deferred` with a precise blocker and follow-up). No reproduced bug is closed without a narrow regression and post-fix check.
 
-Android and Linux require no separate manual acceptance; keep relying on existing CI coverage. No new image art/SFX is in scope.
-
-### Completion rule
-
-Before marking HPA-825 done, update this plan/PR with the **actual** three outcomes and link the draft PR from Linear. If authorized production access or a required real device is absent, preserve the `deferred` disposition with a named follow-up; do **not** relabel the check as passing. Keep all implementation work for this ticket in this single PR.
+**Not yet executed:** no authenticated production upload, human Safari/Windows interaction, or cold-paint capture was performed while preparing this document. The Playwright changes above also need CI results before claiming success. Keep all results in the table above and link this PR from HPA-825.
