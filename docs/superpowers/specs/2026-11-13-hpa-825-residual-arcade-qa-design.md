@@ -2,64 +2,53 @@
 
 **Linear:** [HPA-825](https://linear.app/cwchanap/issue/HPA-825/verify-remaining-arcade-qa-upload-persistence-drag-and-cold-paint)  
 **Original report:** [GitHub #86](https://github.com/cwchanap/perseus/issues/86)  
-**Previous remediation:** [PR #138](https://github.com/cwchanap/perseus/pull/138), merged 2026-10-28; [its implementation plan](../plans/2026-10-23-issue-86-qa-remediation.md)  
-**Code baseline:** `main` at `0fe71b87ac43cc3e275d1c8834c0506099650eb2`, inspected 2026-11-13. Production deployment commit and fresh runtime behavior have **not** been verified.  
-**Delivery:** One PR for this ticket, starting with design/plan only; continue any reproduced fix on the **same PR**.
+**Previous remediation:** [PR #138](https://github.com/cwchanap/perseus/pull/138) and its [implementation plan](../plans/2026-10-23-issue-86-qa-remediation.md)  
+**Source baseline:** `0fe71b87` when drafted; by this review, `main` advanced to `4b582ae9` (dependency/workflow files only).  
+**Deployment observation:** [Deploy Infrastructure run 43544192168](https://github.com/cwchanap/perseus/actions/runs/43544192168) succeeded on 2026-11-14 for `ca379441`, after the previous reviewer's 2026-11-06 `d927ee86` baseline. This confirms a workflow run, **not independently the assets served by production**; recheck the latest successful run and actual deployed revision when testing.  
+**Delivery:** one draft PR for design, verification, and any evidenced fixes.
 
-## Problem and scope
+## Goal and boundaries
 
-PR #138 already implemented the confirmed frontend fixes from #86: persistent upload feedback and profile link, decode-safe upload previews, URL-derived gallery filters, clearer Continue/empty-state copy, malformed-ID recovery, title tooltips, and the dark theme color. Pause and action-menu accessibility were already fixed.
+PR #138 already shipped the confirmed frontend work: persistent upload feedback/profile link, decode-safe preview, URL gallery filters, Continue/empty copy, malformed ID recovery, title tooltip and theme color. Pause and action-menu accessibility were already fixed.
 
-Three **unresolved verification questions** remain, not three established code defects:
+Only these three questions remain unresolved:
 
-1. Does an authenticated **production** image upload persist as an owned puzzle and appear on the player's profile after reload?
-2. Does a **real mouse/trackpad** drag place a puzzle piece and update progress, or was the original failed attempt caused by browser automation?
-3. Does a **cold navigation** still flash white/blank before the dark arcade shell, and if so at which paint stage?
+1. Does an authenticated upload survive to a **terminal state** (`ready` or `failed`) in the player's owned list? A temporary `processing` row is not enough to close the persistence question.
+2. Does desktop HTML5 **native dragstart/drop** work without synthetic E2E fallback, and does Safari physical mouse/trackpad drag work?
+3. Does a cold gallery navigation flash white or remain abnormally blank, and is that pre-CSS browser canvas, hydration, or slow data?
 
-The desired outcome is a defensible disposition for each question: **fixed**, **not reproducible**, **intended behavior**, or **explicitly deferred** with the missing access/environment and next owner/action. Only a reproduced defect authorizes a code change.
+**No speculative application changes.** Prefer verification, the existing test fixtures and the known code seams. Do not introduce a new upload pipeline, global event bus, drag controller, session schema, D1 migration, loading-screen framework, new graphics, or audio. Keep the task to this single PR.
 
-## Existing seams and assumptions
+## Relevant existing behavior
 
-### Upload and ownership
+### Upload is asynchronous and can be reaped
 
-- `apps/web/src/routes/upload/+page.svelte` normalizes the selected image, calls `createPlayerPuzzle`, keeps a success status, and links to `/profile`. The selected image is decoded before preview; original file size is not compared to the server's normalized 10 MB limit.
-- `apps/web/src/lib/services/api.ts` sends `POST /api/puzzle-families` with credentials. The route in `apps/api/src/routes/puzzle-families.worker.ts` writes the original image, family/variant metadata, and the D1 ownership row (initially `processing`), then starts a Workflow **before** returning HTTP 201.
-- `GET /api/player/puzzle-families` is the owned-family read; `apps/web/src/routes/profile/+page.svelte` displays the owned list, including processing/failed entries. Public gallery playability is a **separate later state** (`ready`) and must not be confused with upload persistence.
-- These code paths make a persistence failure *possible to diagnose*, not safe to assert without an authenticated trace. A 201 by itself does not establish profile visibility.
+`apps/web/src/routes/upload/+page.svelte` normalizes the image, POSTs through `createPlayerPuzzle`, keeps feedback visible, and links to `/profile`. The API (`apps/api/src/routes/puzzle-families.worker.ts`) writes R2 assets, metadata, a D1 ownership row, and starts a Workflow before returning HTTP 201. The owned-list endpoint (`GET /api/player/puzzle-families`) includes `processing` entries, and the profile summary counts them.
 
-### Drag/placement
+However, `apps/api/src/services/reaper.ts` considers `processing` entries **older than two hours** for cleanup if their Workflow is confirmed dead and the Durable Object is not authoritatively `ready`. Cleanup can remove the D1 ownership row too. Thus 201 plus an immediate `processing` entry proves initial writes, **not durable completion or failure retention**. A normal `failed` terminal state remains owned; distinguish generation failure from missing persistence.
 
-- `apps/web/src/lib/components/PuzzlePiece.svelte` sets `DataTransfer` in `dragstart`. `PuzzleBoard.svelte` accepts `dragover`/`drop` and sends a placement attempt to the existing `PuzzleSession` flow through the puzzle route.
-- `apps/web/e2e/gameplay-interactions.spec.ts` exercises mouse drag; `e2e/support/gameplay-page.ts::placeWithMouse` first tries Playwright `dragTo()` **then falls back to dispatching synthetic DnD events**. A passing test proves handling of a drop, **not necessarily native pointer delivery**.
-- The harness already documents a WebKit automation limitation (`e2e/README.md`, HPA-517 spike: `dragTo()` 0/20 on mobile WebKit). Do not treat this as evidence of a human-visible gameplay defect. Existing tap-to-place and keyboard alternatives are separate supported paths.
+The public gallery may omit an owned upload until `ready`; that is intended, not proof it disappeared.
 
-### First paint
+### Desktop DnD was masked by fallback
 
-- `apps/web/src/routes/layout.css` paints both `html` and `body` with `--bg-0: #0a0620`; `apps/web/src/app.html` already has matching `theme-color`.
-- A white browser canvas before the CSS paints, an empty *dark* app shell during hydration, and a slow gallery data render are different phenomena. Measure which, if any, occurs before changing the shell.
+`PuzzlePiece.svelte` uses `draggable` and `dragstart` to set `DataTransfer`; `PuzzleBoard.svelte` handles `dragover`/`drop` and routes placement through `PuzzleSession`. The former `e2e/support/gameplay-page.ts::placeWithMouse` tried `dragTo()` but synthesized `dragover`/`drop` if no piece was placed. That can mask a broken `draggable`, `dragstart` or `setData` path.
 
-## Decision rules
+For HPA-825, require **no synthetic fallback on `chromium-desktop`**, including for rejected drops; keep the documented fallback only for mobile/WebKit where Playwright drag delivery is unreliable. Add the existing correct-placement test to automatic Chromium smoke; this is a focused harness improvement, not a production gameplay rewrite. One manual desktop Safari pointer drag remains useful because the project has no desktop WebKit Playwright project.
 
-| Question | Evidence to collect | Decision |
-| --- | --- | --- |
-| Authenticated upload | Deployed build/commit, authorized account (redacted), image type/size, upload request status and returned family ID, owned-family list (including pagination), profile appearance on reload, later status | If 201 + owned `processing`/`ready` row is visible: persistence works. If non-2xx or 201 + missing row after controlled reload, trace the failing stage and fix only that failure. An item pending processing not yet in the *public gallery* is intended. |
-| Real drag | Browser/OS, actual pointer input, visible tray source and target, before/after placed count, board/tray states, and whether local saved progress survives navigation | A manually successful drag closes the question. If native pointer fails reproducibly, isolate event delivery vs rejected placement before modifying piece/board handlers. Synthetic E2E alone is insufficient. |
-| Cold first paint | Browser/OS, full navigation versus client-side transition, cache state, screen recording or timestamped frame capture, visible background, network/console signals | If no flash is observed in repeat cold loads: not reproducible on recorded environments. If a flash occurs, classify pre-CSS canvas / hydration gap / route-content loading and patch only its actual cause. |
+Existing tests already cover wrong placement, save/resume, keyboard and iOS-style tap; do not repeat their entire acceptance matrix manually.
 
-When the production login or a physical browser is unavailable, mark the check **unverified/deferred**, not passing. Do not introduce live-account credentials into tests, logs, commits, screenshots, or the PR.
+### First paint already has a dark CSS background
 
-## Design boundaries
+`apps/web/src/app.html` defines `theme-color: #0a0620` and `apps/web/src/routes/layout.css` paints `html/body` dark. The static adapter produces an SPA fallback `200.html` (`apps/web/vite.config.ts`), served on route misses by `apps/api/src/worker.ts`.
 
-- Keep new behavior local to the actual failing seam, if one is demonstrated. Reuse existing upload API, ownership repository, `PuzzleSession`, DnD handlers, SvelteKit routes, and Playwright fixtures.
-- No redesign of upload, new status polling, gallery/profile data model, D1 migration, schema change, global event bus, drag abstraction, loading-screen framework, or speculative engine rewrite.
-- Do not duplicate PR #138's shipped improvements or broaden into generic arcade polish.
-- Do not manufacture production-access or timing results. A documentation-only draft is a planning artifact, **not proof that QA passed**.
-- No new UI art or sound effects are needed; any future asset request must be scoped separately.
+Recheck the generated fallback `<head>` and CSS link with a fresh build if a paint issue is reproduced. A white pre-CSS **browser canvas** may warrant `<meta name="color-scheme" content="dark">`, **only after capture confirms that case**. A short dark empty shell during expected SPA hydration is an **intended** loading state; a persistent or excessive blank state needs investigation rather than automatic dismissal.
 
-## Review and acceptance UX
+## Test account and cleanup rule
 
-The Linear ticket has **no UI mockup attached** (it links to the original QA issue). Compare the actual UI visually with the **existing** arcade design and the current shipped screens. If a Linear mockup is later attached, add an explicit side-by-side comparison before closing the ticket.
+Use **one** authorized production browser session and a disposable, non-sensitive picture. The normal player UI does not support deleting owned families. If appropriate admin access is available, use the existing protected `POST /api/admin/puzzle-family-delete/:familyId` operator route **only once processing has finished** (or follow its explicitly authorized force-delete process for a genuinely stuck family). Otherwise record that the intentionally public throwaway remains, or avoid uploading if that outcome is not acceptable. Never store credentials, session cookies or identifiable account traces in the PR. Never mutate production D1 directly.
 
-The manual end-to-end target is the **web** experience on macOS (Chrome/Safari, real mouse/trackpad), Windows (Chrome/Edge, real mouse), and iOS (Safari, tap-to-place and first navigation; do not require HTML5 desktop drag on touch). Record OS/browser, production URL and deployment, and a concise pass/fail/deferral for every applicable check. Android/Linux are not additional manual acceptance targets; retain the project's existing CI coverage.
+## Acceptance and record ownership
 
-See the [implementation and verification plan](../plans/2026-11-13-hpa-825-residual-arcade-qa.md) for the order of operations, bounded fix branches, tests and end-to-end acceptance criteria.
+The [implementation/verification plan](../plans/2026-11-13-hpa-825-residual-arcade-qa.md) is the **single canonical evidence/disposition table**. Keep the design decisions here stable; do not duplicate per-run status in both files.
+
+The ticket has **no Linear UI mockup attached**. Visually compare against shipped arcade UI, and explicitly compare with a ticket mockup if one appears. End-to-end acceptance focuses on macOS, Windows, and iOS only: use an efficient representative browser matrix instead of repeating every test on every platform. Android/Linux have CI coverage only. Mark unrun checks **pending**, never passing; any deferred case must name the missing access/environment and follow-up.
