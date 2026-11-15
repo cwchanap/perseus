@@ -184,6 +184,27 @@ describe('ArcadeShell', () => {
 			.toBeVisible();
 	});
 
+	it('falls back to a generic profile link name for an empty display name and tracks renames', async () => {
+		await page.viewport(1440, 900);
+		const { rerender } = await render(ArcadeShell, {
+			...authenticatedProps,
+			playerDisplayName: ''
+		});
+
+		await expect
+			.element(
+				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Player — ?' })
+			)
+			.toBeVisible();
+
+		await rerender({ playerDisplayName: 'Rae Villa' });
+		await expect
+			.element(
+				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Rae Villa — RV' })
+			)
+			.toBeVisible();
+	});
+
 	it('shows the gallery compact search for an anonymous player on mobile', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
