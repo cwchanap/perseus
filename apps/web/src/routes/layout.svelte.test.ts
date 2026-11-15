@@ -153,6 +153,41 @@ describe('Root Layout', () => {
 		expect(playerAuth.logout).toHaveBeenCalledOnce();
 	});
 
+	it('falls back to the player email when the display name is empty or blank', async () => {
+		const baseUser = {
+			id: 'player-1',
+			email: 'player@example.com',
+			createdAt: 1779530400000,
+			lastLoginAt: 1779530400000
+		};
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: { ...baseUser, name: '' },
+			error: null
+		});
+
+		render(RootLayout, { children: makeChildren() });
+
+		const header = page.getByTestId('arcade-mobile-header');
+		await expect.element(header.getByLabelText('Profile for player@example.com — P')).toBeVisible();
+
+		// Whitespace-only names are blank too: the email stays the identity.
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: { ...baseUser, name: '   ' },
+			error: null
+		});
+		await expect.element(header.getByLabelText('Profile for player@example.com — P')).toBeVisible();
+
+		// A real name wins over the email fallback.
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: { ...baseUser, name: 'Player Two' },
+			error: null
+		});
+		await expect.element(header.getByLabelText('Profile for Player Two — PT')).toBeVisible();
+	});
+
 	it('catches rejected player sign out attempts', async () => {
 		const logoutError = new Error('logout failed');
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);

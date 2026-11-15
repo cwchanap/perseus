@@ -191,9 +191,22 @@ describe('ArcadeShell', () => {
 			playerDisplayName: ''
 		});
 
+		const sidebarAvatar = await page
+			.getByTestId('arcade-sidebar')
+			.getByRole('link', { name: /Profile for/ })
+			.element();
+		expect(sidebarAvatar.textContent?.trim()).toBe('P');
 		await expect
 			.element(
-				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Player — ?' })
+				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Player — P' })
+			)
+			.toBeVisible();
+
+		// A whitespace-only name is blank, not a placeholder of spaces.
+		await rerender({ playerDisplayName: '   ' });
+		await expect
+			.element(
+				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Player — P' })
 			)
 			.toBeVisible();
 

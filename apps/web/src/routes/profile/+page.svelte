@@ -19,6 +19,7 @@
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import { ownedFamilyToGalleryFamily, hasPlayableVariantIds } from '$lib/utils/familyCard';
+	import { playerIdentity } from '$lib/utils/playerIdentity';
 	import { formatTime } from '$lib/stores/timer';
 
 	let profile = $state<PlayerProfile | null>(null);
@@ -48,15 +49,7 @@
 	// rather than letting them resolve and write state to an unmounted component.
 	let abortController: AbortController | null = null;
 
-	const initials = $derived(
-		(profile?.name ?? '?')
-			.split(' ')
-			.filter((p) => p.length > 0)
-			.map((p) => p[0])
-			.slice(0, 2)
-			.join('')
-			.toUpperCase() || '?'
-	);
+	const initials = $derived(playerIdentity(profile?.name).initials);
 
 	function toGalleryFamily(p: PlayerOwnedFamilySummary): PuzzleFamilySummary {
 		return ownedFamilyToGalleryFamily(p);

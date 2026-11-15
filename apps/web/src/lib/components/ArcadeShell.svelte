@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { playerIdentity } from '$lib/utils/playerIdentity';
 
 	interface ArcadeShellProps {
 		children?: Snippet;
@@ -79,20 +80,13 @@
 		}
 	];
 
-	const initials = $derived(
-		(playerDisplayName || '?')
-			.split(' ')
-			.filter(Boolean)
-			.map((part) => part[0])
-			.slice(0, 2)
-			.join('')
-			.toUpperCase()
-	);
+	const identity = $derived(playerIdentity(playerDisplayName));
+	const initials = $derived(identity.initials);
 
 	// WCAG 2.5.3 Label in Name: the visible initials must be tokens in the
 	// accessible name — outside parentheses (axe strips parentheticals before
 	// matching label-content-name-mismatch).
-	const profileLinkLabel = $derived(`Profile for ${playerDisplayName || 'Player'} — ${initials}`);
+	const profileLinkLabel = $derived(`Profile for ${identity.displayName} — ${initials}`);
 
 	function isActive(path: string): boolean {
 		return currentPath === path;
@@ -195,7 +189,7 @@
 						<span aria-hidden="true">★</span>
 						<span data-testid="arcade-compact-score">{score ?? '—'}</span>
 					</div>
-					<span class="compact-profile-name">{playerDisplayName || 'Player'}</span>
+					<span class="compact-profile-name">{identity.displayName}</span>
 					<a
 						href={resolve('/profile')}
 						class="profile-avatar compact-avatar"
