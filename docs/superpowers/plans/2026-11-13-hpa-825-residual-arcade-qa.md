@@ -54,7 +54,7 @@ bun run --cwd apps/web test:e2e
 bun run --cwd apps/web test:e2e:smoke
 # desktop-only: `test:e2e:extended` already names five projects and Playwright accumulates
 # `--project` flags, so appending one to that script does not narrow the run
-cd apps/web && bunx playwright test --grep @extended --project=chromium-desktop e2e/gameplay-interactions.spec.ts
+(cd apps/web && bunx playwright test --grep @extended --project=chromium-desktop e2e/gameplay-interactions.spec.ts)
 ```
 
 Then manually try **one desktop Safari physical mouse/trackpad drag**, since the existing Playwright projects have mobile WebKit but no desktop WebKit. Record whether the piece leaves the tray, fills the correct cell and advances the placed count. If it fails, capture dragstart/dragover/drop behavior and fix the proven seam (`PuzzlePiece.svelte`, `PuzzleBoard.svelte`, `PuzzleInventoryPanel.svelte`, route callback) **on this same PR**. Do not rewrite `PuzzleSession` unless the engine itself is demonstrated wrong. Synthetic fallback success or iOS tap success alone cannot clear desktop Safari drag.
@@ -82,7 +82,7 @@ bun run --cwd apps/web test:e2e
 bun run --cwd apps/web test:e2e:smoke
 # desktop-only: `test:e2e:extended` already names five projects and Playwright accumulates
 # `--project` flags, so appending one to that script does not narrow the run
-cd apps/web && bunx playwright test --grep @extended --project=chromium-desktop e2e/gameplay-interactions.spec.ts
+(cd apps/web && bunx playwright test --grep @extended --project=chromium-desktop e2e/gameplay-interactions.spec.ts)
 bun run --cwd apps/web test:unit -- src/routes/upload/page.svelte.test.ts  # upload UI only
 bun run --cwd apps/api test -- src/routes/puzzle-families.worker.test.ts   # API only
 bun run check
