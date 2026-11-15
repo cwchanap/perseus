@@ -80,6 +80,7 @@ import {
 	PIECE_COUNTS_1_1,
 	variantIdsForFamily
 } from './helpers/family-fixtures';
+import { pumpUntilTimerOrSettled } from './helpers/fake-timers';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
@@ -313,6 +314,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 		const env = setupDeadCommitConflict(statusFn, terminateFn);
 
 		const resPromise = admin.fetch(createRequest('conflict-deadline'), env);
+		await pumpUntilTimerOrSettled(resPromise);
 		// Advance past the poll timeout (30s default)
 		await vi.advanceTimersByTimeAsync(35000);
 		const res = await resPromise;
@@ -1212,6 +1214,7 @@ describe('Admin Worker — idempotency KV retry budget exceeded', () => {
 		} as any;
 
 		const fetchPromise = admin.fetch(createRequest('budget-key'), env);
+		await pumpUntilTimerOrSettled(fetchPromise);
 		// Advance through the initial 500ms setTimeout. The getPuzzle
 		// mock then jumps the clock forward by 5000ms, so the budget
 		// check (Date.now() - retryStart >= 3000) triggers immediately

@@ -56,6 +56,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
+import { pumpUntilTimerOrSettled } from './helpers/fake-timers';
 
 const PNG_HEADER = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -146,6 +147,7 @@ describe('Admin Worker idempotency helper failures', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const responsePromise = admin.fetch(createRequest('release-key'), createEnv() as any);
+		await pumpUntilTimerOrSettled(responsePromise);
 		await vi.runAllTimersAsync();
 		const response = await responsePromise;
 
