@@ -19,10 +19,8 @@ import { vi } from 'vitest';
  */
 export async function pumpUntilTimerOrSettled(promise: unknown, maxTurns = 1000): Promise<void> {
 	let settled = false;
-	void Promise.resolve(promise).then(
-		() => (settled = true),
-		() => (settled = true)
-	);
+	const markSettled = () => (settled = true);
+	void Promise.resolve(promise).then(markSettled, markSettled);
 	for (let i = 0; i < maxTurns && !settled && vi.getTimerCount() === 0; i++) {
 		await vi.advanceTimersByTimeAsync(0);
 	}
