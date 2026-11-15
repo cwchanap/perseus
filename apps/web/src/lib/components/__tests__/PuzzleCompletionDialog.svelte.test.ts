@@ -29,7 +29,7 @@ function standardTimedProps() {
 }
 
 describe('PuzzleCompletionDialog', () => {
-	it('shows a saved device-local result without an anonymous sync failure or dead retry', async () => {
+	it('avoids a dead retry for a locally saved anonymous completion', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			serverSubmissionRequiresSignIn: true
@@ -46,7 +46,9 @@ describe('PuzzleCompletionDialog', () => {
 	it.each([
 		{ localStatsSaved: false, localStatsFailed: false, message: 'Saving on this device' },
 		{ localStatsSaved: false, localStatsFailed: true, message: 'Local save failed' }
-	])('does not claim a successful local save while $message', async ({ localStatsSaved, localStatsFailed, message }) => {
+	])(
+		'does not claim a successful local save while $message',
+		async ({ localStatsSaved, localStatsFailed, message }) => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			localStatsSaved,
@@ -54,17 +56,24 @@ describe('PuzzleCompletionDialog', () => {
 			serverSubmissionRequiresSignIn: true
 		});
 
-		await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
-		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain('Saved on this device');
-	});
+			await expect
+				.element(page.getByTestId('completion-sign-in-note'))
+				.toMatchTextContent(message);
+			expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
+				'Saved on this device'
+			);
+		}
+	);
 
-	it('shows sync pending state and removes the retry action while a request is in flight', async () => {
+	it('replaces retry with pending sync state', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			serverSubmissionPending: true
 		});
 
-		await expect.element(page.getByTestId('server-sync-pending')).toMatchTextContent('SYNCING RESULT');
+		await expect
+			.element(page.getByTestId('server-sync-pending'))
+			.toMatchTextContent('SYNCING RESULT');
 		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
 		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
 	});
