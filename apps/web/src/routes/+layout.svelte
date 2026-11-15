@@ -20,7 +20,9 @@
 	const shellPathname = $derived(page.url.pathname);
 	const isOnPuzzleRoute = $derived(shellPathname.startsWith('/puzzle/'));
 	const shellVisible = $derived(!isOnPuzzleRoute && shellPathname !== '/admin');
-	const playerDisplayName = $derived($playerAuth.user?.name ?? $playerAuth.user?.email ?? '');
+	const playerDisplayName = $derived(
+		$playerAuth.user?.name?.trim() || $playerAuth.user?.email || ''
+	);
 	let shellScore = $state<number | null>(null);
 	let shellRank = $state<number | null>(null);
 
