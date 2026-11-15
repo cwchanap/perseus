@@ -38,9 +38,12 @@ the piece in the tray (517ms)` — wrong-cell drop produced an explicit engine r
 
 Notes:
 
-- Appending `--project=chromium-desktop` to `test:e2e:extended` does **not** narrow the run (Playwright
-  accumulates repeated `--project` flags); the evidence above is from the `chromium-desktop` project
-  within the all-project run.
+- Appending `--project=chromium-desktop` to `test:e2e:extended` did **not** narrow the run: the script itself
+  names five projects (`chromium-desktop`, `chromium-mobile`, `chromium-tablet`, `webkit-mobile`,
+  `webkit-tablet`) and Playwright accumulates repeated `--project` flags, so the command ran all five
+  (10 passed = 2 `@extended` tests × 5 projects). The evidence above is from the `chromium-desktop`
+  project within that five-project run; targeting desktop only requires invoking Playwright directly with
+  a single `--project=chromium-desktop` (verified via `--list`: 2 tests).
 - The two default-lane failures are the pre-existing axe `label-content-name-mismatch` (serious)
   `.profile-avatar` finding described in the plan's out-of-scope paragraph (`gallery.spec.ts` bookmark
   round-trip, `gameplay-accessibility.spec.ts` authenticated gallery). Both reproduced deterministically
@@ -89,8 +92,13 @@ Fresh-build and production HTML inspection (2026-11-15):
   stylesheet reference `0.AP-ShP5m.css` (hash matches the branch build output).
 
 `<meta name="color-scheme">` A/B on a local slow-CSS build (render-blocking CSS delayed 1500 ms, 4 arms,
-00:37–00:41 UTC): in every arm the manifest holds a single frame, captured at fp (≈1544–1564 ms), with
-average RGB `(10,6,33)`; no frames before fp in any arm. The root element's computed CSS `color-scheme`
+00:37–00:41 UTC): the three `p3-*` screencast manifests (`p3-nometa`, `p3-meta`, `p3-cssscheme`) each
+hold exactly one frame, captured at fp (afterCommit ≈1549–1561 ms ≈ fp 1544–1564 ms) with average RGB
+`(10,6,33)`, while the fourth arm's `probe-nometa.json` (a `Page.captureScreenshot` poller) holds 90 shot
+records — 11 successful captures before document commit (the pre-navigation surface, `afterCommitMs`
+null), 12 capture-error records (≈188–201 ms), and successful frames only again from ≈1741 ms
+(fp = 1560 ms). No arm captured a frame between document commit and first paint. The root element's
+computed CSS `color-scheme`
 read `normal` with the meta present (during the window and after full load) and `dark` in the
 `<style>:root{color-scheme:dark}</style>` control arm, confirming the probe reads that property. Because a
 `<meta name="color-scheme">` sets the document's supported/used scheme without necessarily changing the
