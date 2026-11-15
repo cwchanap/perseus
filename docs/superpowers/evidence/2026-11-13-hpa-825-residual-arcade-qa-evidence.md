@@ -111,3 +111,35 @@ paint — `Page.captureScreenshot` blocks until a frame exists and `Page.startSc
 compositor-frame production — so the duration/continuity of the interval between the initial white sample
 (~0–1 ms, before the document response at `responseEnd` ≈53–96 ms) and the dark first-paint frame is
 **inconclusive**.
+
+## Playwright clock install/pauseAt race — one-off failure, investigation and reruns (2026-11-15)
+
+Recorded outcomes for the follow-up investigation of a one-off default-lane failure of the
+`GameplayPage.loadFixture` clock pair (`clock.install({ time: START_AT })` then
+`clock.pauseAt(START_AT)`, identical timestamp) throwing `clock.pauseAt: Cannot fast-forward to the
+past` in `gameplay-infrastructure.spec.ts:98` ("authenticated completion: celebration, local stats,
+one sealed request"). Follow-up tickets:
+[HPA-1027](https://linear.app/cwchanap/issue/HPA-1027/perseus-stabilize-e2e-clock-installpause-race)
+(stabilize the pair) and
+[HPA-1028](https://linear.app/cwchanap/issue/HPA-1028/perseus-prevent-e2e-from-reusing-an-unrelated-local-server)
+(prevent unrelated-server reuse). No application code changed at any point in this follow-up.
+
+- 2026-11-15, branch HEAD `e5dbda77`: full desktop `test:e2e` run concurrent with the root unit
+  suite → 110 passed / 7 skipped / 3 failed. Two failures are the pre-existing avatar a11y
+  violations ([HPA-1026](https://linear.app/cwchanap/issue/HPA-1026/perseus-fix-profile-avatar-accessible-name-mismatch-in-desktop-e2e));
+  the third is the clock failure above. The concurrently running root `bun run test:unit` reported
+  7/7 workspace turbo tasks passed (task-level result as reported; not evidence that the mobile
+  workspace's tests themselves ran).
+- Identity-verified isolated reruns (2026-11-15; dedicated API/web ports, each service confirmed as
+  Perseus before testing): the exact failing test passed 10/10 serial and 10/10 under CPU-spinner
+  load, and a harness-analog spec using the exact `loadFixture` clock sequence reproduced the
+  identical error 3/3 with an explicit 150 ms stall inserted between `install` and `pauseAt`
+  (3/3 passed without a stall). The original run's stall was not measured, so contention remains a
+  plausible — not proven — cause of the original failure.
+- An intervening rerun failed 10/10 on missing puzzle-board solely because Playwright reused an
+  unrelated foreign preview (Gliese) already listening on web port 4173; all ten failures are
+  invalid for Perseus and are not reproductions (HPA-1028).
+- 2026-11-15, branch HEAD `f06c8a34`, web port free and a fresh Perseus preview:
+  `bun run --cwd apps/web test:e2e -- --workers=1` → 111 passed / 7 skipped / 2 failed; both
+  failures are the avatar a11y pair (HPA-1026), and the strict native-drag tests plus the
+  previously failing clock test passed.
