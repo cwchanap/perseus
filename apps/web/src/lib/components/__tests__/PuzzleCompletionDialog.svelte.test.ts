@@ -49,12 +49,12 @@ describe('PuzzleCompletionDialog', () => {
 	])(
 		'does not claim a successful local save while $message',
 		async ({ localStatsSaved, localStatsFailed, message }) => {
-		render(PuzzleCompletionDialog, {
-			...standardTimedProps(),
-			localStatsSaved,
-			localStatsFailed,
-			serverSubmissionRequiresSignIn: true
-		});
+			render(PuzzleCompletionDialog, {
+				...standardTimedProps(),
+				localStatsSaved,
+				localStatsFailed,
+				serverSubmissionRequiresSignIn: true
+			});
 
 			await expect
 				.element(page.getByTestId('completion-sign-in-note'))
