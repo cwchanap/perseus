@@ -17,7 +17,10 @@ function standardTimedProps() {
 		bestTime: 68,
 		isNewBest: false,
 		localStatsFailed: false,
+		localStatsSaved: true,
 		serverSubmissionRetryable: true,
+		serverSubmissionRequiresSignIn: false,
+		serverSubmissionPending: false,
 		onRetryServerSubmission: vi.fn(),
 		onPlayAgain: vi.fn(),
 		onBackToArcade: vi.fn(),
@@ -26,6 +29,46 @@ function standardTimedProps() {
 }
 
 describe('PuzzleCompletionDialog', () => {
+	it('shows a saved device-local result without an anonymous sync failure or dead retry', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			serverSubmissionRequiresSignIn: true
+		});
+
+		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('Saved on this device. Sign in to sync your result with your account.');
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+	});
+
+	it.each([
+		{ localStatsSaved: false, localStatsFailed: false, message: 'Saving on this device' },
+		{ localStatsSaved: false, localStatsFailed: true, message: 'Local save failed' }
+	])('does not claim a successful local save while $message', async ({ localStatsSaved, localStatsFailed, message }) => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			localStatsSaved,
+			localStatsFailed,
+			serverSubmissionRequiresSignIn: true
+		});
+
+		await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
+		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain('Saved on this device');
+	});
+
+	it('shows sync pending state and removes the retry action while a request is in flight', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			serverSubmissionPending: true
+		});
+
+		await expect.element(page.getByTestId('server-sync-pending')).toMatchTextContent('SYNCING RESULT');
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+	});
+
 	it.each([
 		['standard_timed', 'STANDARD TIMED'],
 		['rotation_timed', 'ROTATION TIMED'],
