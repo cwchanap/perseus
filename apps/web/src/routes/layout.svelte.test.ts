@@ -144,7 +144,9 @@ describe('Root Layout', () => {
 		render(RootLayout, { children: makeChildren() });
 
 		await expect
-			.element(page.getByTestId('arcade-mobile-header').getByLabelText('Profile for Player One'))
+			.element(
+				page.getByTestId('arcade-mobile-header').getByLabelText('Profile for Player One — PO')
+			)
 			.toBeVisible();
 		await page.getByTestId('arcade-mobile-menu-toggle').click();
 		await page.getByRole('button', { name: /SIGN OUT/i }).click();

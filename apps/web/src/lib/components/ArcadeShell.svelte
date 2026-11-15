@@ -89,6 +89,11 @@
 			.toUpperCase()
 	);
 
+	// WCAG 2.5.3 Label in Name: the visible initials must be tokens in the
+	// accessible name — outside parentheses (axe strips parentheticals before
+	// matching label-content-name-mismatch).
+	const profileLinkLabel = $derived(`Profile for ${playerDisplayName || 'Player'} — ${initials}`);
+
 	function isActive(path: string): boolean {
 		return currentPath === path;
 	}
@@ -146,11 +151,7 @@
 					<span data-testid="arcade-rank">#{rank ?? '—'}</span>
 				</div>
 				<div class="profile-card">
-					<a
-						href={resolve('/profile')}
-						class="profile-avatar"
-						aria-label={`Profile for ${playerDisplayName}`}
-					>
+					<a href={resolve('/profile')} class="profile-avatar" aria-label={profileLinkLabel}>
 						{initials}
 					</a>
 					<button type="button" class="logout-button" onclick={onLogout}>SIGN OUT</button>
@@ -198,7 +199,7 @@
 					<a
 						href={resolve('/profile')}
 						class="profile-avatar compact-avatar"
-						aria-label={`Profile for ${playerDisplayName}`}
+						aria-label={profileLinkLabel}
 					>
 						{initials}
 					</a>
