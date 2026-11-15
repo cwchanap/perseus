@@ -7,12 +7,14 @@
 // Uses e2e2a000-0000-4000-8000-000000000004 (2x2, 4 pieces) for speed.
 //
 // Tags:
-//   @smoke           — correct native mouse drag on desktop Chromium only.
+//   @smoke           — correct native mouse drag (desktop Chromium only),
+//                      the keyboard core flow, and mobile tap placement.
 //   @extended        — rejected mouse drag and other optional mouse tests.
 //                      WebKit dragTo is unreliable (0/20 on webkit-mobile).
 //   @webkit-critical — keyboard, tap placement, and dialog tests (reliable on WebKit).
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';
+import { isDesktopChromiumProject } from './support/gameplay-page';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const PROJECT = () => test.info().project.name;
@@ -28,7 +30,7 @@ test.describe('Gameplay interactions', () => {
 	// Outside @extended so the default desktop E2E and automatic smoke both
 	// cover native dragstart/drop. Touch/mobile projects cannot prove this path.
 	test('correct placement places the piece at its target cell @smoke', async ({ gameplayPage }) => {
-		test.skip(PROJECT() !== 'chromium-desktop', 'native HTML5 drag is desktop Chromium only');
+		test.skip(!isDesktopChromiumProject(), 'native HTML5 drag is desktop Chromium only');
 		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 		await gameplayPage.placeWithMouse(0, 0, 0);
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
@@ -40,6 +42,33 @@ test.describe('Gameplay interactions', () => {
 			// Piece 0 correct position is (0,0); (1,1) is wrong.
 			await gameplayPage.placeWithMouse(0, 1, 1);
 			await expect(page.getByTestId('piece-slot-0')).toBeVisible();
+		});
+
+		// Hint precedence hides the slot's rejection shake (the slot keeps its
+		// gold hinted styling), so only the board's placement feedback can
+		// classify this drop — a slot-class read would report 'ignored'.
+		test('rejected placement of a hinted piece keeps the piece in the tray', async ({
+			gameplayPage,
+			page
+		}) => {
+			const fixture = getFixture('e2e2a000-0000-4000-8000-000000000004');
+			await gameplayPage.gotoFixture({
+				fixtureId: fixture.id,
+				seedPreferences: IMMEDIATE_START
+			});
+
+			await page.getByRole('button', { name: 'Hint' }).click();
+			const hintedSlot = page.locator('[data-testid^="piece-slot-"][data-hinted="true"]');
+			await expect(hintedSlot).toHaveCount(1);
+			const hintedId = Number(
+				(await hintedSlot.getAttribute('data-testid'))!.replace('piece-slot-', '')
+			);
+			const hintedPiece = fixture.pieces.find((p) => p.id === hintedId)!;
+			// A cell wrong on both axes is never the correct one.
+			const wrongX = hintedPiece.correctX === 0 ? 1 : 0;
+			const wrongY = hintedPiece.correctY === 0 ? 1 : 0;
+			await gameplayPage.placeWithMouse(hintedId, wrongX, wrongY);
+			await expect(hintedSlot).toBeVisible();
 		});
 	});
 

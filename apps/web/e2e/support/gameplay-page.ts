@@ -100,6 +100,18 @@ export interface GotoFixtureOptions {
 const CONFIG_GLOBAL = '__PERSEUS_E2E_GAMEPLAY_V1__';
 const STATS_KEY_PREFIX = 'puzzle-stats-';
 
+/**
+ * True when the running project is a desktop (non-touch) Chromium context —
+ * the only lane trusted for strict native HTML5 dragTo without the
+ * synthetic fallback. Derived from the project's resolved `use` options so
+ * renaming a project cannot silently demote desktop Chromium to the weak
+ * fallback lane.
+ */
+export function isDesktopChromiumProject(): boolean {
+	const use = test.info().project.use;
+	return use.defaultBrowserType === 'chromium' && use.isMobile !== true && use.hasTouch !== true;
+}
+
 export class GameplayPage {
 	readonly page: Page;
 	readonly diagnostics: PageDiagnostics;
@@ -356,10 +368,10 @@ export class GameplayPage {
 		const sourceBox = await source.boundingBox();
 		const targetBox = await target.boundingBox();
 
-		if (test.info().project.name === 'chromium-desktop') {
+		if (isDesktopChromiumProject()) {
 			try {
 				await source.dragTo(target);
-				const outcome = await this.awaitPlacementOutcome(pieceId);
+				const outcome = await this.awaitPlacementOutcome(pieceId, x, y);
 				if (outcome === 'ignored') {
 					throw new Error(
 						`native dragTo did not place or reject piece ${pieceId} at (${x}, ${y}); ` +
@@ -372,20 +384,21 @@ export class GameplayPage {
 			return;
 		}
 
-		let placed = false;
+		// Touch/WebKit projects: dragTo() may not deliver HTML5 DnD, so one
+		// synthetic fallback follows — but only when the first drop was
+		// ignored. A real engine rejection must not be followed by a second,
+		// synthetic drop (the rejection would be recorded twice).
 		try {
 			await source.dragTo(target);
-			// Verify the drop registered — on some browsers dragTo() does not
-			// produce a drop event for HTML5 DnD.
-			placed = await this.isSlotGone(pieceId);
 		} catch {
-			// dragTo() threw — will try fallback.
+			// dragTo() threw — the outcome poll still classifies whatever did
+			// (or did not) land; a dead page rethrows inside it.
 		}
-
-		if (!placed) {
+		let outcome = await this.awaitPlacementOutcome(pieceId, x, y);
+		if (outcome === 'ignored') {
 			try {
 				await this.dispatchDnDFallback(pieceId, x, y);
-				const outcome = await this.awaitPlacementOutcome(pieceId);
+				outcome = await this.awaitPlacementOutcome(pieceId, x, y);
 				if (outcome === 'ignored') {
 					throw new Error(
 						`piece ${pieceId} did not detach and the engine signalled no ` +
@@ -673,39 +686,43 @@ export class GameplayPage {
 		}, pieceId);
 	}
 
-	/** True once the piece's tray slot has detached (i.e. the piece is placed). */
-	private async isSlotGone(pieceId: number): Promise<boolean> {
-		return this.page
-			.getByTestId(`piece-slot-${pieceId}`)
-			.waitFor({ state: 'detached', timeout: 1500 })
-			.then(() => true)
-			.catch(() => false);
-	}
-
 	/**
-	 * Classify an accepted, rejected, or ignored drop without waiting on a
-	 * detached Playwright locator. An accepted placement removes the tray slot;
-	 * a rejected drop briefly adds `.rejected` (500 ms) to the existing slot.
-	 * One DOM snapshot sees either outcome immediately, and polling is bounded
-	 * when neither outcome occurred.
+	 * Classify an accepted, rejected, or ignored drop. An accepted placement
+	 * removes the tray slot; a rejected drop renders `placement-feedback` on
+	 * the dropped-on cell for 500 ms (REJECTED_DURATION_MS). The verdict is
+	 * read from the target cell, not the slot's `.rejected` class: hinted
+	 * precedence keeps a hinted slot free of `.rejected`, and a stale verdict
+	 * on a different cell cannot count for this drop.
+	 *
+	 * Errors are not caught: an evaluate/waitForTimeout failure means the
+	 * page crashed or navigated, and letting it propagate keeps a dead page
+	 * from being misreported as an 'ignored' drop and blamed on drag-and-
+	 * drop. Only the verdict timeout itself yields 'ignored'.
 	 */
-	private async awaitPlacementOutcome(pieceId: number): Promise<'placed' | 'rejected' | 'ignored'> {
+	private async awaitPlacementOutcome(
+		pieceId: number,
+		x: number,
+		y: number
+	): Promise<'placed' | 'rejected' | 'ignored'> {
+		const deadline = Date.now() + 1500;
 		let outcome: 'placed' | 'rejected' | 'ignored' = 'ignored';
-		await expect
-			.poll(
-				async () => {
-					outcome = await this.page.evaluate((id) => {
-						const slot = document.querySelector(`[data-testid="piece-slot-${id}"]`);
-						if (!slot) return 'placed' as const;
-						if (slot.classList.contains('rejected')) return 'rejected' as const;
-						return 'ignored' as const;
-					}, pieceId);
-					return outcome;
+		while (outcome === 'ignored' && Date.now() < deadline) {
+			outcome = await this.page.evaluate(
+				({ id, cx, cy }) => {
+					const slot = document.querySelector(`[data-testid="piece-slot-${id}"]`);
+					if (!slot) return 'placed' as const;
+					const feedback = document.querySelector(
+						`[data-testid="drop-zone"][data-x="${cx}"][data-y="${cy}"] ` +
+							'[data-testid="placement-feedback"]'
+					);
+					return feedback?.getAttribute('data-kind') === 'rejected'
+						? ('rejected' as const)
+						: ('ignored' as const);
 				},
-				{ timeout: 1500, intervals: [50, 100] }
-			)
-			.not.toBe('ignored')
-			.catch(() => undefined);
+				{ id: pieceId, cx: x, cy: y }
+			);
+			if (outcome === 'ignored') await this.page.waitForTimeout(50);
+		}
 		return outcome;
 	}
 
