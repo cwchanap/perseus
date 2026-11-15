@@ -3198,6 +3198,24 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	);
 
+	it('shows local save and sign-in guidance instead of a dead retry after 401', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(401, 'unauthorized', 'Unauthorized')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('Saved on this device');
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps a 429 quota failure terminal through the shared status mapper', async () => {
 		// The shared completionFailureCodeFromHttpStatus maps 429 to
 		// completion_quota_exceeded, which isFailureRetryable treats as terminal:
