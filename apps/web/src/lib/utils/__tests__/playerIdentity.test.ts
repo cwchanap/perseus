@@ -22,4 +22,13 @@ describe('playerIdentity', () => {
 	it('uses a single-part name as one initial', () => {
 		expect(playerIdentity('Serena')).toEqual({ displayName: 'Serena', initials: 'S' });
 	});
+
+	it('keeps supplementary-plane characters whole when deriving initials', () => {
+		// 𠮷 (U+20BB7) is one code point but two UTF-16 code units; UTF-16
+		// indexing would leak a lone surrogate into the avatar and label.
+		expect(playerIdentity('𠮷野 太郎')).toEqual({
+			displayName: '𠮷野 太郎',
+			initials: '𠮷太'
+		});
+	});
 });

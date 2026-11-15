@@ -13,7 +13,9 @@ export function playerIdentity(name: string | null | undefined): {
 	const initials = displayName
 		.split(' ')
 		.filter(Boolean)
-		.map((part) => part[0])
+		// Array.from iterates code points: part[0] would split a supplementary-
+		// plane character (e.g. 𠮷) into a lone surrogate that renders as �.
+		.map((part) => Array.from(part)[0])
 		.slice(0, 2)
 		.join('')
 		.toUpperCase();
