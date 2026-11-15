@@ -63,6 +63,7 @@ import {
 	PIECE_COUNTS_1_1,
 	variantIdsForFamily
 } from './helpers/family-fixtures';
+import { pumpUntilTimerOrSettled } from './helpers/fake-timers';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 
@@ -451,6 +452,7 @@ describe('Admin Worker idempotency recovery', () => {
 		const workflow = createWorkflow();
 
 		const responsePromise = admin.fetch(createRequest('stale-key'), createEnv(workflow) as any);
+		await pumpUntilTimerOrSettled(responsePromise);
 		await vi.runAllTimersAsync();
 		const response = await responsePromise;
 
@@ -479,6 +481,7 @@ describe('Admin Worker idempotency recovery', () => {
 		vi.mocked(storage.originalImageExists).mockResolvedValue(true);
 
 		const responsePromise = admin.fetch(createRequest('propagating-key'), createEnv() as any);
+		await pumpUntilTimerOrSettled(responsePromise);
 		await vi.runAllTimersAsync();
 		const response = await responsePromise;
 
@@ -533,6 +536,7 @@ describe('Admin Worker idempotency recovery', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const responsePromise = admin.fetch(createRequest('probe-key'), createEnv() as any);
+		await pumpUntilTimerOrSettled(responsePromise);
 		await vi.runAllTimersAsync();
 		const response = await responsePromise;
 

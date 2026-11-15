@@ -57,6 +57,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { makeFamilyMetadata } from './helpers/family-fixtures';
+import { pumpUntilTimerOrSettled } from './helpers/fake-timers';
 
 const PNG_HEADER = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -189,6 +190,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		const workflow = createWorkflow();
 
 		const responsePromise = admin.fetch(createRequest('commit-key'), createEnv(workflow) as any);
+		await pumpUntilTimerOrSettled(responsePromise);
 		await vi.runAllTimersAsync();
 		const response = await responsePromise;
 
@@ -224,6 +226,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		const workflow = createWorkflow();
 
 		const responsePromise = admin.fetch(createRequest('conflict-key'), createEnv(workflow) as any);
+		await pumpUntilTimerOrSettled(responsePromise);
 		await vi.runAllTimersAsync();
 		const response = await responsePromise;
 
