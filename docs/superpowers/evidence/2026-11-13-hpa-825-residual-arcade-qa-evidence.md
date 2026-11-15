@@ -11,6 +11,8 @@ explicitly deferred and never attempted, so no evidence exists for it.
 
 - Runs executed 2026-11-14 (drag lane) and 2026-11-14/15 (paint captures) on branch HEAD `c47315bb`
   (merge-base with `origin/main`: `0fe71b87`; `origin/main` at test time: `4b582ae9`).
+- Post-fix HPA-1026 verification runs executed 2026-11-15 on branch HEAD `0360cfb6` (`c2ecc595` avatar
+  accessible-name fix plus `0360cfb6` test coverage); the `c47315bb`-era runs above are pre-fix history.
 - macOS 26.6.2 arm64; Playwright 1.64.1; bundled Chromium 156.0.8078.4; local E2E harness
   (Playwright-managed API on :3999, production-mode web preview on :4173).
 - Production paint captures: read-only `GET` navigations against `https://perseus.cwchanap.dev/` with
@@ -143,3 +145,44 @@ one sealed request"). Follow-up tickets:
   `bun run --cwd apps/web test:e2e -- --workers=1` → 111 passed / 7 skipped / 2 failed; both
   failures are the avatar a11y pair (HPA-1026), and the strict native-drag tests plus the
   previously failing clock test passed.
+
+## Profile avatar accessible name — HPA-1026 fix and fresh verification (2026-11-15)
+
+The pre-fix history is recorded above: the axe `label-content-name-mismatch` (serious) pair on
+`.profile-avatar` in `ArcadeShell.svelte` reproduced in the 2026-11-14 default run (2 failed) and both
+2026-11-15 pre-fix reruns (`e5dbda77`: 3 failed with the unrelated clock one-off; `f06c8a34` serial:
+2 failed, avatar pair only). Those records are retained as historical; the fix landed on this branch
+afterwards.
+
+- `c2ecc595` (HPA-1026): both sidebar and compact `.profile-avatar` links in `ArcadeShell.svelte` now
+  use the accessible name `Profile for ${playerDisplayName || 'Player'} — ${initials}` — the visible
+  initials are embedded outside parentheses because axe strips parentheticals before matching
+  `label-content-name-mismatch`. `0360cfb6` adds web unit coverage for the empty-display-name
+  fallback and rename reactivity. Verification below is the automated axe scan inside the desktop
+  Chromium E2E suite; no real-device or screen-reader testing is claimed.
+- Earlier isolated custom-port desktop run at `0360cfb6` (dedicated ports): 112 passed / 1 failed;
+  the single failure is **unrelated to the avatar change** — it stemmed from the port-3999 hardcoding
+  in the custom-port setup (same unrelated-server class as
+  [HPA-1028](https://linear.app/cwchanap/issue/HPA-1028/perseus-prevent-e2e-from-reusing-an-unrelated-local-server)),
+  so it is environment noise, not a regression, and is distinguished from the passing default run
+  below.
+- The fresh default run at `0360cfb6` used the **existing API server on :3999, identified as this
+  checkout**, plus a fresh production-mode web preview on :4173.
+
+| Command                                                                                                                           | Exit | Outcome                                   |
+| --------------------------------------------------------------------------------------------------------------------------------- | ---- | ----------------------------------------- |
+| `bun run --cwd apps/web test:e2e -- --workers=1`                                                                                  | 0    | 113 passed / 7 skipped / 0 failed         |
+| `bun run --cwd apps/web test:e2e:smoke -- --workers=1`                                                                            | 0    | 167 passed / 9 skipped / 0 failed         |
+| `(cd apps/web && bunx playwright test --grep @extended --project=chromium-desktop e2e/gameplay-interactions.spec.ts --workers=1)` | 0    | 2 passed / 0 failed                       |
+| `bun run test:unit` (repo root)                                                                                                   | 0    | 7 tasks passed (6 cached; web fresh 1271) |
+| `bun run check` (repo root)                                                                                                       | 0    | 5 tasks passed (4 cached)                 |
+| `bun run lint` (repo root)                                                                                                        | 0    | 3 tasks passed (2 cached)                 |
+
+Notes:
+
+- The smoke lane covers the Chromium desktop and emulated mobile projects; the extended command ran
+  only the `chromium-desktop` project.
+- Both previously failing tests are green in the default run: the `gallery.spec.ts` bookmark
+  round-trip and the `gameplay-accessibility.spec.ts` authenticated gallery scan no longer report the
+  `.profile-avatar` violation. The strict native-drag lanes still pass, so the drag evidence above is
+  unaffected.
