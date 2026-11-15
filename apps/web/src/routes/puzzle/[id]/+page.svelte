@@ -281,6 +281,18 @@
 		const submission = sessionState?.sealedCompletion?.serverSubmission;
 		return submission?.status === 'failed' && submission.retryable === true;
 	});
+	// Unauthorized account sync is not a failed local save: display sign-in
+	// guidance instead of offering a retry that cannot succeed while signed out.
+	const serverSubmissionRequiresSignIn = $derived.by(() => {
+		const submission = sessionState?.sealedCompletion?.serverSubmission;
+		return submission?.status === 'failed' && submission.code === 'unauthorized';
+	});
+	const serverSubmissionPending = $derived(
+		sessionState?.sealedCompletion?.serverSubmission.status === 'pending'
+	);
+	const localStatsSaved = $derived(
+		sessionState?.sealedCompletion?.localStats.status === 'succeeded'
+	);
 	const timerState = $derived<TimerState>({
 		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
 		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
@@ -1627,7 +1639,10 @@
 		{bestTime}
 		{isNewBest}
 		{localStatsFailed}
+		{localStatsSaved}
 		{serverSubmissionRetryable}
+		{serverSubmissionRequiresSignIn}
+		{serverSubmissionPending}
 		awards={completionAwards}
 		onRetryServerSubmission={handleRetryServerSubmission}
 		onPlayAgain={handlePlayAgain}
