@@ -24,4 +24,12 @@ export async function pumpUntilTimerOrSettled(promise: unknown, maxTurns = 1000)
 	for (let i = 0; i < maxTurns && !settled && vi.getTimerCount() === 0; i++) {
 		await vi.advanceTimersByTimeAsync(0);
 	}
+	// Exhausting maxTurns means the code under test never reached its first
+	// setTimeout — returning silently would restore the vitest-timeout hang
+	// this helper exists to prevent, with no diagnostic.
+	if (!settled && vi.getTimerCount() === 0) {
+		throw new Error(
+			`pumpUntilTimerOrSettled exhausted ${maxTurns} turns: no fake timer was queued and the tracked promise never settled`
+		);
+	}
 }
