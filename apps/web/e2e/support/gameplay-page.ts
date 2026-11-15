@@ -367,6 +367,12 @@ export class GameplayPage {
 		await target.waitFor({ state: 'visible' });
 		const sourceBox = await source.boundingBox();
 		const targetBox = await target.boundingBox();
+		// Feedback from an earlier drop stays on the target cell for
+		// REJECTED_DURATION_MS (500 ms); waiting for it to detach keeps
+		// awaitPlacementOutcome's verdict tied to this drag.
+		await target
+			.locator('[data-testid="placement-feedback"]')
+			.waitFor({ state: 'detached', timeout: 1000 });
 
 		if (isDesktopChromiumProject()) {
 			try {
