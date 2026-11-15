@@ -136,6 +136,54 @@ describe('ArcadeShell', () => {
 		}
 	});
 
+	it('reflects visible avatar initials in the desktop profile link accessible name', async () => {
+		await page.viewport(1440, 900);
+		render(ArcadeShell, authenticatedProps);
+
+		// WCAG 2.5.3 Label in Name (axe label-content-name-mismatch): the visible
+		// initials must be part of the link's accessible name alongside the full
+		// player identity.
+		const sidebarAvatar = await page
+			.getByTestId('arcade-sidebar')
+			.getByRole('link', { name: /Profile for/ })
+			.element();
+		expect(sidebarAvatar.textContent?.trim()).toBe('AC');
+		await expect
+			.element(
+				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Alex C. — AC' })
+			)
+			.toBeVisible();
+	});
+
+	it('reflects visible avatar initials in the compact profile link accessible name', async () => {
+		await page.viewport(390, 844);
+		render(ArcadeShell, authenticatedProps);
+
+		const compactAvatar = await page
+			.getByTestId('arcade-mobile-header')
+			.getByRole('link', { name: /Profile for/ })
+			.element();
+		expect(compactAvatar.textContent?.trim()).toBe('AC');
+		await expect
+			.element(
+				page
+					.getByTestId('arcade-mobile-header')
+					.getByRole('link', { name: 'Profile for Alex C. — AC' })
+			)
+			.toBeVisible();
+	});
+
+	it('keeps profile avatar initials and identity dynamic for a single-part display name', async () => {
+		await page.viewport(1440, 900);
+		render(ArcadeShell, { ...authenticatedProps, playerDisplayName: 'Serena' });
+
+		await expect
+			.element(
+				page.getByTestId('arcade-sidebar').getByRole('link', { name: 'Profile for Serena — S' })
+			)
+			.toBeVisible();
+	});
+
 	it('shows the gallery compact search for an anonymous player on mobile', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
