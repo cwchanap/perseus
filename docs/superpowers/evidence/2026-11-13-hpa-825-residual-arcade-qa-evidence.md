@@ -1,7 +1,7 @@
 # HPA-825 — Supplemental evidence extract (redacted)
 
 Factual supporting evidence for the disposition table in
-[`2026-11-13-hpa-825-residual-arcade-qa.md`](2026-11-13-hpa-825-residual-arcade-qa.md). This file is a
+[`2026-11-13-hpa-825-residual-arcade-qa.md`](../plans/2026-11-13-hpa-825-residual-arcade-qa.md). This file is a
 transcription of recorded run outcomes, capture observations and manifest excerpts; the table in the plan
 is the **sole disposition record**. The original command logs, manifests and frame PNGs were local
 worktree scratch, are **not** retained in the repository and are not hosted. The upload question was
