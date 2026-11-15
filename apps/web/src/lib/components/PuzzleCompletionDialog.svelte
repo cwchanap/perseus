@@ -42,7 +42,10 @@
 		bestTime: number | null;
 		isNewBest: boolean;
 		localStatsFailed: boolean;
+		localStatsSaved: boolean;
 		serverSubmissionRetryable: boolean;
+		serverSubmissionRequiresSignIn: boolean;
+		serverSubmissionPending: boolean;
 		awards?: CompletionAwards;
 		onRetryServerSubmission: () => void;
 		onPlayAgain: () => void;
@@ -63,7 +66,10 @@
 		bestTime,
 		isNewBest,
 		localStatsFailed,
+		localStatsSaved,
 		serverSubmissionRetryable,
+		serverSubmissionRequiresSignIn,
+		serverSubmissionPending,
 		awards,
 		onRetryServerSubmission,
 		onPlayAgain,
@@ -325,7 +331,24 @@
 							{/if}
 						</div>
 
-						{#if serverSubmissionRetryable}
+						{#if serverSubmissionRequiresSignIn}
+							<div class="modal-server-retry" role="status" data-testid="completion-sign-in-note">
+								<span class="server-retry-label server-sync-note-title">SIGN IN TO SYNC</span>
+								<span class="server-sync-help">
+									{#if localStatsSaved}
+										Saved on this device. Sign in to sync your result with your account.
+									{:else if localStatsFailed}
+										Local save failed. Sign in to enable account sync.
+									{:else}
+										Saving on this device. Sign in to enable account sync.
+									{/if}
+								</span>
+							</div>
+						{:else if serverSubmissionPending}
+							<div class="modal-server-retry" role="status" data-testid="server-sync-pending">
+								<span class="server-retry-label server-sync-note-title">SYNCING RESULT…</span>
+							</div>
+						{:else if serverSubmissionRetryable}
 							<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
 								<span class="server-retry-label">MISSION SYNC FAILED</span>
 								<button
@@ -650,6 +673,18 @@
 		color: var(--accent-warn, #ffb86b);
 		font-size: 0.7rem;
 		letter-spacing: 0.12em;
+	}
+
+	.server-sync-note-title {
+		color: var(--text-1);
+	}
+
+	.server-sync-help {
+		max-width: 25rem;
+		color: var(--text-2);
+		font-size: 0.75rem;
+		line-height: 1.5;
+		text-align: center;
 	}
 
 	@media (min-width: 900px) {
