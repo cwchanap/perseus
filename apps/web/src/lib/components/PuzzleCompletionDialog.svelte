@@ -216,7 +216,7 @@
 										{formatTime(displayedBestTime)}
 									</span>
 									{#if displayedIsNewBest}
-										{#if localStatsFailed && !serverPersonalBest}
+										{#if !localStatsSaved && !serverPersonalBest}
 											<span class="new-record-badge unsaved" data-testid="new-best-unsaved"
 												>UNSAVED</span
 											>

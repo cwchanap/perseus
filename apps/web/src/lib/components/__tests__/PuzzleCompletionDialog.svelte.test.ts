@@ -368,7 +368,25 @@ describe('PuzzleCompletionDialog', () => {
 			...standardTimedProps(),
 			bestTime: 75,
 			isNewBest: true,
+			localStatsSaved: false,
 			localStatsFailed: true
+		});
+
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('keeps UNSAVED while a failed new-best write is pending on retry', async () => {
+		// retry_completion_effects resets a failed local write to pending while
+		// isNewBest is still true; the badge must not claim a persisted record
+		// until the write actually succeeds (a retried write can sit queued on
+		// a Web Lock indefinitely).
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			bestTime: 75,
+			isNewBest: true,
+			localStatsSaved: false,
+			localStatsFailed: false
 		});
 
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
