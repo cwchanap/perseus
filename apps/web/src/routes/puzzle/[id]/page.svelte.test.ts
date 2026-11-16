@@ -3313,6 +3313,54 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
 	});
 
+	it('reports the pending local save while a retry reruns a failed write', async () => {
+		// Regression: the local-failure presentation was latched on the first
+		// failed write and never cleared when retry_completion_effects reset
+		// the sealed effect back to pending, so a server retry resolving
+		// unauthorized first claimed "Local save failed" during the in-flight
+		// local retry.
+		const localRetry = createDeferred<Awaited<ReturnType<typeof recordLocalCompletion>>>();
+		vi.mocked(recordLocalCompletion)
+			.mockResolvedValueOnce({
+				status: 'failed',
+				isNewStandardBest: true,
+				inMemoryStats: {
+					schemaVersion: 1,
+					puzzleId: TEST_PUZZLE_ID,
+					standardBestTime: 42,
+					standardBestCompletedAt: Date.now(),
+					totalCompletions: 1,
+					lastCompletedAt: Date.now(),
+					lastRecordedRunId: TEST_RUN_ID,
+					recordedRunIds: [TEST_RUN_ID]
+				},
+				reason: 'storage_error'
+			})
+			.mockReturnValueOnce(localRetry.promise);
+		vi.mocked(recordCompletion)
+			.mockRejectedValueOnce(new ApiError(500, 'internal_error', 'Server error'))
+			.mockRejectedValueOnce(new ApiError(401, 'unauthorized', 'Unauthorized'));
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		// UNSAVED confirms the local failure resolved and was acknowledged
+		// before the retry is issued.
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+		await page.getByTestId('retry-server-submission').click();
+
+		// The local retry is still in flight (deferred) when the server retry
+		// resolves unauthorized: the note must report the pending save rather
+		// than the stale failure.
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('Saving on this device');
+		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
+			'Local save failed'
+		);
+	});
+
 	it('checkpoints the session to storage when serializeSession returns a snapshot', async () => {
 		// Make serializeSession return a non-null snapshot so saveSession is called.
 		vi.mocked(serializeSession).mockReturnValue({

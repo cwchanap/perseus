@@ -159,10 +159,6 @@
 	let restartConfirmation = $state(false);
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
-	// True when the local stats write failed for the current completion. The
-	// in-memory new-best presentation is still shown, but the persisted-best
-	// wording (NEW RECORD) is suppressed until the write succeeds.
-	let localStatsFailed = $state(false);
 	let completionAwards = $state<CompletionAwards | undefined>(undefined);
 	let showFamilyLeaderboard = $state(false);
 	let activeLoadRequestId = 0;
@@ -293,6 +289,12 @@
 	const localStatsSaved = $derived(
 		sessionState?.sealedCompletion?.localStats.status === 'succeeded'
 	);
+	// True while the sealed local-stats effect is in its failed state. Deriving
+	// from the seal — rather than latching a flag on effect resolution — keeps
+	// the dialog honest while a retry has reset the effect back to pending.
+	// The in-memory new-best presentation is still shown, but the
+	// persisted-best wording (NEW RECORD) is suppressed until a write succeeds.
+	const localStatsFailed = $derived(sessionState?.sealedCompletion?.localStats.status === 'failed');
 	const timerState = $derived<TimerState>({
 		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
 		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
@@ -508,15 +510,11 @@
 			puzzle?.id === originPuzzleId && sessionState?.sealedCompletion?.runId === originRunId;
 
 		if (stillActiveRun) {
-			if (result.status === 'failed') {
-				isNewBest = result.isNewStandardBest;
-				bestTime = result.inMemoryStats.standardBestTime;
-				localStatsFailed = true;
-			} else {
-				isNewBest = result.isNewStandardBest;
-				bestTime = result.stats.standardBestTime;
-				localStatsFailed = false;
-			}
+			isNewBest = result.isNewStandardBest;
+			bestTime =
+				result.status === 'failed'
+					? result.inMemoryStats.standardBestTime
+					: result.stats.standardBestTime;
 			// Do not independently reopen the celebration modal here. The
 			// completion_sealed and lifecycle->completed events already open
 			// it when the run seals. Reopening on the local-stats resolution
@@ -774,7 +772,6 @@
 			clearPlacementFeedback();
 			bestTime = getBestTime(id);
 			isNewBest = false;
-			localStatsFailed = false;
 
 			// Construct the session store. Runtime gameplay dependencies (run-id
 			// factory, tray order, rotations) are sourced from the gameplay runtime
@@ -1317,7 +1314,6 @@
 		showCelebration = false;
 		clearCompletionReveal();
 		isNewBest = false;
-		localStatsFailed = false;
 		// The prior run's awards must not survive into the next run's
 		// celebration (or linger behind a still-pending server submission from
 		// the prior run).
