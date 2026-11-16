@@ -56,9 +56,7 @@ describe('PuzzleCompletionDialog', () => {
 				serverSubmissionRequiresSignIn: true
 			});
 
-			await expect
-				.element(page.getByTestId('completion-sign-in-note'))
-				.toMatchTextContent(message);
+			await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
 			expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
 				'Saved on this device'
 			);
