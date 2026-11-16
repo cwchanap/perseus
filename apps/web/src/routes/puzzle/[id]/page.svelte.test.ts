@@ -3359,6 +3359,11 @@ describe('Puzzle route gameplay integration', () => {
 		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
 			'Local save failed'
 		);
+
+		// The record badge must stay UNSAVED while the retried write is in
+		// flight — isNewBest is still true but nothing has been persisted.
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
 	});
 
 	it('checkpoints the session to storage when serializeSession returns a snapshot', async () => {

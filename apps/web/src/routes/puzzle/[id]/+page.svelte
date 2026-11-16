@@ -291,9 +291,8 @@
 	);
 	// True while the sealed local-stats effect is in its failed state. Deriving
 	// from the seal — rather than latching a flag on effect resolution — keeps
-	// the dialog honest while a retry has reset the effect back to pending.
-	// The in-memory new-best presentation is still shown, but the
-	// persisted-best wording (NEW RECORD) is suppressed until a write succeeds.
+	// the dialog honest while a retry has reset the effect back to pending:
+	// the sign-in note reports the pending save instead of a stale failure.
 	const localStatsFailed = $derived(sessionState?.sealedCompletion?.localStats.status === 'failed');
 	const timerState = $derived<TimerState>({
 		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
