@@ -126,15 +126,34 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.poll(() => document.activeElement).toBe(dialogBox);
 	});
 
+	it('restores dialog focus when an automatic retry removes the focused control', async () => {
+		// An auth transition dispatches retry_completion_effects outside the
+		// component: the reset clears the failure states and unmounts the
+		// retry control without handleSyncRetry's explicit focus move. The
+		// dialog must recover focus itself or Escape stops reaching the
+		// backdrop.
+		const rendered = await render(PuzzleCompletionDialog, standardTimedProps());
+
+		const retryButton = await page.getByTestId('retry-server-submission').element();
+		retryButton.focus();
+		await rendered.rerender({ serverSubmission: { status: 'pending' } });
+
+		const dialogBox = await page.getByRole('dialog').element();
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
+	});
+
 	it('replaces retry with pending sync state', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			serverSubmission: { status: 'pending' }
 		});
 
-		await expect
-			.element(page.getByTestId('server-sync-pending'))
-			.toMatchTextContent('SYNCING RESULT');
+		// Routine progress is announced politely (status), not assertively
+		// (alert) — an assertive region would interrupt the result
+		// announcement on every retry.
+		const pending = page.getByTestId('server-sync-pending');
+		await expect.element(pending).toHaveAttribute('role', 'status');
+		await expect.element(pending).toMatchTextContent('SYNCING RESULT');
 		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
 		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
 	});

@@ -143,6 +143,20 @@
 		dialogBox?.focus();
 		onRetryServerSubmission();
 	}
+
+	// An automatic retry_completion_effects dispatch (e.g. an auth
+	// transition while the dialog is open) also removes the retry control —
+	// without going through handleSyncRetry. If that control held focus,
+	// the unmount drops focus to <body> and the backdrop's Escape
+	// delegation dies, so land it back on the dialog container.
+	let syncRetryWasShown = false;
+	$effect(() => {
+		const shown = showSyncRetry;
+		if (syncRetryWasShown && !shown && dialogBox && !dialogBox.contains(document.activeElement)) {
+			dialogBox.focus();
+		}
+		syncRetryWasShown = shown;
+	});
 </script>
 
 <div
@@ -378,7 +392,7 @@
 							</div>
 						{/if}
 						{#if serverPending}
-							<div class="modal-server-retry" role="alert" data-testid="server-sync-pending">
+							<div class="modal-server-retry" role="status" data-testid="server-sync-pending">
 								<span class="server-retry-label server-sync-note-title">SYNCING RESULT…</span>
 							</div>
 						{/if}

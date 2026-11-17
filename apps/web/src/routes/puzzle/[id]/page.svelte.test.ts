@@ -3366,6 +3366,65 @@ describe('Puzzle route gameplay integration', () => {
 		expect(page.getByText('NEW RECORD').query()).toBeNull();
 	});
 
+	it('does not resubmit the completion when RETRY SAVE runs while signed out', async () => {
+		// A signed-out player whose local save failed alongside the 401 gets
+		// RETRY SAVE under the sign-in note. That retry must only re-run the
+		// local write: re-emitting the unauthorized submission fires a
+		// guaranteed second 401.
+		vi.mocked(recordLocalCompletion)
+			.mockResolvedValueOnce({
+				status: 'failed',
+				isNewStandardBest: false,
+				inMemoryStats: {
+					schemaVersion: 1,
+					puzzleId: TEST_PUZZLE_ID,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: Date.now(),
+					lastRecordedRunId: TEST_RUN_ID,
+					recordedRunIds: [TEST_RUN_ID]
+				},
+				reason: 'storage_error'
+			})
+			.mockResolvedValueOnce({
+				status: 'recorded',
+				isNewStandardBest: false,
+				stats: {
+					schemaVersion: 1,
+					puzzleId: TEST_PUZZLE_ID,
+					standardBestTime: 42,
+					standardBestCompletedAt: Date.now(),
+					totalCompletions: 1,
+					lastCompletedAt: Date.now(),
+					lastRecordedRunId: TEST_RUN_ID,
+					recordedRunIds: [TEST_RUN_ID]
+				}
+			});
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(401, 'unauthorized', 'Unauthorized')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		// Sign-in note + local-save retry are both offered; the first
+		// submission already 401'd once.
+		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+		await page.getByTestId('retry-server-submission').click();
+
+		// Flush the async handleLocalStatsEffect retry + acknowledge.
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(2);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+	});
+
 	it('checkpoints the session to storage when serializeSession returns a snapshot', async () => {
 		// Make serializeSession return a non-null snapshot so saveSession is called.
 		vi.mocked(serializeSession).mockReturnValue({

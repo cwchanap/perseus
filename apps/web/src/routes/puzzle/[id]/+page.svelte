@@ -562,13 +562,13 @@
 		// stats write as well as the server submission. The engine resets
 		// each to pending and fires a new completion_effect_request, picked
 		// up by handleLocalStatsEffect / handleServerSubmissionEffect.
-		// includeUnauthorized lets an explicit retry re-attempt an
-		// unauthorized submission (e.g. after the player signs in and a
-		// session refresh marks them authenticated — the dialog only offers
-		// this retry while signed in, or when a local save can be salvaged).
+		// includeUnauthorized only while authenticated: for a signed-out
+		// player the dialog offers this button only to salvage the local
+		// write (RETRY SAVE under the sign-in note), and re-emitting the
+		// unauthorized submission would fire a guaranteed second 401.
 		sessionStore?.dispatch({
 			type: 'retry_completion_effects',
-			includeUnauthorized: true
+			includeUnauthorized: prevAuthStatus === 'authenticated'
 		});
 	}
 
