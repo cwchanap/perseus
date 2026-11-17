@@ -4,50 +4,48 @@ Linear: https://linear.app/cwchanap/issue/HPA-1029
 
 Design: [2026-11-16-hpa-1029-artwork-loading-design.md](../specs/2026-11-16-hpa-1029-artwork-loading-design.md)
 
-**PR rule:** This draft PR is the **single** HPA-1029 PR. Commit diagnosis, any scoped implementation and regressions here; do not create a second implementation PR. The current commit contains design/plan documentation only.
+**PR rule:** Keep all implementation and tests in **draft PR #181**; no second PR for this ticket. The current PR is documentation-only until work is committed. No change to gameplay/persistence or new art/SFX.
 
-## 1. Reproduce and classify before modifying behavior
+## 1. Fix deterministic image status first
 
-- [ ] Run the deployed site as a signed-out player in a *fresh browser context with cache disabled*. Collect a Network/Performance timeline for Gallery card thumbnails, first game/tray, and completion artwork. Capture first frame/screenshot, request start/TTFB/finish, transfer size/status/content type, DOM `img.complete`/`naturalWidth` and first visible decoded art. Use the specific Shojo Crystal Waltz / Conservatory Reader reports where possible.
-- [ ] Repeat after refresh with the same profile/cache enabled and record differences. Check that image requests aren't canceled by SPA navigation, deferred by `loading="lazy"`, or blocked by CSS. Separate the earlier withdrawn reference-dialog observation from the confirmed completion panel delay.
-- [ ] Diagnose the first failing stage with concrete evidence. Add a brief table to the PR description (URL class, network/decode/paint times, status, cold vs warm, screenshots); label any root-cause hypothesis that remains unconfirmed.
-- [ ] Establish a deterministic regression with the existing fixture router / image route interception (held/delayed response, explicit failure, or reproduced slow-server behavior). Avoid wall-clock-only sleeps and failures that disappear when warmed.
+- [ ] Add `apps/web/src/lib/actions/imageStatus.ts`: native image load/error listeners; `data-image-state=pending|loaded|error`; optional callback; handle already-complete warm-cache images; change status only when `src` changes; cleanup listeners. A status callback must not induce an action update loop.
+- [ ] Adopt the same action in `PuzzleCard.svelte`, `PuzzlePiece.svelte`, the placed piece image in `PuzzleBoard.svelte`, both `PuzzleCompletionDialog.svelte` images, `ReferenceOverlay.svelte` and the Gallery Continue art. Remove the three existing one-off error flags. Keep the image mounted for nonempty URLs (or explicitly recover on a source change) so an error does not permanently lock out the next URL.
+- [ ] Keep pending/failed states clearly visible in the existing Galaxy Arcade styling, with modest placeholder/fallback elements. Preserve Gallery lazy loading offscreen, board/tray geometry, piece selection/drag/rotation, Continue interactions, completion focus and quick-puzzle blob URLs. Do not mark an image loaded before actual successful load, or block a puzzle run because art failed.
 
-**Exit gate:** one independently reproducible, measured failure with an identified owner. Do not implement blanket preloading or a new asset cache before this gate.
+## 2. Deterministic regression coverage
 
-## 2. Make one minimal targeted change
+- [ ] Unit-test the action for pending → loaded, error and recovery after changing the URL, warm-cache complete, no spurious reset on unrelated updates, callback/dispose cleanup.
+- [ ] Add a **minimal image hold/fail control** to the existing fixture image response path, matching the public `DeferredHandle` release/cancel/pending-count shape and asserting no held image requests remain in `gameplayPage.assertSettled()`. Follow existing route precedence and provenance rules. Use the same controlled response helper for Gallery thumbnail cases; do not add untracked `page.route` holds per test or broaden generic HPA-1028 harness work.
+- [ ] Extend current Gallery/browser and gameplay specs, not a new E2E framework: held image → visible pending → release → loaded and decoded image; failed image → explicit unavailable state; changed card/Continue/reference URL → recover from prior failure. Verify actual pixel/decode readiness (e.g., `naturalWidth > 0`) **in addition** to `data-image-state`.
+- [ ] Solve a deterministic fixture puzzle, check placed piece imagery and both completion artwork surfaces, keep focus/navigation/selection/placement and local completion intact. Test recovery without requiring a full reload. Use one supported web platform and a narrow viewport; add Safari-specific cases only if evidence warrants.
 
-Change only the relevant path selected by the evidence:
+## 3. Cold/warm production diagnosis (after baseline UI fix)
 
-- **Network/API bottleneck:** focus on `apps/api/src/services/storage.worker.ts` and the affected image handlers in `apps/api/src/routes/{puzzles,puzzle-families}.worker.ts`. Keep existing endpoints, R2 keys, public response/cache headers, and missing-asset semantics. If replacing buffer-before-response with R2 streaming is warranted, test body bytes/MIME, successful first-load display and missing/error responses end-to-end. Avoid speculative CDN or concurrency infrastructure.
-- **Browser scheduling/decode/visibility:** focus on `apps/web/src/lib/components/PuzzleCard.svelte`, `PuzzlePiece.svelte`, `PuzzleCompletionDialog.svelte`, and if needed the existing `PuzzleBoard.svelte` or `puzzle/[id]/+page.svelte`. Reuse native `<img>` events and local component state; reset state on URL changes. Preserve Gallery lazy loading below the fold, quick-puzzle blob URLs, keyboard/drag interactions and completion focus. Use a small visible placeholder while pending and a failure treatment only where the reproduction demonstrates an unexplained blank surface.
-- **Completion-only late reference:** reuse `resolveReferenceImage()` and the same URL. Any early fetch must be narrowly scoped, justified by a timing comparison, and must not starve the playable piece images.
+- [ ] MCP-driven signed-out cold-browser session against the deployed site with cache disabled, then a warm reload. Capture request waterfall and screenshots for Gallery thumbnail, tray images and completed reference art; use Shojo Crystal Waltz / Shojo Conservatory Reader when available.
+- [ ] Record puzzle difficulty, actual piece count and in-flight image request count at first tray paint. Per surface log request status/MIME/size, request start/TTFB/finish, cache behavior, image decode readiness, and first visible paint. Note canceled requests or lazy scheduling versus real network stalls.
+- [ ] Update the PR's existing **three-row** evidence table independently for Gallery, tray, completion. Mark fixed / no longer reproducible / unverified for each; do not equate an immediate placeholder with actual asset loading speed.
 
-No API schema, new store/controller, extra panel framework, asset pipeline, image art or SFX in this PR. Do not mix [HPA-1032](https://linear.app/cwchanap/issue/HPA-1032)'s tray sizing and Gallery spinner polish into this task.
+**Exit gate for server/network changes only:** concrete measurements implicate an existing Worker, KV or R2 delivery path. If no latency is reproducible, keep backend untouched and record the negative result, without claiming a speed fix.
 
-## 3. Automated regression tests
+## 4. Optional targeted backend/performance change (only if proven)
 
-- [ ] Focused test exercises the **reproduced root cause**, not just an artificially mocked success.
-- [ ] Gallery test: first uncached visible card renders its expected image and not a permanent dark frame; an image 404/failed decode gets an explicit fallback; refresh and changing the card URL do not leave stale error state.
-- [ ] Gameplay test: fetch/decode of expected tray piece image(s) is observable by `img.complete && img.naturalWidth > 0`; a held/delayed piece response has an appropriate visible interim state and after release shows actual piece art without refresh. Test placement remains possible when images are ready.
-- [ ] Completion test: after solving a deterministic puzzle, the reference `<img>` visibly resolves without requiring another navigation; an intentionally delayed or failed reference has clear pending/fallback treatment and does not break VIEW ARTWORK, modal focus or completion recording.
-- [ ] If API code changes, add route/service coverage for R2 success, absent object, read error and actual streamed/buffered body; run a **full-stack API + web browser E2E** via MCP, not only mock assertions.
+- [ ] For a proven bottleneck, touch only the relevant existing image route, `apps/api/src/services/variant-playability.worker.ts` or `apps/api/src/services/storage.worker.ts:getImage`, after checking all callers. No blind retries, new CDN, asset manifest, cache database or blanket preloader.
+- [ ] If `getImage` changes, extend `apps/api/src/services/storage-coverage.worker.test.ts` for body bytes, content type/fallback, missing object and R2 failures; adjust the relevant route tests for behavior (not just mocked helper returns). Streaming is *not* automatically authorized.
+- [ ] If backend changes, run a **real Worker-to-browser MCP E2E smoke journey** using a known local/staging R2 asset and route, separate from fixture interception which cannot exercise the Worker. One platform sufficient. Assert status, MIME, decoded image and failure behavior; preserve existing cache headers.
 
-Prefer extending `apps/web/e2e/gallery.spec.ts`, `apps/web/e2e/gameplay-*.spec.ts` and the existing component tests; reuse `e2e/support/test`, `gameplayPage.gotoFixture()` and registered fixture image paths. When intercepting fixture URLs, respect the fixture-router's last-registered-first route precedence, total interception and diagnostics teardown. Work around existing [HPA-1028](https://linear.app/cwchanap/issue/HPA-1028) service-reuse issues with clean, known services rather than changing the harness as part of this PR.
+## 5. Automated end-to-end and visual acceptance
 
-## 4. End-to-end acceptance — machine-verifiable
+- [ ] An MCP-controlled browser/test journey verifies a cold Gallery card, pending/released/failed tray piece, successful placed piece, deterministic completed puzzle, preview plus full completed artwork, and warm reload. Reuse the committed Playwright cases and current fixtures; do **not** invent a duplicate second E2E suite. UI state alone is insufficient: verify genuine loaded image bytes/decode.
+- [ ] **MCP screenshot visual check** for Gallery card, ordinary and placed tray/board pieces, completion preview and full artwork at desktop and narrow viewport. Compare to a Linear mockup if attached; HPA-1029 currently has none, so use before/after captures against the existing Galaxy Arcade UI. Check placeholders, artwork framing, overflow and readability. Save artifacts as PR evidence. No human acceptance requirement and no screenshot-baseline framework added.
+- [ ] Focused component/action tests; `bun run --cwd apps/web test:unit`, `bun run --cwd apps/web test:e2e`, `bun run check`, `bun run lint`, applicable API tests and PR CI pass. Run `bun run test:unit` if any shared engine/types code changes.
+- [ ] Preserve toolbar/modal focus, Gallery navigation, quick puzzle images, selection/rotation/placement, completion recording and local progress. No art/SFX or new gameplay controller.
 
-- [ ] **MCP-driven browser run**, one supported desktop platform, fresh context/cache disabled: initial Gallery artwork, puzzle piece images, first tray interaction and completion artwork all become visible without reload. Assert actual image pixels or `naturalWidth > 0` as appropriate — not simply an `<img>` element existing — and save request timing evidence.
-- [ ] Warm refresh of the same puzzle remains correct; forced image delay/failure presents an understandable loading/error fallback rather than an unexplained blank dark frame, and success resumes without refresh.
-- [ ] **MCP-driven visual check:** capture before/after Gallery, tray, completion dialog and full-artwork view screenshots. Compare to any Linear mockup if supplied, otherwise the existing Galaxy Arcade UI. Include a narrow/mobile viewport check for overflow, legibility and placeholders. One browser platform suffices for shared web presentation unless diagnostics prove a Safari/WebKit-specific path.
-- [ ] Preserve Gallery navigation, puzzle masks/rotation, selection/placement, completion persistence and focus/keyboard actions. The E2E must actually solve one deterministic puzzle and reach the results dialog.
-- [ ] Targeted tests, `bun run --cwd apps/web test:unit`, `bun run --cwd apps/web test:e2e`, applicable API tests if touched, `bun run check`, `bun run lint` and CI all pass. Use `bun run test:unit` if any shared types/game-core code changes. Docs-only draft PRs skip automatic CI: green CI must be established after code changes, not presumed now.
-- [ ] PR evidence records the measured before/after cold-load timing and the specific cause fixed, plus successful MCP E2E and screenshot verification. No human acceptance gate.
+## 6. Finish on the same PR
 
-This acceptance scope is deliberately browser-based; macOS/Windows are not separate requirements for a platform-agnostic web change. Add a WebKit/iOS-specific E2E only if reproduction shows a platform-specific image loading/painting bug. Android/Linux remain CI-only.
+- [ ] Record the actual per-surface production trace and chosen or rejected backend fixes in PR #181. Note honest unresolved performance symptoms; do not assert faster loading if unmeasured.
+- [ ] Attach automated screenshot/trace evidence and test/CI results. Keep the PR draft until acceptance is verified.
+- [ ] Update HPA-1029 with the implementation and measured outcome; mark Done only after merge and verification.
 
-## 5. Finish in this same PR
+## Risk and fallback
 
-- [ ] Replace the PR's provisional diagnosis section with trace findings, affected files and actual fix. Avoid recording a hypothesis as verified.
-- [ ] Attach automation-produced screenshots/logs and report exact test results. Do not merge until the diagnostic exit gate, E2E and visual criteria pass.
-- [ ] Update the Linear issue with the single PR link and final evidence/disposition. Close it only after the fix is merged and checked.
+Production timing may not reproduce the two earlier cold visits. This does **not** block the deterministic status fix, which has held/failing image E2E coverage. It **does** block claiming a server-speed issue fixed without evidence. Keep the scope one small presentation action plus narrowly proven performance changes, not a generalized image loading subsystem.
