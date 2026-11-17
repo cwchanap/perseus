@@ -2,6 +2,7 @@
 	import { modalFocus } from '$lib/actions/modalFocus';
 	import { formatTime } from '$lib/stores/timer';
 	import type { ResultClass } from '@perseus/types';
+	import type { CompletionEffectState } from '@perseus/game-core';
 	import type { CompletionAwards } from '$lib/types/puzzle';
 
 	const ACHIEVEMENT_LABELS: Record<string, string> = {
@@ -41,11 +42,13 @@
 		rotationUsed: boolean;
 		bestTime: number | null;
 		isNewBest: boolean;
-		localStatsFailed: boolean;
-		localStatsSaved: boolean;
-		serverSubmissionRetryable: boolean;
-		serverSubmissionRequiresSignIn: boolean;
-		serverSubmissionPending: boolean;
+		// The two sealed completion effect states arrive verbatim (not as
+		// pre-flattened booleans) so combined outcomes stay representable — an
+		// unauthorized server failure alongside a failed local save must show
+		// BOTH the sign-in note and a retry that re-runs the local write.
+		localStats: CompletionEffectState | null;
+		serverSubmission: CompletionEffectState | null;
+		playerAuthenticated: boolean;
 		awards?: CompletionAwards;
 		onRetryServerSubmission: () => void;
 		onPlayAgain: () => void;
@@ -65,11 +68,9 @@
 		rotationUsed,
 		bestTime,
 		isNewBest,
-		localStatsFailed,
-		localStatsSaved,
-		serverSubmissionRetryable,
-		serverSubmissionRequiresSignIn,
-		serverSubmissionPending,
+		localStats,
+		serverSubmission,
+		playerAuthenticated,
 		awards,
 		onRetryServerSubmission,
 		onPlayAgain,
@@ -112,6 +113,36 @@
 	const rotationSummary = $derived(
 		`${rotationEnabled ? 'ON' : 'OFF'} · ${rotationUsed ? 'USED' : 'NOT USED'}`
 	);
+
+	const localStatsSaved = $derived(localStats?.status === 'succeeded');
+	const localStatsFailed = $derived(localStats?.status === 'failed');
+	const serverPending = $derived(serverSubmission?.status === 'pending');
+	// Sign-in guidance only applies while the player is actually signed out:
+	// a 401 against an authenticated session (expired cookie, stale tab)
+	// must not tell a signed-in player to sign in — it needs the retry.
+	const serverRequiresSignIn = $derived(
+		serverSubmission?.status === 'failed' &&
+			serverSubmission.code === 'unauthorized' &&
+			!playerAuthenticated
+	);
+	// retry_completion_effects re-runs EVERY failed retryable effect — a
+	// failed local write as well as the server submission — so the retry
+	// affordance must stay reachable while either can still succeed,
+	// including under the sign-in note.
+	const serverRetryable = $derived(
+		serverSubmission?.status === 'failed' && serverSubmission.retryable && !serverRequiresSignIn
+	);
+	const showSyncRetry = $derived(serverRetryable || localStatsFailed);
+
+	let dialogBox = $state<HTMLElement | null>(null);
+
+	function handleSyncRetry() {
+		// The retry replaces this button (with the pending note or nothing),
+		// which would drop focus to <body> — killing the backdrop Escape
+		// handler and the Tab trap. Land focus on the dialog container first.
+		dialogBox?.focus();
+		onRetryServerSubmission();
+	}
 </script>
 
 <div
@@ -126,6 +157,7 @@
 		aria-modal="true"
 		aria-labelledby="modal-title"
 		tabindex="-1"
+		bind:this={dialogBox}
 		use:modalFocus={completionView}
 	>
 		{#if completionView === 'artwork' && artworkUrl !== null}
@@ -331,32 +363,36 @@
 							{/if}
 						</div>
 
-						{#if serverSubmissionRequiresSignIn}
-							<div class="modal-server-retry" role="status" data-testid="completion-sign-in-note">
+						{#if serverRequiresSignIn}
+							<div class="modal-server-retry" role="alert" data-testid="completion-sign-in-note">
 								<span class="server-retry-label server-sync-note-title">SIGN IN TO SYNC</span>
 								<span class="server-sync-help">
 									{#if localStatsSaved}
-										Saved on this device. Sign in to sync your result with your account.
+										Saved on this device. Sign in before starting a new run to sync this result.
 									{:else if localStatsFailed}
-										Local save failed. Sign in to enable account sync.
+										Local save failed. Sign in before starting a new run to sync this result.
 									{:else}
-										Saving on this device. Sign in to enable account sync.
+										Saving on this device. Sign in before starting a new run to sync this result.
 									{/if}
 								</span>
 							</div>
-						{:else if serverSubmissionPending}
-							<div class="modal-server-retry" role="status" data-testid="server-sync-pending">
+						{/if}
+						{#if serverPending}
+							<div class="modal-server-retry" role="alert" data-testid="server-sync-pending">
 								<span class="server-retry-label server-sync-note-title">SYNCING RESULT…</span>
 							</div>
-						{:else if serverSubmissionRetryable}
+						{/if}
+						{#if showSyncRetry}
 							<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
-								<span class="server-retry-label">MISSION SYNC FAILED</span>
+								<span class="server-retry-label"
+									>{serverRetryable ? 'MISSION SYNC FAILED' : 'LOCAL SAVE FAILED'}</span
+								>
 								<button
-									onclick={onRetryServerSubmission}
+									onclick={handleSyncRetry}
 									class="arcade-btn-ghost"
 									data-testid="retry-server-submission"
 								>
-									RETRY SYNC
+									{serverRetryable ? 'RETRY SYNC' : 'RETRY SAVE'}
 								</button>
 							</div>
 						{/if}

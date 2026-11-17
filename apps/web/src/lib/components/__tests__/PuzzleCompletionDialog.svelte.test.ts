@@ -16,11 +16,13 @@ function standardTimedProps() {
 		rotationUsed: false,
 		bestTime: 68,
 		isNewBest: false,
-		localStatsFailed: false,
-		localStatsSaved: true,
-		serverSubmissionRetryable: true,
-		serverSubmissionRequiresSignIn: false,
-		serverSubmissionPending: false,
+		localStats: { status: 'succeeded' as const },
+		serverSubmission: {
+			status: 'failed' as const,
+			code: 'network_error' as const,
+			retryable: true
+		},
+		playerAuthenticated: true,
 		onRetryServerSubmission: vi.fn(),
 		onPlayAgain: vi.fn(),
 		onBackToArcade: vi.fn(),
@@ -32,41 +34,102 @@ describe('PuzzleCompletionDialog', () => {
 	it('avoids a dead retry for a locally saved anonymous completion', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
-			serverSubmissionRequiresSignIn: true
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: false
 		});
 
 		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
 		await expect
 			.element(page.getByTestId('completion-sign-in-note'))
-			.toMatchTextContent('Saved on this device. Sign in to sync your result with your account.');
+			.toMatchTextContent('Saved on this device');
 		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
 		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
 	});
 
-	it.each([
-		{ localStatsSaved: false, localStatsFailed: false, message: 'Saving on this device' },
-		{ localStatsSaved: false, localStatsFailed: true, message: 'Local save failed' }
-	])(
-		'does not claim a successful local save while $message',
-		async ({ localStatsSaved, localStatsFailed, message }) => {
-			render(PuzzleCompletionDialog, {
-				...standardTimedProps(),
-				localStatsSaved,
-				localStatsFailed,
-				serverSubmissionRequiresSignIn: true
-			});
+	it('keeps the retry for a failed local save under the sign-in note', async () => {
+		// retry_completion_effects re-runs the failed local write as well as
+		// the unauthorized submission, so the local save must not lose its
+		// retry path just because the server 401'd.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			localStats: { status: 'failed', code: 'storage_error', retryable: true },
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: false
+		});
 
-			await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
-			expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
-				'Saved on this device'
-			);
+		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+	});
+
+	it('offers retry — not sign-in guidance — for an authenticated 401', async () => {
+		// A 401 against an authenticated session (expired cookie, stale tab)
+		// must not tell a signed-in player to sign in.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: true
+		});
+
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+		expect(page.getByTestId('completion-sign-in-note').query()).toBeNull();
+	});
+
+	it('labels a local-only save failure without claiming a sync failure', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			localStats: { status: 'failed', code: 'storage_error', retryable: true },
+			serverSubmission: { status: 'succeeded' }
+		});
+
+		const banner = page.getByTestId('server-retry-banner');
+		await expect.element(banner).toBeVisible();
+		await expect.element(banner).toMatchTextContent('LOCAL SAVE FAILED');
+		await expect.element(banner).toMatchTextContent('RETRY SAVE');
+		expect(banner.query()?.textContent).not.toContain('MISSION SYNC FAILED');
+	});
+
+	it.each([
+		{
+			localStats: { status: 'pending' } as const,
+			message: 'Saving on this device'
+		},
+		{
+			localStats: { status: 'failed', code: 'storage_error', retryable: true } as const,
+			message: 'Local save failed'
 		}
-	);
+	])('does not claim a successful local save while $message', async ({ localStats, message }) => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			localStats,
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: false
+		});
+
+		await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
+		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
+			'Saved on this device'
+		);
+	});
+
+	it('moves focus to the dialog container when retry swaps the button out', async () => {
+		// Clicking retry replaces the banner with the pending note; without an
+		// explicit focus target the removed button drops focus to <body>,
+		// killing the backdrop Escape handler and the Tab trap.
+		const rendered = await render(PuzzleCompletionDialog, standardTimedProps());
+
+		await page.getByTestId('retry-server-submission').click();
+		await rendered.rerender({ serverSubmission: { status: 'pending' } });
+
+		const dialogBox = await page.getByRole('dialog').element();
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
+	});
 
 	it('replaces retry with pending sync state', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
-			serverSubmissionPending: true
+			serverSubmission: { status: 'pending' }
 		});
 
 		await expect
@@ -368,8 +431,7 @@ describe('PuzzleCompletionDialog', () => {
 			...standardTimedProps(),
 			bestTime: 75,
 			isNewBest: true,
-			localStatsSaved: false,
-			localStatsFailed: true
+			localStats: { status: 'failed', code: 'storage_error', retryable: true }
 		});
 
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
@@ -385,8 +447,7 @@ describe('PuzzleCompletionDialog', () => {
 			...standardTimedProps(),
 			bestTime: 75,
 			isNewBest: true,
-			localStatsSaved: false,
-			localStatsFailed: false
+			localStats: { status: 'pending' }
 		});
 
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();

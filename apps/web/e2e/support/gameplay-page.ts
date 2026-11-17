@@ -369,10 +369,16 @@ export class GameplayPage {
 		const targetBox = await target.boundingBox();
 		// Feedback from an earlier drop stays on the target cell for
 		// REJECTED_DURATION_MS (500 ms); waiting for it to detach keeps
-		// awaitPlacementOutcome's verdict tied to this drag.
-		await target
-			.locator('[data-testid="placement-feedback"]')
-			.waitFor({ state: 'detached', timeout: 1000 });
+		// awaitPlacementOutcome's verdict tied to this drag. Under a paused
+		// page clock the clear timer never fires, so this wait can only time
+		// out — surface it with the drag context rather than a bare error.
+		try {
+			await target
+				.locator('[data-testid="placement-feedback"]')
+				.waitFor({ state: 'detached', timeout: 1000 });
+		} catch (error) {
+			throw this.enrichDragError(error, sourceBox, targetBox);
+		}
 
 		if (isDesktopChromiumProject()) {
 			try {

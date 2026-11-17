@@ -492,13 +492,15 @@ export async function fetchFamilyDetail(
 
 async function postCompletion(
 	puzzleId: string,
-	body: unknown
+	body: unknown,
+	signal?: AbortSignal
 ): Promise<CompletionAwards | undefined> {
 	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'include',
-		body: JSON.stringify(body)
+		body: JSON.stringify(body),
+		signal
 	});
 	const data = await handleResponse<RecordPuzzleCompletionResponse>(response);
 	if ('ok' in data && data.ok) return data.awards;
@@ -507,9 +509,10 @@ async function postCompletion(
 
 export async function recordCompletion(
 	puzzleId: string,
-	request: RecordPuzzleCompletionV2
+	request: RecordPuzzleCompletionV2,
+	signal?: AbortSignal
 ): Promise<CompletionAwards | undefined> {
-	return postCompletion(puzzleId, request);
+	return postCompletion(puzzleId, request, signal);
 }
 
 // Player bookmark endpoints
