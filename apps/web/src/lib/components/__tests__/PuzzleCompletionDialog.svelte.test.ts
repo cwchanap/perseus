@@ -42,6 +42,12 @@ describe('PuzzleCompletionDialog', () => {
 		await expect
 			.element(page.getByTestId('completion-sign-in-note'))
 			.toMatchTextContent('Saved on this device');
+		// Signing in alone does not sync: the retry path lives in the puzzle
+		// route, so the note must name the return-to-puzzle step and the
+		// Play Again cutoff (Play Again clears the seal).
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('reopen this same puzzle to retry syncing before playing again');
 		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
 		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
 	});
@@ -93,25 +99,35 @@ describe('PuzzleCompletionDialog', () => {
 	it.each([
 		{
 			localStats: { status: 'pending' } as const,
-			message: 'Saving on this device'
+			message: 'Saving on this device',
+			direction: 'reopen this same puzzle to retry syncing before playing again'
 		},
 		{
 			localStats: { status: 'failed', code: 'storage_error', retryable: true } as const,
-			message: 'Local save failed'
+			message: 'Local save failed',
+			direction: 'reopen this same puzzle to retry saving and syncing before playing again'
 		}
-	])('does not claim a successful local save while $message', async ({ localStats, message }) => {
-		render(PuzzleCompletionDialog, {
-			...standardTimedProps(),
-			localStats,
-			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
-			playerAuthenticated: false
-		});
+	])(
+		'does not claim a successful local save while $message',
+		async ({ localStats, message, direction }) => {
+			render(PuzzleCompletionDialog, {
+				...standardTimedProps(),
+				localStats,
+				serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+				playerAuthenticated: false
+			});
 
-		await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
-		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
-			'Saved on this device'
-		);
-	});
+			await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
+			// Same honest direction as the saved case: sign in, then revisit
+			// this puzzle — Play Again clears the seal before sync can land.
+			await expect
+				.element(page.getByTestId('completion-sign-in-note'))
+				.toMatchTextContent(direction);
+			expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
+				'Saved on this device'
+			);
+		}
+	);
 
 	it('moves focus to the dialog container when retry swaps the button out', async () => {
 		// Clicking retry replaces the banner with the pending note; without an

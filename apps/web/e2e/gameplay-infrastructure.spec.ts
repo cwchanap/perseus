@@ -20,6 +20,7 @@ import { test, expect } from './support/test';
 import type { GameplayPage } from './support/gameplay-page';
 import { getFixture } from './gameplay-fixtures/catalog';
 import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
+import { createAuthPersona } from './gameplay-fixtures/auth-persona';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
@@ -191,6 +192,83 @@ test.describe('gameplay smoke @smoke', () => {
 		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
 		await expect.poll(() => statuses.length).toBe(1);
 		expect(statuses[0]).toBe(401);
+	});
+
+	test('leave → sign in → revisit resubmits the sealed completion @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({
+			persona: 'anonymous',
+			clock: { startAt: START_AT },
+			completion: { kind: 'retry-sequence', failureStatus: 401 },
+			seedPreferences: IMMEDIATE_START
+		});
+		gameplayPage.diagnostics.expectConsoleError('Failed to load resource');
+
+		await placePieces(gameplayPage, [0, 1, 2, 3]);
+
+		// The anonymous 401 surfaces sign-in guidance that must name the real
+		// resync path: the retry effects live only inside the puzzle route, so
+		// signing in elsewhere never touches the sealed run.
+		await expect(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect(page.getByTestId('completion-sign-in-note')).toContainText(
+			'reopen this same puzzle'
+		);
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
+
+		// Leave: BACK TO ARCADE persists the sealed run through the route's exit
+		// path. Mock the gallery endpoints so the arcade visit never reaches the
+		// real backend.
+		await page.route(/\/api\/puzzle-families(?:\?.*)?$/, (route) =>
+			route.fulfill({ json: { families: [], total: 0, offset: 0, limit: 20 } })
+		);
+		await page.getByRole('button', { name: 'BACK TO ARCADE' }).click();
+		await expect(page).toHaveURL(/\/$/);
+
+		// The completed run is sealed, so isResumable rejects it: nothing on the
+		// arcade offers a path back except reopening the same puzzle.
+		await expect(page.getByTestId('continue-on-device')).toHaveCount(0);
+
+		// Capture the persisted sealed session. The harness init script clears
+		// storage on every full navigation, so a bare page.goto would wipe it —
+		// replant it via a later-registered init script (init scripts evaluate
+		// in registration order, after the harness clear).
+		const persisted = await page.evaluate((k) => localStorage.getItem(k), progressKey(FIXTURE_ID));
+		expect(persisted).not.toBeNull();
+
+		// Sign in: the later persona route wins for every subsequent
+		// /api/auth/session request.
+		await createAuthPersona('authenticated').install(page);
+		await page.addInitScript(
+			({ key, value }) => {
+				try {
+					localStorage.setItem(key, value);
+				} catch {
+					/* storage may be unavailable pre-navigation */
+				}
+			},
+			{ key: progressKey(FIXTURE_ID), value: persisted! }
+		);
+		// Reopen the same puzzle. On a fresh document the retry lands through
+		// whichever path resolves first: the hydration retry
+		// (includeUnauthorized when auth is already settled) or the
+		// authenticated-transition dispatch once refresh() resolves — both end
+		// at the same sealed resubmission.
+		await page.goto(`/puzzle/${FIXTURE_ID}`);
+
+		// The restored seal retries the unauthorized submission with the SAME
+		// sealed payload; this attempt succeeds.
+		await expect(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(2);
+		const bodies = gameplayPage.apiController.recordedRequests.map(
+			(r) => r.bodyJson as Record<string, unknown>
+		);
+		expect(bodies[1]).toEqual(bodies[0]);
+
+		// Synced: the sign-in note and retry affordance are gone.
+		await expect(page.getByTestId('completion-sign-in-note')).not.toBeVisible();
+		await expect(page.getByTestId('server-retry-banner')).not.toBeVisible();
 	});
 
 	// --- Step 4: deferred retry -------------------------------------------------

@@ -382,11 +382,14 @@
 								<span class="server-retry-label server-sync-note-title">SIGN IN TO SYNC</span>
 								<span class="server-sync-help">
 									{#if localStatsSaved}
-										Saved on this device. Sign in before starting a new run to sync this result.
+										Saved on this device. Sign in, then reopen this same puzzle to retry syncing
+										before playing again.
 									{:else if localStatsFailed}
-										Local save failed. Sign in before starting a new run to sync this result.
+										Local save failed. Sign in, then reopen this same puzzle to retry saving and
+										syncing before playing again.
 									{:else}
-										Saving on this device. Sign in before starting a new run to sync this result.
+										Saving on this device. Sign in, then reopen this same puzzle to retry syncing
+										before playing again.
 									{/if}
 								</span>
 							</div>
