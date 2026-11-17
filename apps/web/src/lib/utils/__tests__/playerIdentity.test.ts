@@ -31,4 +31,28 @@ describe('playerIdentity', () => {
 			initials: '𠮷太'
 		});
 	});
+
+	it('falls back to the player email when the name is blank', () => {
+		// Matches the arcade shell's identity for a nameless account so the
+		// profile avatar and the shell avatar cannot disagree.
+		expect(playerIdentity('  ', 'rae@example.com')).toEqual({
+			displayName: 'rae@example.com',
+			initials: 'R'
+		});
+	});
+
+	it('splits name parts on any whitespace, including the ideographic space', () => {
+		expect(playerIdentity('山田　太郎')).toEqual({
+			displayName: '山田　太郎',
+			initials: '山太'
+		});
+	});
+
+	it('keeps grapheme clusters whole when deriving initials', () => {
+		// A flag emoji is two regional-indicator code points; a decomposed é
+		// (e + U+0301) is two code points. Each is one grapheme — splitting on
+		// code points would leak half a flag or a bare combining mark.
+		expect(playerIdentity('🇯🇵 Tanaka').initials).toBe('🇯🇵T');
+		expect(playerIdentity('e\u0301clair Test').initials).toBe('E\u0301T');
+	});
 });

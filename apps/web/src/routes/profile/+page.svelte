@@ -49,7 +49,7 @@
 	// rather than letting them resolve and write state to an unmounted component.
 	let abortController: AbortController | null = null;
 
-	const initials = $derived(playerIdentity(profile?.name).initials);
+	const initials = $derived(playerIdentity(profile?.name, profile?.email).initials);
 
 	function toGalleryFamily(p: PlayerOwnedFamilySummary): PuzzleFamilySummary {
 		return ownedFamilyToGalleryFamily(p);
