@@ -178,6 +178,14 @@ test.describe('gameplay smoke @smoke', () => {
 		await expect(page.getByTestId('celebration-modal')).toBeVisible();
 		await expectStatsCompletions(page, 1);
 
+		// The anonymous 401 surfaces sign-in guidance — the local save landed,
+		// so the note says so — instead of a retry the engine cannot fulfill
+		// while signed out.
+		await expect(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect(page.getByTestId('completion-sign-in-note')).toContainText('Saved on this device');
+		await expect(page.getByTestId('server-retry-banner')).not.toBeVisible();
+		await expect(page.getByTestId('retry-server-submission')).not.toBeVisible();
+
 		// Exactly one server attempt, returning 401 (no auto-retry of an
 		// unauthorized submission within a single page session).
 		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
