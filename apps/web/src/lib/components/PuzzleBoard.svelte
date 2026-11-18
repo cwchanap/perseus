@@ -2,6 +2,7 @@
 	import type { Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 	import type { PlacedPiece } from '@perseus/game-core';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
+	import { imageStatus } from '$lib/actions/imageStatus';
 
 	interface Props {
 		puzzle: Puzzle;
@@ -270,7 +271,12 @@
 							top: -{TAB_RATIO * 100}%;
 						"
 					>
-						<img src={resolveImage(placedPiece)} alt="Placed piece" class="h-full w-full" />
+						<img
+							src={resolveImage(placedPiece)}
+							alt="Placed piece"
+							class="h-full w-full"
+							use:imageStatus={{ src: resolveImage(placedPiece) }}
+						/>
 					</div>
 				{/if}
 			</div>
@@ -282,6 +288,47 @@
 	/* Subtle shadow for placed pieces */
 	.placed-piece-shadow {
 		filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 0.15));
+	}
+
+	/* Image status decorations stay on the 100% cell (.drop-zone), never on
+	   the 140% jigsaw wrapper whose -20% offset would spill over neighbors.
+	   Translucent overlays only, so overlapping tabs from adjacent pieces are
+	   visible through them and no jigsaw shape gets clipped. The image itself
+	   is hidden (opacity) while these show. data-image-state is set at
+	   runtime by the imageStatus action, hence :global. */
+	.drop-zone:has(:global(img[data-image-state='pending']))::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: rgb(58 255 255 / 8%);
+		animation: board-image-pending 1.6s ease-in-out infinite;
+		pointer-events: none;
+	}
+
+	.drop-zone:has(:global(img[data-image-state='error']))::after {
+		content: '!';
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--hot);
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		font-weight: 700;
+		pointer-events: none;
+	}
+
+	@keyframes board-image-pending {
+		50% {
+			opacity: 0.35;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.drop-zone:has(:global(img[data-image-state='pending']))::before {
+			animation: none;
+		}
 	}
 
 	.puzzle-board {

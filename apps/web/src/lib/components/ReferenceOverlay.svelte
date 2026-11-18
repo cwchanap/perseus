@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { imageStatus } from '$lib/actions/imageStatus';
+	import type { ImageStatusState } from '$lib/actions/imageStatus';
+
 	interface Props {
 		imageUrl?: string | null;
 		active: boolean;
@@ -12,15 +15,15 @@
 	}
 
 	let { imageUrl = null, active, dismissible = false, onDismiss }: Props = $props();
-	let imageError = $state(false);
+	// Driven entirely by the imageStatus action: it reports its initial state
+	// on mount, so remounting the overlay via {#if active} re-syncs this flag
+	// without a reset-on-activation effect, and a changed URL recovers from a
+	// prior failure.
+	let imageState = $state<ImageStatusState>('pending');
 	let closeButtonEl = $state<HTMLButtonElement | null>(null);
 	// Element that held focus before the dismissible overlay trapped it, so
 	// focus can be restored to the REF toolbar trigger when the overlay closes.
 	let previouslyFocused: HTMLElement | null = null;
-
-	$effect(() => {
-		if (active) imageError = false;
-	});
 
 	// When the persistent (dismissible) overlay opens, move focus onto the
 	// Close button so Tab cannot reach the obscured gameplay controls, and
@@ -80,15 +83,23 @@
 				CLOSE
 			</button>
 		{/if}
-		{#if imageError || imageUrl === null}
+		{#if imageUrl === null}
 			<p class="text-sm text-white/70">Reference image unavailable</p>
 		{:else}
+			<!-- Kept mounted for nonempty URLs and hidden with opacity (not
+			     display) so a new src can recover from a prior failure. -->
 			<img
 				src={imageUrl}
 				alt="Puzzle reference"
 				class="max-h-[90%] max-w-[90%] rounded-md object-contain shadow-lg"
-				onerror={() => (imageError = true)}
+				class:opacity-0={imageState !== 'loaded'}
+				use:imageStatus={{ src: imageUrl, onStatus: (state) => (imageState = state) }}
 			/>
+			{#if imageState === 'error'}
+				<p class="text-sm text-white/70" data-testid="reference-image-unavailable">
+					Reference image unavailable
+				</p>
+			{/if}
 		{/if}
 	</div>
 {/if}
