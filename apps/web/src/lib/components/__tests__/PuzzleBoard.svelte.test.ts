@@ -120,6 +120,37 @@ describe('PuzzleBoard', () => {
 		expect(topOffset + BASE_OFFSET * expandedHeight).toBeCloseTo(0);
 	});
 
+	it('opacity-hides the placed image while pending or errored and restores it once loaded', async () => {
+		const puzzle = createMockPuzzle(3);
+		const placedPieces: PlacedPiece[] = [{ pieceId: 0, x: 0, y: 0 }];
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces,
+			onPiecePlaced: vi.fn(),
+			resolveImage
+		});
+
+		const placedImage = await page.getByAltText('Placed piece').element();
+
+		// The image itself must be opacity-hidden (never display:none) while
+		// unready: a broken URL must not paint its broken-image glyph across
+		// the 140% wrapper alongside the cell's own decorations.
+		expect(placedImage.dataset.imageState).toBe('pending');
+		expect(getComputedStyle(placedImage).opacity).toBe('0');
+
+		// A failed load keeps the img mounted but hidden.
+		placedImage.dispatchEvent(new Event('error'));
+		expect(placedImage.dataset.imageState).toBe('error');
+		expect(getComputedStyle(placedImage).opacity).toBe('0');
+		expect(placedImage.isConnected).toBe(true);
+
+		// A later successful load (recovered src) restores the artwork.
+		placedImage.dispatchEvent(new Event('load'));
+		expect(placedImage.dataset.imageState).toBe('loaded');
+		expect(getComputedStyle(placedImage).opacity).toBe('1');
+	});
+
 	it('should render a hint marker for the active hint target', async () => {
 		const puzzle = createMockPuzzle(3);
 

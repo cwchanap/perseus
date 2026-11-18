@@ -1323,11 +1323,23 @@
 	}
 
 	.artwork-image-wrap.art-stage {
+		position: relative;
 		flex: 0 0 auto;
 		width: min(100%, 230px);
 		aspect-ratio: 3 / 4;
 		border-radius: 1.25rem;
 		box-shadow: var(--gold-frame);
+	}
+
+	/* Full-artwork error fallback overlays the bounded stage (as the preview's
+	   fallback overlays its frame) instead of sharing the stage as a second
+	   flex item beside the kept-mounted, opacity-hidden image. Higher
+	   specificity than the breakpoint width rules on the fallback class. */
+	.artwork-image-wrap.art-stage .completion-reference-fallback {
+		position: absolute;
+		inset: 0;
+		width: auto;
+		height: auto;
 	}
 
 	.completion-artwork-image {

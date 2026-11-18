@@ -276,6 +276,35 @@ describe('PuzzleCompletionDialog', () => {
 		expect(page.getByRole('button', { name: 'VIEW ARTWORK' }).query()).toBeNull();
 	});
 
+	it('overlays the artwork-view fallback on the stage, keeping the failed image mounted', async () => {
+		// A nonempty-but-failed URL keeps the <img> mounted (opacity-hidden)
+		// while the fallback overlays the placeholder stage — it must not sit
+		// beside the image as a second flex item inside the 230px stage.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
+		});
+
+		await page.getByTestId('view-artwork').click();
+		await expect.element(page.getByTestId('completion-artwork-view')).toBeVisible();
+
+		const img = await page.getByTestId('completion-artwork-image').element();
+		img.dispatchEvent(new Event('error'));
+
+		const fallback = page.getByTestId('completion-artwork-unavailable');
+		await expect.element(fallback).toBeVisible();
+
+		expect(img.isConnected).toBe(true);
+		expect(getComputedStyle(fallback.element()!).position).toBe('absolute');
+
+		// The fallback fills the stage's box instead of sharing it.
+		const stage = img.closest('.artwork-image-wrap') as HTMLElement;
+		const stageRect = stage.getBoundingClientRect();
+		const fallbackRect = fallback.element()!.getBoundingClientRect();
+		expect(fallbackRect.width).toBeCloseTo(stageRect.width, 0);
+		expect(fallbackRect.height).toBeCloseTo(stageRect.height, 0);
+	});
+
 	it('opens a contained artwork view and restores results with focus', async () => {
 		render(PuzzleCompletionDialog, {
 			...standardTimedProps(),

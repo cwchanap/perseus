@@ -171,4 +171,42 @@ describe('imageStatus action', () => {
 		expect(img.dataset.imageState).toBe('pending');
 		expect(states).toEqual(['pending']);
 	});
+
+	it('keeps an explicitly empty src="" attribute pending when mounting fires a native error', async () => {
+		// Chromium fires a native error for a mounted <img src=""> (broken
+		// image): the attribute is present but empty, unlike the attribute-
+		// absent case above. The action must not classify it as failed.
+		const img = createImage('');
+		const nativeError = vi.fn();
+		img.addEventListener('error', nativeError);
+		const { states, onStatus } = collectStates();
+		imageStatus(img, { src: '', onStatus });
+
+		await vi.waitFor(() => expect(nativeError).toHaveBeenCalled());
+
+		expect(img.dataset.imageState).toBe('pending');
+		expect(states).toEqual(['pending']);
+	});
+
+	it('stays pending when a mounted image changes its src to an empty string', async () => {
+		const url = validUrl();
+		const img = createImage(url);
+		const { states, onStatus } = collectStates();
+		const controller = imageStatus(img, { src: url, onStatus });
+		await vi.waitFor(() => expect(img.dataset.imageState).toBe('loaded'));
+
+		const nativeError = vi.fn();
+		img.addEventListener('error', nativeError);
+		img.src = '';
+		controller.update({ src: '', onStatus });
+
+		// The empty source resets to pending and the native error the browser
+		// fires for src="" must not flip it to failed.
+		await vi.waitFor(() => expect(nativeError).toHaveBeenCalled());
+
+		expect(img.dataset.imageState).toBe('pending');
+		expect(states).toEqual(['pending', 'loaded', 'pending']);
+
+		controller.destroy();
+	});
 });

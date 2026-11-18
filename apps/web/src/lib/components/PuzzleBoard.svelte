@@ -290,6 +290,14 @@
 		filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 0.15));
 	}
 
+	/* Opacity-hide the unready/errored image itself (never display:none, so a
+	   changed src recovers): a failed URL must not paint its broken-image
+	   glyph across the 140% wrapper alongside the cell's own decorations. */
+	.placed-piece-shadow img:global([data-image-state='pending']),
+	.placed-piece-shadow img:global([data-image-state='error']) {
+		opacity: 0;
+	}
+
 	/* Image status decorations stay on the 100% cell (.drop-zone), never on
 	   the 140% jigsaw wrapper whose -20% offset would spill over neighbors.
 	   Translucent overlays only, so overlapping tabs from adjacent pieces are

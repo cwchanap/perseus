@@ -27,8 +27,18 @@ export function imageStatus(node: HTMLImageElement, params: ImageStatusParams) {
 		currentOnStatus?.(next);
 	};
 
-	const markLoaded = () => apply('loaded');
-	const markError = () => apply('error');
+	// Native events for an empty/unassigned source (mounting <img src="">
+	// fires a native error) must not classify the image: an empty source
+	// always stays pending, matching classify().
+	const srcIsSet = () => Boolean(node.getAttribute('src'));
+	const markLoaded = () => {
+		if (!srcIsSet()) return;
+		apply('loaded');
+	};
+	const markError = () => {
+		if (!srcIsSet()) return;
+		apply('error');
+	};
 
 	// A complete image fires no further events, so classify it from the
 	// decoded result. Checked via the src attribute (not the property):
