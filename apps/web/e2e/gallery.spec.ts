@@ -1018,6 +1018,14 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			// Seeded progress surfaces the continue panel; the reload re-runs the
 			// load against the same mocks (routes live on the page across reloads).
 			await seedApiVariantProgress(page, CONTINUE_EASY_VARIANT, '1:1', 16);
+			// The first load's gallery card already requests this same thumbnail
+			// URL. Under trace/mobile overhead that pre-reload request is captured
+			// before page.reload() tears the document down, and its stale route
+			// entry survives into the hold (count 2 instead of 1). Drain the first
+			// load deterministically — wait for the card's capture, release it —
+			// so the count below is exactly the post-reload request on every run.
+			await expect.poll(() => handle.pendingCount).toBe(1);
+			await handle.release();
 			await page.reload();
 
 			const panel = page.getByTestId('continue-on-device');
