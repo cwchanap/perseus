@@ -11,6 +11,7 @@
 	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
 	import SavedProgressDialog from '$lib/components/SavedProgressDialog.svelte';
 	import { listQuick } from '$lib/services/quickPuzzle';
+	import { imageStatus } from '$lib/actions/imageStatus';
 	import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 	import {
 		discoverGalleryProgress,
@@ -80,7 +81,6 @@
 	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
-	let resumeImageError = $state(false);
 	// Auth is observed only to decide bookmark presentation; all bookmark
 	// network/mutation logic lives in the store.
 	const authenticated = $derived($playerAuth.status === 'authenticated');
@@ -464,13 +464,16 @@
 				aria-labelledby="continue-on-device-title"
 				class="continue-panel"
 			>
-				{#if resumeImageUrl && !resumeImageError}
+				{#if resumeImageUrl}
+					<!-- Decorative background: silently hidden (opacity) while
+					     pending/errored behind the existing text/progress overlay —
+					     no unavailable caption behind the content. -->
 					<img
 						class="continue-art"
 						src={resumeImageUrl}
 						alt=""
 						aria-hidden="true"
-						onerror={() => (resumeImageError = true)}
+						use:imageStatus={{ src: resumeImageUrl }}
 					/>
 				{/if}
 				<div class="continue-art-overlay" aria-hidden="true"></div>
@@ -844,6 +847,15 @@ hover:bg-[rgba(255,0,102,0.08)]"
 
 	.continue-art {
 		z-index: 0;
+	}
+
+	/* Decorative: while pending or errored the art hides silently behind the
+	   overlay gradient. opacity (not display) keeps the element loading and
+	   lets a changed src recover. data-image-state is set at runtime by the
+	   imageStatus action, hence :global. */
+	.continue-art:global([data-image-state='pending']),
+	.continue-art:global([data-image-state='error']) {
+		opacity: 0;
 	}
 
 	.continue-art-overlay {

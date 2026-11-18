@@ -2,6 +2,8 @@
 	import type { PuzzlePiece } from '$lib/types/puzzle';
 	import type { Rotation } from '@perseus/game-core';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
+	import { imageStatus } from '$lib/actions/imageStatus';
+	import type { ImageStatusState } from '$lib/actions/imageStatus';
 
 	interface Props {
 		piece: PuzzlePiece;
@@ -31,6 +33,11 @@
 		onCancelSelection,
 		tabIndex = 0
 	}: Props = $props();
+
+	// Tray image status lives on this 100%-of-slot wrapper — never inside the
+	// 140% jigsaw wrapper, whose overhang would spill a decoration over
+	// neighboring slots.
+	let imageState = $state<ImageStatusState>('pending');
 
 	// Expose the current rotation angle in the piece name so keyboard/screen
 	// reader users know the orientation before rotating or placing.
@@ -91,6 +98,21 @@
 </script>
 
 <div class="puzzle-piece-wrapper relative h-full w-full">
+	{#if imageState !== 'loaded'}
+		<!-- Translucent and confined to the 100% slot bounds; the piece image
+			     is hidden (opacity) whenever this shows, so overlaying it never
+			     clips the jigsaw shape. Rotated pieces keep this axis-aligned: the
+			     rotation applies to .piece-visual, not this wrapper. -->
+		<div
+			class="piece-image-status pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+			class:piece-image-error={imageState === 'error'}
+			data-testid="piece-image-status"
+			data-status={imageState}
+			aria-hidden="true"
+		>
+			{#if imageState === 'error'}!{/if}
+		</div>
+	{/if}
 	<div
 		class="puzzle-piece h-full w-full cursor-grab transition-transform select-none hover:scale-105 focus:outline-hidden"
 		class:opacity-50={isPlaced}
@@ -132,7 +154,12 @@
 						src={resolveImage(piece)}
 						alt="Piece {piece.id}"
 						class="h-full w-full"
+						class:opacity-0={imageState !== 'loaded'}
 						draggable="false"
+						use:imageStatus={{
+							src: resolveImage(piece),
+							onStatus: (state) => (imageState = state)
+						}}
 					/>
 				</div>
 			</div>
@@ -147,6 +174,40 @@
 
 	.puzzle-piece:not(.cursor-not-allowed):active {
 		cursor: grabbing;
+	}
+
+	/* Pending: a small pulsing dot in the otherwise dark slot. Error: a small
+	   hot marker so the slot is not mistaken for an empty one. */
+	.piece-image-status {
+		background: rgb(58 255 255 / 6%);
+	}
+
+	.piece-image-status:not(.piece-image-error)::before {
+		content: '';
+		width: 10px;
+		height: 10px;
+		border-radius: 9999px;
+		background: var(--accent);
+		animation: piece-image-pulse 1.6s ease-in-out infinite;
+	}
+
+	.piece-image-error {
+		color: var(--hot);
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		font-weight: 700;
+	}
+
+	@keyframes piece-image-pulse {
+		50% {
+			opacity: 0.35;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.piece-image-status:not(.piece-image-error)::before {
+			animation: none;
+		}
 	}
 
 	.piece-visual {

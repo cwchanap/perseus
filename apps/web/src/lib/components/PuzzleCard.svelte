@@ -2,6 +2,8 @@
 	import type { PuzzleDifficulty, PuzzleFamilySummary } from '@perseus/types';
 	import { getFamilyThumbnailUrl } from '$lib/services/api';
 	import { getDifficultyLabel } from '$lib/services/gameplay/galleryProgress';
+	import { imageStatus } from '$lib/actions/imageStatus';
+	import type { ImageStatusState } from '$lib/actions/imageStatus';
 	import CategoryBadge from './CategoryBadge.svelte';
 	import DifficultyGems from './DifficultyGems.svelte';
 	import PuzzleDifficultyPicker from './PuzzleDifficultyPicker.svelte';
@@ -31,7 +33,7 @@
 		onBookmarkToggle
 	}: Props = $props();
 
-	let thumbnailError = $state(false);
+	let thumbnailState = $state<ImageStatusState>('pending');
 
 	const isReady = $derived(family.status === 'ready');
 	const statusLabel = $derived(family.status === 'processing' ? 'PROCESSING…' : 'FAILED');
@@ -48,25 +50,42 @@
 	data-testid="puzzle-card"
 >
 	<div class="relative aspect-square overflow-hidden bg-(--bg-2)" data-testid="puzzle-card-art">
-		{#if !thumbnailError}
-			<img
-				src={getFamilyThumbnailUrl(family.id)}
-				alt={family.name}
-				class="absolute inset-0 block h-full w-full object-cover transition-transform duration-300
-				group-hover:scale-[1.03]"
-				loading="lazy"
-				onerror={() => (thumbnailError = true)}
-			/>
-		{:else}
-			<div class="absolute inset-0 flex items-center justify-center text-(--text-2)">
-				<span class="text-xs font-(--font-mono) tracking-wider uppercase">No preview</span>
-			</div>
-		{/if}
+		<img
+			src={getFamilyThumbnailUrl(family.id)}
+			alt={family.name}
+			class="absolute inset-0 block h-full w-full object-cover transition-transform duration-300
+			group-hover:scale-[1.03]"
+			class:opacity-0={thumbnailState !== 'loaded'}
+			loading="lazy"
+			use:imageStatus={{
+				src: getFamilyThumbnailUrl(family.id),
+				onStatus: (state) => (thumbnailState = state)
+			}}
+		/>
 
 		<div
 			class="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(10,6,32,0.02)_38%,rgba(10,6,32,0.94)_100%)]"
 			aria-hidden="true"
 		></div>
+
+		{#if thumbnailState !== 'loaded'}
+			<!-- Above the gradient frame so pending/error is recognizable rather
+			     than an inexplicable dark panel. The img stays mounted (hidden by
+			     opacity) so lazy loading initiates and a new src can recover. -->
+			<div
+				class="pointer-events-none absolute inset-0 flex items-center justify-center"
+				data-testid="puzzle-card-art-placeholder"
+				aria-hidden="true"
+			>
+				{#if thumbnailState === 'pending'}
+					<span class="card-art-loading">Loading…</span>
+				{:else}
+					<span class="text-xs font-(--font-mono) tracking-wider text-(--text-2) uppercase">
+						No preview
+					</span>
+				{/if}
+			</div>
+		{/if}
 
 		{#if family.category}
 			<div
@@ -187,6 +206,27 @@
 </article>
 
 <style>
+	.card-art-loading {
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text-2);
+		animation: card-art-pulse 1.6s ease-in-out infinite;
+	}
+
+	@keyframes card-art-pulse {
+		50% {
+			opacity: 0.4;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.card-art-loading {
+			animation: none;
+		}
+	}
+
 	.card-difficulty-picker :global([data-testid='difficulty-picker']) {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));

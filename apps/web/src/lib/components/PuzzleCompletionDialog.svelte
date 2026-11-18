@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { modalFocus } from '$lib/actions/modalFocus';
+	import { imageStatus } from '$lib/actions/imageStatus';
+	import type { ImageStatusState } from '$lib/actions/imageStatus';
 	import { formatTime } from '$lib/stores/timer';
 	import type { ResultClass } from '@perseus/types';
 	import type { CompletionEffectState } from '@perseus/game-core';
@@ -88,6 +90,14 @@
 	// unchecked '' used to render fallback art next to a VIEW ARTWORK button
 	// that opened a broken <img src="">).
 	const artworkUrl = $derived(referenceImageUrl || null);
+
+	// Image load status for the two artwork surfaces. The imageStatus action
+	// reports its initial value on mount, so switching subviews (which
+	// remounts each image) re-syncs these without stale flags, and a changed
+	// URL recovers from a prior failure. Images stay mounted while
+	// pending/error, hidden with opacity, so lazy loading and recovery work.
+	let previewImageState = $state<ImageStatusState>('pending');
+	let artworkImageState = $state<ImageStatusState>('pending');
 
 	// If the reference disappears while the artwork subview is open, fall
 	// back to results; otherwise the focused BACK control is destroyed, focus
@@ -180,13 +190,33 @@
 					<div class="modal-tag">// FINISHED ARTWORK</div>
 					<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 				</div>
-				<div class="artwork-image-wrap">
+				<div
+					class="artwork-image-wrap"
+					class:art-stage={artworkImageState !== 'loaded'}
+					class:art-pending={artworkImageState === 'pending'}
+				>
 					<img
 						class="completion-artwork-image"
 						data-testid="completion-artwork-image"
 						src={artworkUrl}
 						alt={`${puzzleName} finished artwork`}
+						class:opacity-0={artworkImageState !== 'loaded'}
+						use:imageStatus={{
+							src: artworkUrl,
+							onStatus: (state) => (artworkImageState = state)
+						}}
 					/>
+					{#if artworkImageState === 'error'}
+						<div
+							class="completion-reference-fallback"
+							data-testid="completion-artwork-unavailable"
+							role="img"
+							aria-label="Finished artwork unavailable"
+						>
+							<span>FINISHED ART</span>
+							<strong>REFERENCE UNAVAILABLE</strong>
+						</div>
+					{/if}
 				</div>
 				<div class="artwork-actions">
 					<button
@@ -203,12 +233,33 @@
 			<div class="completion-layout">
 				<div class="completion-art-column">
 					{#if artworkUrl}
-						<img
-							class="completion-reference-art"
-							data-testid="completion-reference-art"
-							src={artworkUrl}
-							alt={`${puzzleName} finished artwork`}
-						/>
+						<!-- The img keeps its existing responsive width/aspect frame; the
+						     wrapper only hosts the pending pulse and the error fallback
+						     over that same frame. -->
+						<div class="completion-art-frame" class:art-pending={previewImageState === 'pending'}>
+							<img
+								class="completion-reference-art"
+								data-testid="completion-reference-art"
+								src={artworkUrl}
+								alt={`${puzzleName} finished artwork`}
+								class:opacity-0={previewImageState !== 'loaded'}
+								use:imageStatus={{
+									src: artworkUrl,
+									onStatus: (state) => (previewImageState = state)
+								}}
+							/>
+							{#if previewImageState === 'error'}
+								<div
+									class="completion-reference-fallback"
+									data-testid="completion-preview-unavailable"
+									role="img"
+									aria-label="Finished artwork unavailable"
+								>
+									<span>FINISHED ART</span>
+									<strong>REFERENCE UNAVAILABLE</strong>
+								</div>
+							{/if}
+						</div>
 					{:else}
 						<div
 							class="completion-reference-fallback"
@@ -506,6 +557,43 @@
 		font-size: 0.55rem;
 		font-weight: 600;
 		letter-spacing: 0.12em;
+	}
+
+	/* Wrapper for a nonempty reference URL: no sizing of its own (it wraps
+	   the img, which already carries the responsive width + 3/4 frame). It
+	   hosts the pending pulse and the error fallback over that same frame. */
+	.completion-art-frame {
+		position: relative;
+	}
+
+	/* Error fallback over a kept-mounted (opacity-hidden) img: fill the
+	   existing frame instead of the in-flow size used by the null-URL case. */
+	.completion-art-frame .completion-reference-fallback {
+		position: absolute;
+		inset: 0;
+		width: auto;
+		height: auto;
+	}
+
+	/* Pending pulse: recognizable gold frame + soft breathing instead of an
+	   inexplicable dark area. */
+	.art-pending {
+		border-radius: 1.25rem;
+		background:
+			radial-gradient(circle at 50% 30%, var(--accent-glow-strong), transparent 48%), var(--bg-2);
+		animation: art-pending-pulse 1.6s ease-in-out infinite;
+	}
+
+	@keyframes art-pending-pulse {
+		50% {
+			opacity: 0.6;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.art-pending {
+			animation: none;
+		}
 	}
 
 	.completion-result-column {
@@ -1222,7 +1310,9 @@
 
 	/* The wrapper absorbs the flex stretch; the img inside sizes to its own
 	   aspect ratio (max-width/max-height contain-fit), so a wide image is
-	   never letterboxed with dark bars inside the gold frame. */
+	   never letterboxed with dark bars inside the gold frame. While the image
+	   is pending/errored the wrap becomes a bounded, nonzero placeholder
+	   stage — the auto-sized img alone reserves nothing before decode. */
 	.artwork-image-wrap {
 		flex: 1 1 auto;
 		min-height: 0;
@@ -1230,6 +1320,14 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	.artwork-image-wrap.art-stage {
+		flex: 0 0 auto;
+		width: min(100%, 230px);
+		aspect-ratio: 3 / 4;
+		border-radius: 1.25rem;
+		box-shadow: var(--gold-frame);
 	}
 
 	.completion-artwork-image {
