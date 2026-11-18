@@ -112,6 +112,17 @@ const DECLARED_404: DeclaredImageFailure = {
 	outcome: 'status'
 };
 
+/** Anchored to the origin AND a specific query — only that full URL is declared. */
+const DECLARED_QUERY_404: DeclaredImageFailure = {
+	url: new RegExp(
+		'^https://perseus\\.test/api/puzzles/e2e2a000-0000-4000-8000-000000000004/thumbnail\\?cachebust=2$',
+		'i'
+	),
+	method: 'GET',
+	status: 404,
+	outcome: 'status'
+};
+
 /** The browser console entry Chromium emits for a 404 resource. */
 const CONSOLE_404 =
 	'Failed to load resource: the server responded with a status of 404 (Not Found)';
@@ -126,6 +137,31 @@ describe('diagnostics declared image failures', () => {
 		emitResponse(imageResponse(THUMBNAIL_URL, 404));
 
 		expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
+	});
+
+	it('matches an origin/query-anchored declaration against the FULL response URL', () => {
+		// DeclaredImageFailure.url documents a full-URL regex; the response
+		// check must measure it against response.url() (origin + query), not
+		// the bare pathname — otherwise an anchored declaration can never
+		// match anything and its 404 is misreported as unexpected.
+		const { diagnostics, emitResponse } = stub();
+		diagnostics.setDeclaredImageFailures([DECLARED_QUERY_404]);
+
+		emitResponse(imageResponse(`${THUMBNAIL_URL}?cachebust=2`, 404));
+
+		expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
+	});
+
+	it('keeps a query-specific declaration exact: a different query on the same path stays unexpected', () => {
+		// Pathname matching would treat ANY query on the declared path as the
+		// declared failure; full-URL matching keeps the declaration exact.
+		const { diagnostics, emitResponse } = stub();
+		diagnostics.setDeclaredImageFailures([DECLARED_QUERY_404]);
+
+		emitResponse(imageResponse(`${THUMBNAIL_URL}?cachebust=3`, 404));
+
+		expect(diagnostics.unexpectedResponses).toHaveLength(1);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow(/unexpected responses/);
 	});
 
 	it('flags a declared image URL that answers with a different status', () => {

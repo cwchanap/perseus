@@ -215,4 +215,168 @@ test.describe('gameplay artwork status @smoke', () => {
 		// Local completion intact: exactly one sealed server request.
 		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
 	});
+
+	// --- Completion artwork pending/error states (review wave) ----------------
+
+	/** Bounding box of the results preview's placeholder frame (the img's wrapper). */
+	async function previewFrameBox(dialog: ReturnType<Page['getByRole']>): Promise<{
+		width: number;
+		height: number;
+	}> {
+		const box = await dialog.locator('.completion-art-frame').boundingBox();
+		expect(box, 'results preview frame must have a bounding box').not.toBeNull();
+		return box!;
+	}
+
+	/** Wait until the dialog's finite entry animations (the 0.35s
+	 * celebration-in scale-up on the modal box itself) have finished, so
+	 * measured boxes are final-size (the infinite pending-pulse/flicker
+	 * animations never settle and are excluded). Without this, a measurement
+	 * taken mid-animation differs from the settled size by the remaining
+	 * scale factor. */
+	async function modalBoxSettled(dialog: ReturnType<Page['getByRole']>): Promise<void> {
+		await expect
+			.poll(() =>
+				dialog.evaluate((node) =>
+					(node as HTMLElement)
+						.getAnimations()
+						.filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
+						.every((animation) => animation.playState === 'finished')
+				)
+			)
+			.toBe(true);
+	}
+
+	test('held reference keeps a bounded pending frame in the results preview, then loads decoded after release @smoke', async ({
+		gameplayPage
+	}) => {
+		await gameplayPage.gotoFixture({
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START,
+			imageHolds: [{ endpoint: { kind: 'reference' }, outcome: 'hold' }]
+		});
+
+		await gameplayPage.solveFixture();
+		const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+
+		// Held request: the dialog is open and the results preview is pending.
+		await expect.poll(() => gameplayPage.imageHoldHandle!.pendingCount).toBe(1);
+		const previewArt = dialog.getByTestId('completion-reference-art');
+		await expect(previewArt).toHaveAttribute('data-image-state', 'pending');
+		expect(await naturalWidth(previewArt)).toBe(0);
+
+		// The pending pulse must sit on a REAL frame: nonzero width and height
+		// with the reserved 3/4 aspect (below 900px the responsive width governs;
+		// a wrapper sized from an undecoded img collapses to 0). Desktop and
+		// mobile smoke lanes both run this assertion at their own widths.
+		await modalBoxSettled(dialog);
+		const pendingBox = await previewFrameBox(dialog);
+		expect(pendingBox.width).toBeGreaterThan(0);
+		expect(pendingBox.height).toBeGreaterThan(0);
+		expect(pendingBox.height / pendingBox.width).toBeCloseTo(4 / 3, 1);
+
+		await gameplayPage.imageHoldHandle!.release();
+
+		// Released: decoded imagery in the SAME frame — no size or aspect shift.
+		await expect(previewArt).toHaveAttribute('data-image-state', 'loaded');
+		await expect.poll(() => naturalWidth(previewArt)).toBeGreaterThan(0);
+		const loadedBox = await previewFrameBox(dialog);
+		expect(loadedBox.width).toBeCloseTo(pendingBox.width, 0);
+		expect(loadedBox.height).toBeCloseTo(pendingBox.height, 0);
+		await expect(dialog.getByTestId('completion-preview-unavailable')).toHaveCount(0);
+	});
+
+	test('failed reference shows unavailable in the results preview and still opens the artwork view @smoke', async ({
+		gameplayPage
+	}) => {
+		await gameplayPage.gotoFixture({
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START,
+			imageHolds: [{ endpoint: { kind: 'reference' }, outcome: 'fail', status: 404 }]
+		});
+
+		await gameplayPage.solveFixture();
+		const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+
+		const previewArt = dialog.getByTestId('completion-reference-art');
+		await expect(previewArt).toHaveAttribute('data-image-state', 'error');
+		expect(await naturalWidth(previewArt)).toBe(0);
+
+		// The explicit fallback stays bounded by the same 3/4 frame (never a
+		// collapsed or unbounded dark area).
+		const fallback = dialog.getByTestId('completion-preview-unavailable');
+		await expect(fallback).toBeVisible();
+		const frameBox = await previewFrameBox(dialog);
+		expect(frameBox.width).toBeGreaterThan(0);
+		expect(frameBox.height).toBeGreaterThan(0);
+		const fallbackBox = await fallback.boundingBox();
+		expect(fallbackBox!.width).toBeGreaterThan(0);
+		expect(fallbackBox!.height).toBeGreaterThan(0);
+
+		// Presentation-only failure: the VIEW ARTWORK entry still navigates.
+		await dialog.getByTestId('view-artwork').click();
+		await expect(dialog.getByTestId('completion-artwork-view')).toBeVisible();
+	});
+
+	test('full-artwork view keeps a bounded pending stage, then loads decoded after release @smoke', async ({
+		gameplayPage
+	}) => {
+		await gameplayPage.gotoFixture({
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START,
+			imageHolds: [{ endpoint: { kind: 'reference' }, outcome: 'hold' }]
+		});
+
+		await gameplayPage.solveFixture();
+		const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+
+		// Both mounted surfaces fetch the held reference (preview + artwork);
+		// Chromium may coalesce the identical in-flight requests into ONE route
+		// hit, so only assert the hold is still active here — the per-image
+		// assertions below carry the state proof.
+		await dialog.getByTestId('view-artwork').click();
+		await expect.poll(() => gameplayPage.imageHoldHandle!.pendingCount).toBeGreaterThanOrEqual(1);
+		const artwork = dialog.getByTestId('completion-artwork-image');
+		await expect(artwork).toHaveAttribute('data-image-state', 'pending');
+		expect(await naturalWidth(artwork)).toBe(0);
+
+		// The bounded stage reserves nonzero dimensions while undecoded.
+		const stage = dialog.locator('.artwork-image-wrap.art-stage');
+		const stageBox = await stage.boundingBox();
+		expect(stageBox, 'full-artwork pending stage must have a bounding box').not.toBeNull();
+		expect(stageBox!.width).toBeGreaterThan(0);
+		expect(stageBox!.height).toBeGreaterThan(0);
+
+		await gameplayPage.imageHoldHandle!.release();
+
+		// Released: the artwork decodes in place and the pending stage drops.
+		await expect(artwork).toHaveAttribute('data-image-state', 'loaded');
+		await expect.poll(() => naturalWidth(artwork)).toBeGreaterThan(0);
+		await expect(stage).toHaveCount(0);
+		await expect(dialog.getByTestId('completion-artwork-unavailable')).toHaveCount(0);
+	});
+
+	test('failed reference shows unavailable in the full-artwork view and returns to results @smoke', async ({
+		gameplayPage
+	}) => {
+		await gameplayPage.gotoFixture({
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START,
+			imageHolds: [{ endpoint: { kind: 'reference' }, outcome: 'fail', status: 404 }]
+		});
+
+		await gameplayPage.solveFixture();
+		const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+		await dialog.getByTestId('view-artwork').click();
+
+		const artwork = dialog.getByTestId('completion-artwork-image');
+		await expect(artwork).toHaveAttribute('data-image-state', 'error');
+		expect(await naturalWidth(artwork)).toBe(0);
+		await expect(dialog.getByTestId('completion-artwork-unavailable')).toBeVisible();
+
+		// Navigation intact: BACK TO RESULTS returns to the results subview.
+		await dialog.getByTestId('back-to-results').click();
+		await expect(dialog.getByTestId('completion-artwork-view')).toHaveCount(0);
+		await expect(dialog.getByTestId('completion-reference-art')).toHaveCount(1);
+	});
 });

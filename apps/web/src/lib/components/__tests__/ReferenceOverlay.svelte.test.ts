@@ -241,4 +241,16 @@ describe('ReferenceOverlay', () => {
 			expect(overlay.textContent).toContain('Reference image unavailable');
 		});
 	});
+
+	describe('when imageUrl is empty (unavailable, like null)', () => {
+		it('renders the unavailable message instead of a forever-pending empty-src img', async () => {
+			// imageStatus intentionally never classifies an empty source, so an
+			// empty URL would otherwise mount an invisible img stuck on pending
+			// with no explanation — the empty URL must read as unavailable.
+			render(ReferenceOverlay, { imageUrl: '', active: true });
+			const overlay = await page.getByTestId('reference-overlay').element();
+			expect(overlay.textContent).toContain('Reference image unavailable');
+			expect(await page.getByRole('img', { name: 'Puzzle reference' }).query()).toBeNull();
+		});
+	});
 });

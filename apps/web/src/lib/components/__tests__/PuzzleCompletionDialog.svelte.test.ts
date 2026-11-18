@@ -276,6 +276,28 @@ describe('PuzzleCompletionDialog', () => {
 		expect(page.getByRole('button', { name: 'VIEW ARTWORK' }).query()).toBeNull();
 	});
 
+	it('hides the failed preview img from assistive tech so only the fallback announces', async () => {
+		// The errored img stays mounted (opacity-hidden) but keeps its alt, and
+		// the fallback is a role=img — without aria-hidden on the img, screen
+		// readers would announce the artwork twice. A loaded img must stay
+		// announced (no aria-hidden) as the accessible artwork.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
+		});
+
+		const img = (await page.getByTestId('completion-reference-art').element()) as HTMLImageElement;
+		expect(img.getAttribute('aria-hidden')).toBeNull();
+
+		img.dispatchEvent(new Event('error'));
+		await expect.element(page.getByTestId('completion-preview-unavailable')).toBeVisible();
+		expect(img.getAttribute('aria-hidden')).toBe('true');
+
+		img.dispatchEvent(new Event('load'));
+		await expect.poll(() => page.getByTestId('completion-preview-unavailable').query()).toBeNull();
+		expect(img.getAttribute('aria-hidden')).toBeNull();
+	});
+
 	it('overlays the artwork-view fallback on the stage, keeping the failed image mounted', async () => {
 		// A nonempty-but-failed URL keeps the <img> mounted (opacity-hidden)
 		// while the fallback overlays the placeholder stage — it must not sit
@@ -303,6 +325,13 @@ describe('PuzzleCompletionDialog', () => {
 		const fallbackRect = fallback.element()!.getBoundingClientRect();
 		expect(fallbackRect.width).toBeCloseTo(stageRect.width, 0);
 		expect(fallbackRect.height).toBeCloseTo(stageRect.height, 0);
+
+		// The failed img is aria-hidden (single fallback announcement) but
+		// returns to the accessibility tree once a load succeeds.
+		expect(img.getAttribute('aria-hidden')).toBe('true');
+		img.dispatchEvent(new Event('load'));
+		await expect.poll(() => page.getByTestId('completion-artwork-unavailable').query()).toBeNull();
+		expect(img.getAttribute('aria-hidden')).toBeNull();
 	});
 
 	it('opens a contained artwork view and restores results with focus', async () => {

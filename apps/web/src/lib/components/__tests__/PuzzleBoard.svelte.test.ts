@@ -128,7 +128,11 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces,
 			onPiecePlaced: vi.fn(),
-			resolveImage
+			// An empty src is the one URL the imageStatus action guarantees to
+			// keep pending (it never classifies an empty source), so the pending
+			// assertion cannot be raced by a fast 404 — a fetchable URL like
+			// `/test/0.png` can error before the assertion runs.
+			resolveImage: () => ''
 		});
 
 		const placedImage = await page.getByAltText('Placed piece').element();
@@ -139,7 +143,10 @@ describe('PuzzleBoard', () => {
 		expect(placedImage.dataset.imageState).toBe('pending');
 		expect(getComputedStyle(placedImage).opacity).toBe('0');
 
-		// A failed load keeps the img mounted but hidden.
+		// Give the img a real src so dispatched events classify (the action
+		// ignores events while the src attribute is empty), then simulate the
+		// failure: the img stays mounted but hidden.
+		placedImage.setAttribute('src', PIXEL_PNG);
 		placedImage.dispatchEvent(new Event('error'));
 		expect(placedImage.dataset.imageState).toBe('error');
 		expect(getComputedStyle(placedImage).opacity).toBe('0');
