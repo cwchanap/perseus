@@ -128,6 +128,61 @@ test.describe('gameplay artwork status @smoke', () => {
 		).toBe(true);
 	});
 
+	test('changed reference URL recovers on the same mounted image without a reload @smoke', async ({
+		gameplayPage
+	}) => {
+		const page = gameplayPage.page;
+		await gameplayPage.gotoFixture({
+			seedPreferences: IMMEDIATE_START,
+			imageHolds: [{ endpoint: { kind: 'reference' }, outcome: 'fail', status: 404 }]
+		});
+		// A full reload would reset this marker; the recovery below must keep it.
+		await page.evaluate(() => {
+			(window as unknown as { __artworkNoReload?: boolean }).__artworkNoReload = true;
+		});
+
+		await toggleReference(page);
+		const overlay = page.getByTestId('reference-overlay');
+		await expect(overlay).toBeVisible();
+		const refImg = overlay.locator('img');
+		await expect(refImg).toHaveAttribute('data-image-state', 'error');
+		await expect(overlay.getByTestId('reference-image-unavailable')).toBeVisible();
+
+		// The failure is asserted — retire the declaration AND remove the
+		// failing route so any NEW failure (including the changed URL below)
+		// stays fatal and the changed URL reaches the fixture router.
+		await gameplayPage.imageHolds.dispose();
+		gameplayPage.diagnostics.setDeclaredImageFailures([]);
+
+		// Mark the element: the recovery must happen on the SAME <img> — a
+		// remount would lose this attribute (that path is covered above).
+		await refImg.evaluate((el) => {
+			(el as HTMLImageElement).dataset.urlChangeProbe = 'mounted';
+		});
+		// Change the mounted image's URL in place. The fixture router answers
+		// the same endpoint with a distinguishing query, so the browser issues
+		// a real request for a DIFFERENT URL on the already-mounted element.
+		const changedUrl: string = await refImg.evaluate((el) => {
+			const img = el as HTMLImageElement;
+			img.src = `${img.src}?retry=changed`;
+			return img.src;
+		});
+		expect(changedUrl).toContain('?retry=changed');
+
+		// The imageStatus action must not retain the prior error state: the
+		// mounted image reports the new URL's outcome and the unavailable note
+		// clears — all without a reload or a remount.
+		await expect(refImg).toHaveAttribute('data-image-state', 'loaded');
+		await expect.poll(() => naturalWidth(refImg)).toBeGreaterThan(0);
+		await expect(overlay.getByTestId('reference-image-unavailable')).toHaveCount(0);
+		expect(await refImg.getAttribute('data-url-change-probe')).toBe('mounted');
+		expect(
+			await page.evaluate(
+				() => (window as unknown as { __artworkNoReload?: boolean }).__artworkNoReload
+			)
+		).toBe(true);
+	});
+
 	test('solved fixture keeps placed imagery and loads both completion artwork surfaces @smoke', async ({
 		gameplayPage
 	}) => {

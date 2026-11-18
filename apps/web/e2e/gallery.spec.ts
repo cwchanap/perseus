@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/test';
@@ -9,8 +9,13 @@ import {
 	getFixture,
 	type GameplayFixtureId
 } from './gameplay-fixtures/catalog';
-import { createFixtureRouter } from './gameplay-fixtures/fixture-router';
+import {
+	createFixtureRouter,
+	FIXTURE_ROUTER_HEADER,
+	FIXTURE_ROUTER_SOURCE
+} from './gameplay-fixtures/fixture-router';
 import { createImageHoldController } from './gameplay-fixtures/image-hold';
+import { createPageDiagnostics, type PageDiagnostics } from './support/diagnostics';
 import {
 	buildMinimalSeed,
 	createPersistedStateController,
@@ -725,16 +730,35 @@ test.describe('Main Gallery Page', () => {
 test.describe('Gallery artwork status (HPA-1029)', () => {
 	// The Gallery family thumbnail is NOT under the gameplay fixture namespace,
 	// so gameplayPage.assertSettled() is a no-op here. The Gallery tests own
-	// their hold cleanup: every test disposes its routes in finally, and the
-	// afterEach guard asserts no image hold was left pending (belt and
-	// suspenders — dispose() unroutes, assertClean() reports a forgotten
-	// release even after a route is gone).
+	// their diagnostics and hold cleanup: every test attaches page diagnostics
+	// (so unrelated console/page/request/response failures stay fatal) and
+	// declares its intentional image failures (exact URL/method/status/
+	// provenance), disposes its routes in finally, and the afterEach guard
+	// asserts no image hold was left pending and no unexpected error occurred
+	// (belt and suspenders — dispose() unroutes, assertClean() reports a
+	// forgotten release even after a route is gone).
 	let activeHolds: ImageHoldController | null = null;
+	let activeDiagnostics: PageDiagnostics | null = null;
 
 	test.afterEach(() => {
 		activeHolds?.assertClean();
+		activeDiagnostics?.assertNoUnexpectedErrors();
+		activeDiagnostics?.assertNoUnexpectedFixtureRequests();
 		activeHolds = null;
+		activeDiagnostics = null;
 	});
+
+	// Real catalog fixtures for card navigation: the fixture router serves
+	// their full puzzle payload with provenance, so navigating into a card is
+	// fully controlled — never dependent on the real backend.
+	const CARD_FIXTURE_A: GameplayFixtureId = 'e2e2b000-0000-4000-8000-000000000012';
+
+	/** Attach page diagnostics to this test and register it for teardown. */
+	function attachDiagnostics(page: Page): PageDiagnostics {
+		const diagnostics = createPageDiagnostics(page);
+		activeDiagnostics = diagnostics;
+		return diagnostics;
+	}
 
 	const FAMILY_A = '00000000-0000-4000-8000-000000000c02';
 	const FAMILY_B = '00000000-0000-4000-8000-000000000c03';
@@ -751,7 +775,28 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 		return img.evaluate((el) => (el as HTMLImageElement).naturalWidth);
 	}
 
+	/** Declare one intentional family-thumbnail failure (GET + exact status). */
+	function declareThumbnailFailure(diagnostics: PageDiagnostics, familyId: string): void {
+		diagnostics.setDeclaredImageFailures([
+			{ url: thumbnailPattern(familyId), method: 'GET', status: 404, outcome: 'status' }
+		]);
+	}
+
+	/**
+	 * Wait for the declared thumbnail failure: exact URL, GET method, and the
+	 * fixture-router provenance marker (a real-backend answer cannot match).
+	 */
+	function declaredThumbnailFailure(page: Page, familyId: string): Promise<Response> {
+		return page.waitForResponse(
+			(response) =>
+				thumbnailPattern(familyId).test(response.url()) &&
+				response.request().method() === 'GET' &&
+				response.headers()[FIXTURE_ROUTER_HEADER] === FIXTURE_ROUTER_SOURCE
+		);
+	}
+
 	test('held card thumbnail shows Loading…, then loads decoded after release', async ({ page }) => {
+		const diagnostics = attachDiagnostics(page);
 		const family = makeFamily(FAMILY_A, { name: 'Hold Thumbnail' });
 		await mockFamilyList(page, [family]);
 		const images = createImageHoldController();
@@ -780,25 +825,48 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			await expect(placeholder).toHaveCount(0);
 		} finally {
 			await images.dispose();
+			diagnostics.dispose();
 		}
 	});
 
 	test('failed card thumbnail shows an explicit No preview state, asserts the exact 404, and still navigates', async ({
 		page
 	}) => {
-		const family = makeFamily(FAMILY_A, { name: 'Failed Thumbnail' });
+		const diagnostics = attachDiagnostics(page);
+		const family = makeFamily(FAMILY_A, {
+			name: 'Failed Thumbnail',
+			// The easy variant is a real catalog fixture: the fixture router
+			// serves its puzzle payload with provenance, so the navigation below
+			// is fully controlled — the real backend is never consulted.
+			variants: {
+				easy: { id: CARD_FIXTURE_A, difficulty: 'easy', pieceCount: 12, status: 'ready' },
+				normal: {
+					id: `${FAMILY_A}-normal`,
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: `${FAMILY_A}-hard`,
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
 		await mockFamilyList(page, [family]);
-		await mockPuzzleDetail(page, { id: family.variants.easy.id });
+		await createFixtureRouter().install(page);
+		await plantGameplayConfig(page, CARD_FIXTURE_A);
 		const images = createImageHoldController();
 		activeHolds = images;
 		try {
 			await images.installImageUrl(page, thumbnailPattern(FAMILY_A), { failStatus: 404 });
+			declareThumbnailFailure(diagnostics, FAMILY_A);
 
-			// Assert the exact intentional negative: the thumbnail route really
-			// answered 404 (not, say, a network error or a silent no-response).
-			const thumbnail404 = page.waitForResponse(
-				(response) => thumbnailPattern(FAMILY_A).test(response.url()) && response.status() === 404
-			);
+			// Assert the exact intentional negative: the declared thumbnail URL
+			// really answered GET 404 with fixture-router provenance (not a
+			// network error, another method, or a real-backend answer).
+			const thumbnail404 = declaredThumbnailFailure(page, FAMILY_A);
 
 			await page.goto('/');
 			const card = page.getByTestId('puzzle-card');
@@ -812,34 +880,69 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			await expect(cardImg).toHaveAttribute('data-image-state', 'error');
 			expect(await decodedWidth(cardImg)).toBe(0);
 
-			// A failed preview is presentation-only: card navigation still works.
+			// A failed preview is presentation-only: card navigation still works
+			// and lands on the fixture-served puzzle page.
 			const easyLink = page
 				.locator('[data-testid="difficulty-action"][data-difficulty="easy"]')
 				.first();
 			await expect(easyLink).toBeVisible();
 			await easyLink.click();
-			await expect(page).toHaveURL(new RegExp(`/puzzle/${family.variants.easy.id}`));
+			await expect(page).toHaveURL(new RegExp(`/puzzle/${CARD_FIXTURE_A}`));
+			// Fresh fixture entry presents the mandatory Mission Setup dialog —
+			// proof the puzzle page actually loaded (not just a URL change).
+			await expect(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 		} finally {
 			await images.dispose();
+			diagnostics.dispose();
 		}
 	});
 
 	test('changed card thumbnail URL recovers from a prior failure without a reload', async ({
 		page
 	}) => {
-		const familyA = makeFamily(FAMILY_A, { name: 'Changed Thumbnail A' });
+		const diagnostics = attachDiagnostics(page);
+		const familyA = makeFamily(FAMILY_A, {
+			name: 'Changed Thumbnail A',
+			// The easy variant is a real catalog fixture: the fixture router
+			// serves its puzzle payload with provenance, so leaving through the
+			// card is fully controlled — no backend-dependent error panel.
+			variants: {
+				easy: { id: CARD_FIXTURE_A, difficulty: 'easy', pieceCount: 12, status: 'ready' },
+				normal: {
+					id: `${FAMILY_A}-normal`,
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: `${FAMILY_A}-hard`,
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
 		const familyB = makeFamily(FAMILY_B, { name: 'Changed Thumbnail B' });
 		await mockFamilyList(page, [familyA]);
 		await mockFamilyThumbnail(page, FAMILY_B);
+		await createFixtureRouter().install(page);
+		await plantGameplayConfig(page, CARD_FIXTURE_A);
 		const images = createImageHoldController();
 		activeHolds = images;
 		try {
 			await images.installImageUrl(page, thumbnailPattern(FAMILY_A), { failStatus: 404 });
+			declareThumbnailFailure(diagnostics, FAMILY_A);
 
 			await page.goto('/');
 			const card = page.getByTestId('puzzle-card');
 			await expect(card).toHaveCount(1);
+			const cardImg = card.locator('img');
 			await expect(card.getByTestId('puzzle-card-art-placeholder')).toContainText('No preview');
+			await expect(cardImg).toHaveAttribute('data-image-state', 'error');
+
+			// The failure is asserted — retire the declaration so any NEW
+			// failure (including a spurious repeat of A's 404) stays fatal.
+			diagnostics.setDeclaredImageFailures([]);
 
 			// A full reload would reset this marker; recovery must keep it set.
 			await page.evaluate(() => {
@@ -847,22 +950,22 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			});
 
 			// The catalog changes: the family list now returns family B. Leave
-			// through family A's card (the fake variant id shows the mission
-			// error panel) and return via its RETURN TO ARCADE link — SPA
-			// navigation, so the gallery load re-runs without a full reload and
-			// the keyed card list mounts family B's card with its (working) URL.
+			// through family A's card — the fixture router serves its puzzle page
+			// (controlled) — and return via browser history: SPA navigation, so
+			// the gallery load re-runs without a full reload and the keyed card
+			// list mounts family B's card with its (working) URL.
 			await mockFamilyList(page, [familyB]);
 			const easyLink = page
 				.locator('[data-testid="difficulty-action"][data-difficulty="easy"]')
 				.first();
 			await easyLink.click();
-			await expect(page).toHaveURL(new RegExp(`/puzzle/${familyA.variants.easy.id}`));
-			await page.getByRole('link', { name: 'RETURN TO ARCADE' }).click();
+			await expect(page).toHaveURL(new RegExp(`/puzzle/${CARD_FIXTURE_A}`));
+			await expect(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+			await page.goBack();
 
 			await expect(page).toHaveURL(/\/$/);
 			await expect(page.getByTestId('puzzle-card')).toHaveCount(1);
 			await expect(page.getByTestId('puzzle-card-title')).toHaveText('Changed Thumbnail B');
-			const cardImg = page.getByTestId('puzzle-card').locator('img');
 			await expect(cardImg).toHaveAttribute('data-image-state', 'loaded');
 			await expect.poll(() => decodedWidth(cardImg)).toBeGreaterThan(0);
 			await expect(page.getByTestId('puzzle-card-art-placeholder')).toHaveCount(0);
@@ -874,12 +977,14 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			).toBe(true);
 		} finally {
 			await images.dispose();
+			diagnostics.dispose();
 		}
 	});
 
 	test('continue-on-device art stays silent while held, then loads decoded after release', async ({
 		page
 	}) => {
+		const diagnostics = attachDiagnostics(page);
 		const family = makeFamily(CONTINUE_FAMILY, {
 			name: 'Continue Art',
 			variants: {
@@ -931,12 +1036,14 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			await expect(panel.locator('#continue-on-device-title')).toBeVisible();
 		} finally {
 			await images.dispose();
+			diagnostics.dispose();
 		}
 	});
 
 	test('changed continue-on-device art URL recovers from a prior failure without a reload', async ({
 		page
 	}) => {
+		const diagnostics = attachDiagnostics(page);
 		const familyA = makeFamily(CONTINUE_FAMILY, {
 			name: 'Continue Fail A',
 			variants: {
@@ -988,6 +1095,7 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 		activeHolds = images;
 		try {
 			await images.installImageUrl(page, thumbnailPattern(CONTINUE_FAMILY), { failStatus: 404 });
+			declareThumbnailFailure(diagnostics, CONTINUE_FAMILY);
 			await mockFamilyThumbnail(page, CONTINUE_B_FAMILY);
 
 			await page.goto('/');
@@ -1008,6 +1116,10 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			// reports the failure with no decoded pixels.
 			await expect(continueArt).toHaveAttribute('data-image-state', 'error');
 			expect(await decodedWidth(continueArt)).toBe(0);
+
+			// The failure is asserted — retire the declaration so any NEW
+			// failure (including a spurious repeat of A's 404) stays fatal.
+			diagnostics.setDeclaredImageFailures([]);
 
 			// A full reload would reset this marker; the recovery must keep it.
 			await page.evaluate(() => {
@@ -1034,6 +1146,7 @@ test.describe('Gallery artwork status (HPA-1029)', () => {
 			).toBe(true);
 		} finally {
 			await images.dispose();
+			diagnostics.dispose();
 		}
 	});
 });
