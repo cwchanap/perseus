@@ -201,6 +201,7 @@
 						src={artworkUrl}
 						alt={`${puzzleName} finished artwork`}
 						class:opacity-0={artworkImageState !== 'loaded'}
+						aria-hidden={artworkImageState === 'error' ? 'true' : null}
 						use:imageStatus={{
 							src: artworkUrl,
 							onStatus: (state) => (artworkImageState = state)
@@ -233,9 +234,9 @@
 			<div class="completion-layout">
 				<div class="completion-art-column">
 					{#if artworkUrl}
-						<!-- The img keeps its existing responsive width/aspect frame; the
-						     wrapper only hosts the pending pulse and the error fallback
-						     over that same frame. -->
+						<!-- The wrapper owns the existing responsive width/aspect frame;
+						     the img fills it, and the wrapper hosts the pending pulse
+						     and the error fallback over that same frame. -->
 						<div class="completion-art-frame" class:art-pending={previewImageState === 'pending'}>
 							<img
 								class="completion-reference-art"
@@ -243,6 +244,7 @@
 								src={artworkUrl}
 								alt={`${puzzleName} finished artwork`}
 								class:opacity-0={previewImageState !== 'loaded'}
+								aria-hidden={previewImageState === 'error' ? 'true' : null}
 								use:imageStatus={{
 									src: artworkUrl,
 									onStatus: (state) => (previewImageState = state)
@@ -517,7 +519,7 @@
 		min-width: 0;
 	}
 
-	.completion-reference-art,
+	.completion-art-frame,
 	.completion-reference-fallback {
 		width: min(100%, 230px);
 		aspect-ratio: 3 / 4;
@@ -528,10 +530,17 @@
 			0 16px 40px rgba(0, 0, 0, 0.55);
 	}
 
-	.completion-reference-art {
+	/* The img FILLS the frame; the wrapper owns the responsive width + aspect.
+	   Sizing from the img itself collapsed the frame to 0 while pending: the
+	   img's min(100%, …) is cyclic inside a shrink-to-fit wrapper, so an
+	   undecoded image reserves nothing. */
+	.completion-art-frame .completion-reference-art {
+		width: 100%;
+		height: 100%;
 		display: block;
 		background: var(--bg-2);
 		object-fit: cover;
+		border-radius: inherit;
 	}
 
 	.completion-reference-fallback {
@@ -559,9 +568,9 @@
 		letter-spacing: 0.12em;
 	}
 
-	/* Wrapper for a nonempty reference URL: no sizing of its own (it wraps
-	   the img, which already carries the responsive width + 3/4 frame). It
-	   hosts the pending pulse and the error fallback over that same frame. */
+	/* Wrapper for a nonempty reference URL: it carries the responsive width
+	   + 3/4 frame (above) and hosts the pending pulse and the error fallback
+	   over that frame. */
 	.completion-art-frame {
 		position: relative;
 	}
@@ -839,7 +848,7 @@
 			gap: clamp(2rem, 4vw, 2.75rem);
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 396px;
 		}
@@ -860,7 +869,7 @@
 			gap: 3.5rem;
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 504px;
 		}
@@ -936,7 +945,7 @@
 		align-items: flex-start;
 	}
 
-	.completion-reference-art,
+	.completion-art-frame,
 	.completion-reference-fallback {
 		width: min(100%, 235px);
 		border-radius: 1.2rem;
@@ -1122,7 +1131,7 @@
 			grid-row: auto;
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 396px;
 		}
@@ -1185,7 +1194,7 @@
 			width: min(100%, 1128px);
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 512px;
 		}

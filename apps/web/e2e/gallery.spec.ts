@@ -14,7 +14,10 @@ import {
 	FIXTURE_ROUTER_HEADER,
 	FIXTURE_ROUTER_SOURCE
 } from './gameplay-fixtures/fixture-router';
-import { createImageHoldController } from './gameplay-fixtures/image-hold';
+import {
+	createImageHoldController,
+	type ImageHoldController
+} from './gameplay-fixtures/image-hold';
 import { createPageDiagnostics, type PageDiagnostics } from './support/diagnostics';
 import {
 	buildMinimalSeed,
@@ -727,7 +730,11 @@ test.describe('Main Gallery Page', () => {
 	});
 });
 
-test.describe('Gallery artwork status (HPA-1029)', () => {
+test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
+	// @smoke scopes this whole block: it is the CI smoke gate (desktop +
+	// mobile), so these HPA-1029 regressions cannot silently drop out of the
+	// automatic lane the way untagged gallery tests do. No unrelated gallery
+	// test is tagged.
 	// The Gallery family thumbnail is NOT under the gameplay fixture namespace,
 	// so gameplayPage.assertSettled() is a no-op here. The Gallery tests own
 	// their diagnostics and hold cleanup: every test attaches page diagnostics

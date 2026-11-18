@@ -265,12 +265,19 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		const isE2E = E2E_PATH.test(pathname);
 		const isCompletion = COMPLETION_PATH.test(pathname);
 
-		// Declared image failure: the strictest narrow exception. The response
-		// must still carry the fixture-router provenance marker (a real-backend
-		// answer is a leak), the method must match the declaration, and the
-		// status must equal the declared failure status — or, for an abort
-		// outcome, ANY response is unexpected (the request should never answer).
-		const declaredFailure = declaredImageFailures.find((declared) => declared.url.test(pathname));
+		// Declared image failure: the strictest narrow exception. Matching is
+		// against the FULL response URL (origin + query), consistent with
+		// DeclaredImageFailure.url's documented full-URL regex and with the
+		// request-failed/console checks above — so a declaration anchored to
+		// an origin or query is exact, and a path-only regex still matches.
+		// The response must still carry the fixture-router provenance marker
+		// (a real-backend answer is a leak), the method must match the
+		// declaration, and the status must equal the declared failure status —
+		// or, for an abort outcome, ANY response is unexpected (the request
+		// should never answer).
+		const declaredFailure = declaredImageFailures.find((declared) =>
+			declared.url.test(response.url())
+		);
 		if (declaredFailure) {
 			if (marker !== 'fixture-router') {
 				leakedFixtureRequests.push({ url: response.url(), method, status });

@@ -11,8 +11,9 @@
 // KNOWN fixture image endpoints only (`/api/puzzles/<fixture-id>/pieces/:n/
 // image`, `/reference`, `/thumbnail`). Install it AFTER `createFixtureRouter
 // ().install()` — Playwright routes run in reverse registration order, so the
-// hold route runs first and can defer the request; anything it does not claim
-// falls through (`route.fallback()`) to the fixture router as usual. Released
+// hold route runs first and can defer the request. Requests for any other
+// URL never reach these routes and are handled by the fixture router as
+// usual (the hold routes themselves never call `route.fallback()`). Released
 // responses carry the fixture-router provenance marker, so diagnostics still
 // proves who answered; failing responses are NOT stamped as harness
 // violations (they are intentional, and must be declared to diagnostics via

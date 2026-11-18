@@ -15,6 +15,10 @@
 	}
 
 	let { imageUrl = null, active, dismissible = false, onDismiss }: Props = $props();
+	// An empty-string URL is as unavailable as null: normalize so the overlay
+	// shows the unavailable message instead of an invisible img stuck on
+	// pending forever (imageStatus never classifies an empty source).
+	const url = $derived(imageUrl || null);
 	// Driven entirely by the imageStatus action: it reports its initial state
 	// on mount, so remounting the overlay via {#if active} re-syncs this flag
 	// without a reset-on-activation effect, and a changed URL recovers from a
@@ -83,17 +87,17 @@
 				CLOSE
 			</button>
 		{/if}
-		{#if imageUrl === null}
+		{#if url === null}
 			<p class="text-sm text-white/70">Reference image unavailable</p>
 		{:else}
 			<!-- Kept mounted for nonempty URLs and hidden with opacity (not
 			     display) so a new src can recover from a prior failure. -->
 			<img
-				src={imageUrl}
+				src={url}
 				alt="Puzzle reference"
 				class="max-h-[90%] max-w-[90%] rounded-md object-contain shadow-lg"
 				class:opacity-0={imageState !== 'loaded'}
-				use:imageStatus={{ src: imageUrl, onStatus: (state) => (imageState = state) }}
+				use:imageStatus={{ src: url, onStatus: (state) => (imageState = state) }}
 			/>
 			{#if imageState === 'error'}
 				<p class="text-sm text-white/70" data-testid="reference-image-unavailable">
