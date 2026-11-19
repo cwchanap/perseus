@@ -31,9 +31,14 @@ export function imageStatus(node: HTMLImageElement, params: ImageStatusParams) {
 	// fires a native error) must not classify the image: an empty source
 	// always stays pending, matching classify().
 	const srcIsSet = () => Boolean(node.getAttribute('src'));
+	// Fresh load events and already-complete mounts must share one readiness
+	// rule: a decodable image has naturalWidth > 0, while anything else (e.g. a
+	// viewBox-only SVG with zero intrinsic width) classifies as error both
+	// when loaded live and when mounted from cache.
+	const classifyComplete = (): ImageStatusState => (node.naturalWidth > 0 ? 'loaded' : 'error');
 	const markLoaded = () => {
 		if (!srcIsSet()) return;
-		apply('loaded');
+		apply(classifyComplete());
 	};
 	const markError = () => {
 		if (!srcIsSet()) return;
@@ -45,7 +50,7 @@ export function imageStatus(node: HTMLImageElement, params: ImageStatusParams) {
 	// an empty attribute must read as pending, not as a failed image.
 	const classify = (): ImageStatusState => {
 		if (node.getAttribute('src') && node.complete) {
-			return node.naturalWidth > 0 ? 'loaded' : 'error';
+			return classifyComplete();
 		}
 		return 'pending';
 	};

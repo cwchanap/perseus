@@ -904,7 +904,7 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 		}
 	});
 
-	test('changed card thumbnail URL recovers from a prior failure without a reload', async ({
+	test('replaces a failed card thumbnail when returning to an updated catalog without a reload', async ({
 		page
 	}) => {
 		const diagnostics = attachDiagnostics(page);
@@ -1114,18 +1114,19 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 		try {
 			await images.installImageUrl(page, thumbnailPattern(CONTINUE_FAMILY), { failStatus: 404 });
 			declareThumbnailFailure(diagnostics, CONTINUE_FAMILY);
-			await mockFamilyThumbnail(page, CONTINUE_B_FAMILY);
+			const handleB = await images.installImageUrl(page, thumbnailPattern(CONTINUE_B_FAMILY));
 
-			await page.goto('/');
+			await page.goto('/', { waitUntil: 'domcontentloaded' });
 			// Two saved sessions: family A is newest (its thumbnail 404s), family
-			// B is the next-newest with a working thumbnail.
+			// B is the next-newest whose held thumbnail proves update() resets
+			// the mounted img back to pending before loading.
 			await seedApiVariantProgress(page, CONTINUE_EASY_VARIANT, '1:1', 16, {
 				lastUpdated: 3_000
 			});
 			await seedApiVariantProgress(page, CONTINUE_B_EASY_VARIANT, '1:1', 16, {
 				lastUpdated: 2_000
 			});
-			await page.reload();
+			await page.reload({ waitUntil: 'domcontentloaded' });
 
 			const panel = page.getByTestId('continue-on-device');
 			const continueArt = panel.locator('img.continue-art');
@@ -1143,10 +1144,13 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			await page.evaluate(() => {
 				(window as unknown as { __galleryNoReload?: boolean }).__galleryNoReload = true;
 			});
+			await continueArt.evaluate((el) => {
+				(el as HTMLImageElement).dataset.urlChangeProbe = 'mounted';
+			});
 
 			// Discarding the newest save promotes family B: resumeImageUrl swaps
-			// to B's working URL on the SAME <img> element — the src-change
-			// recovery path — with no full page reload.
+			// to B's URL through the Svelte prop on the SAME <img> element,
+			// exercising imageStatus.update() (error -> pending -> loaded).
 			await page.getByTestId('continue-secondary-toggle').click();
 			await page.getByRole('button', { name: 'Discard saved progress' }).click();
 			await page
@@ -1155,8 +1159,17 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 				.click();
 
 			await expect(panel).toContainText('Continue Ok B');
+			await expect(continueArt).toHaveAttribute('data-image-state', 'pending');
+			expect(await continueArt.getAttribute('data-url-change-probe')).toBe('mounted');
+			await expect.poll(() => handleB.pendingCount).toBeGreaterThanOrEqual(1);
+			await expect
+				.poll(async () => {
+					await handleB.release();
+					return decodedWidth(continueArt);
+				})
+				.toBeGreaterThan(0);
+
 			await expect(continueArt).toHaveAttribute('data-image-state', 'loaded');
-			await expect.poll(() => decodedWidth(continueArt)).toBeGreaterThan(0);
 			expect(
 				await page.evaluate(
 					() => (window as unknown as { __galleryNoReload?: boolean }).__galleryNoReload

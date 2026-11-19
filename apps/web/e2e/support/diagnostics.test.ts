@@ -206,6 +206,30 @@ describe('diagnostics declared image failures', () => {
 		expect(diagnostics.unexpectedResponses).toHaveLength(1);
 	});
 
+	it('matches both an abort and a 404 declared for the same URL regardless of order', () => {
+		const abortDecl: DeclaredImageFailure = { ...DECLARED_404, outcome: 'abort' };
+		const statusDecl: DeclaredImageFailure = { ...DECLARED_404, outcome: 'status', status: 404 };
+
+		for (const declarations of [
+			[abortDecl, statusDecl],
+			[statusDecl, abortDecl]
+		]) {
+			const { diagnostics, emitRequestFailed, emitResponse, emitConsole } = stub();
+			diagnostics.setDeclaredImageFailures(declarations);
+
+			emitRequestFailed(failedRequest(THUMBNAIL_URL));
+			emitConsole(consoleError(CONSOLE_ABORT, THUMBNAIL_URL));
+			emitResponse(imageResponse(THUMBNAIL_URL, 404));
+			emitConsole(consoleError(CONSOLE_404, THUMBNAIL_URL));
+
+			expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
+
+			// Undeclared status on the same URL still fails.
+			emitResponse(imageResponse(THUMBNAIL_URL, 500));
+			expect(diagnostics.unexpectedResponses).toHaveLength(1);
+		}
+	});
+
 	it('keeps an undeclared image 404 fatal', () => {
 		const { diagnostics, emitResponse } = stub();
 

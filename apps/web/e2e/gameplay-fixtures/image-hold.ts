@@ -204,25 +204,30 @@ export function createImageHoldController(): ImageHoldController {
 		await options.page.route(options.pattern, handler);
 		installed.push({ page: options.page, pattern: options.pattern, handler });
 
+		async function drain(answer: (entry: HeldRoute) => Promise<void>): Promise<void> {
+			const done = pending.splice(0);
+			for (const entry of done) {
+				try {
+					await answer(entry);
+				} catch {
+					// A route may already be closed/cancelled (e.g. by a page reload);
+					// keep draining so later held entries are never left hanging.
+				} finally {
+					const at = held.indexOf(entry);
+					if (at !== -1) held.splice(at, 1);
+				}
+			}
+		}
+
 		return {
 			get pendingCount() {
 				return pending.length;
 			},
-			async release() {
-				const done = pending.splice(0);
-				for (const entry of done) {
-					const at = held.indexOf(entry);
-					if (at !== -1) held.splice(at, 1);
-					await entry.respond();
-				}
+			release() {
+				return drain((entry) => entry.respond());
 			},
-			async cancel() {
-				const done = pending.splice(0);
-				for (const entry of done) {
-					const at = held.indexOf(entry);
-					if (at !== -1) held.splice(at, 1);
-					await entry.route.abort('failed');
-				}
+			cancel() {
+				return drain((entry) => entry.route.abort('failed'));
 			}
 		};
 	}
