@@ -79,9 +79,32 @@ describe('PuzzleCard', () => {
 	it('should render thumbnail image with correct alt text', async () => {
 		render(PuzzleCard, { family: mockFamily });
 
-		const img = page.getByRole('img', { name: 'Test Puzzle' });
-		await expect.element(img).toHaveAttribute('alt', 'Test Puzzle');
-		await expect.element(img).toHaveAttribute('src', getFamilyThumbnailUrl(mockFamily.id));
+		const img = (await page.getByTestId('puzzle-card-art').element()).querySelector(
+			'img'
+		) as HTMLImageElement;
+		expect(img.getAttribute('alt')).toBe('Test Puzzle');
+		expect(img.getAttribute('src')).toBe(getFamilyThumbnailUrl(mockFamily.id));
+	});
+
+	it('hides the failed thumbnail from assistive tech and exposes No preview instead', async () => {
+		// The errored img stays mounted (opacity-hidden) so a new src can
+		// recover, but opacity alone leaves it in the accessibility tree —
+		// announced as the puzzle's artwork while the aria-hidden placeholder
+		// said nothing. Mirror the completion dialog: the failed img is
+		// aria-hidden and "No preview" is exposed instead.
+		render(PuzzleCard, { family: mockFamily });
+
+		const img = (await page.getByTestId('puzzle-card-art').element()).querySelector(
+			'img'
+		) as HTMLImageElement;
+		expect(img).not.toBeNull();
+		img.dispatchEvent(new Event('error', { bubbles: true }));
+
+		const placeholder = page.getByTestId('puzzle-card-art-placeholder');
+		await expect.element(placeholder).toHaveTextContent('No preview');
+		await expect.poll(() => img.getAttribute('aria-hidden')).toBe('true');
+		expect(page.getByRole('img', { name: 'Test Puzzle' }).query()).toBeNull();
+		expect((await placeholder.element()).getAttribute('aria-hidden')).toBeNull();
 	});
 
 	it('should render category badge when family has a category', async () => {
