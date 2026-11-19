@@ -1,61 +1,49 @@
-# HPA-915 — Coordinated ESLint 10 and globals 17 migration
+# HPA-915 — Coordinated ESLint 10 / globals 17 migration
 
 Linear: https://linear.app/cwchanap/issue/HPA-915/maintenance-stage-ignored-lint-and-mobile-dependency-majors
 
-Planning baseline: **main @ 30b7bf7ef7116d0238ffd43d3ebd02473f62b1cd**, reviewed 2026-11-18. This is a design-only PR; implementation and acceptance have not been run.
+PR: https://github.com/cwchanap/perseus/pull/182
 
-## Outcome
+**Status:** Design/plan only. Do all implementation and verification in **this same PR**, not one PR per workspace. Current planning baseline: main \`30b7bf7\` (2026-11-18); recheck main before changing code.
 
-Move Perseus's existing Bun/Turborepo lint toolchain from **ESLint 9 to 10** and **globals 16 to 17** in one coordinated implementation of HPA-915. Keep effective lint coverage, project-specific import guardrails, type checks and runtime behavior intact. Do not introduce a shared lint package, new rules framework, or cross-workspace tooling refactor.
+## Decision
 
-The other major-upgrade items in HPA-915 receive explicit hold/retain decisions in this same ticket and are **not** implemented in this PR. Any future independently approved mobile migration gets a separate Linear ticket and its own single PR.
+Make one coordinated development-tooling update across the **root**, **apps/api**, **apps/web**, and **apps/workflows** manifests, moving \`eslint\` 9 → 10 and \`globals\` 16 → 17. Preserve the existing lint commands and four flat configs (API, web, workflows, root scripts). No shared config package, new lint rules, CI jobs, or runtime feature changes.
 
-## Evidence from current main
+The recommended manifest targets at the 2026-11-19 review are \`eslint: ^10.15.0\` and \`globals: ^17.14.0\`; confirm availability during implementation. Use \`bun install\` **without deleting \`bun.lock\`**, then prove the diff affects only the ESLint/globals dependency subtree. Keep the existing \`eslint\` / \`globals\` semver-major Dependabot ignores, updating their explanation only.
 
-- The root **package.json** declares ESLint ^9.39.1, globals ^16.5.0, @eslint/js ^10.0.1, typescript-eslint ^8.72.1 and a Bun 1.3.14 toolchain.
-- **apps/api/package.json**, **apps/web/package.json** and **apps/workflows/package.json** each declare their own ESLint ^9.39.1 and globals ^16.5.0. All four manifests plus the **root bun.lock** must be upgraded as one coherent install.
-- ESLint configs already exist for **apps/api/eslint.config.js**, **apps/web/eslint.config.js**, **apps/workflows/eslint.config.js**, and **scripts/eslint.config.js**. There is no root eslint.config.js. The root script lint entry point explicitly passes **--config scripts/eslint.config.js**.
-- **bun run lint** uses Turbo to lint the API, web and workflows packages; it does **not** cover the root **scripts/** tree. **bun run lint:scripts** covers that fourth entry point. Other packages and standalone **apps/mobile** have no lint script; do not add one as part of this migration.
-- The web config has important **no-restricted-imports** protections around the E2E-only gameplay reader and virtual override module. The API/workflows configs have their own ignore/TypeScript parser setup. Preserve all of these.
-- **.github/workflows/build-lint.yml** runs both lint commands, workspace/check scripts, and the build, but skips the job for **draft PRs**. Unit and browser CI likewise skip draft PRs. A documentation-only draft will not be CI-verified.
-- Previously opened individual Dependabot ESLint 10 PRs #159, #161, #164, #166 were closed without merge. This task deliberately avoids repeating fragmented work.
-- **@eslint/js 10** is already present; source fixes for its new rules landed in #116 and #117. Do not redo those fixes absent a fresh failure.
-- The mobile project is isolated from root Bun workspaces and pins Svelte 4 and TypeScript 5.9; web uses Svelte 5 and TypeScript 6. A lint migration must not change either app's Svelte/TS generation.
+## Verified existing evidence
 
-## Compatibility and migration decisions
+- \`main\` declares \`eslint ^9.39.1\` and \`globals ^16.5.0\` in all four manifests; \`@eslint/js ^10.0.1\` is already installed. The current peer/plugin stack includes \`typescript-eslint ^8.72.1\`, \`eslint-plugin-svelte ^3.23.1\`, and \`@eslint/compat ^2.1.1\`; the review confirmed ESLint 10 compatibility, and earlier CI exercised it. No speculative upgrades of those packages.
+- **PR #159** (ESLint 10.14.0) and **PR #160** (globals 17.13.0) **each changed all four manifests plus \`bun.lock\`**. They were closed by \`@dependabot ignore this major version\`, **not** by a migration failure. PRs #161–#166 were per-directory duplicates; do not repeat them.
+- Both #159 and #160 independently passed **Build & Lint**, **Unit Tests**, and **E2E Tests** on their own commits. [#159 CI](https://github.com/cwchanap/perseus/actions/runs/41480151320) · [#160 CI](https://github.com/cwchanap/perseus/actions/runs/41480191064). This is strong baseline evidence, **not** proof the combined upgrade on the new commit passes.
+- The four lint entry points are \`bun run lint\` (Turbo runs API/web/workflows) and \`bun run lint:scripts\` (separate explicit config in \`scripts/eslint.config.js\`). The four existing \`eslint.config.js\` files already own their rules; there are no nested config files or root \`eslint.config.js\`.
+- The web config's \`no-restricted-imports\` prevents production source from importing test-only gameplay modules or the virtual override. All four configs disable \`no-undef\`, so \`globals\` 17 is unlikely to create direct rule failures.
+- CI already uses a runtime capable of running the prior ESLint 10 PRs. Its Build & Lint job covers lint, script lint, checks and build; Unit Tests and Chromium smoke are separate workflows. These jobs **skip draft PRs**, so skipped checks are never called green.
 
-1. **Only upgrade ESLint and globals as coordinated major versions.** Prefer current compatible ESLint 10.x and globals 17.x releases at implementation time, update the root + API + web + workflows manifests in one patch, and regenerate the root lockfile once. Keep already-compatible @eslint/js 10. Peer-compatibility checking is an installation gate, not justification for speculative plugin upgrades.
-2. **Preserve flat config and workspace-local resolution.** ESLint 10 discovers configuration starting from each linted file rather than the process working directory. Keep the three workspace configs and the explicitly configured scripts lint command; verify each entry point resolves the intended file and applies its intended ignore patterns. Do not consolidate configs merely for style.
-3. **Preserve useful rules.** Confirm TypeScript parser behavior and Svelte preprocess/project-service handling, and explicitly test web import restrictions. ESLint 10 and globals 17 can change reported violations: fix real issues narrowly. No blanket rule deactivation, broad ignore, or lint-staged bypass.
-4. **Keep environment expectations narrow.** ESLint 10 requires Node >=20.19 / >=22.13 / >=24 on supported lines; check local and CI launchers, and only adjust CI runtime setup if proven necessary. Do not invent a new bootstrap layer.
-5. **Leave runtime packages alone.** No changes to API/workflows HTTP behavior, puzzle engine, persistence, web UI, NativeScript dependencies, production configuration or existing test architecture.
-6. **Dependabot future majors stay gated.** Retain the eslint and globals semver-major ignore entries after the coordinated upgrade, with comments reflecting the new versions: future major jumps must again be coordinated. Do not bulk-unignore or dismiss alerts.
+## Smallest meaningful safety checks
 
-ESLint upstream migration notes: https://eslint.org/docs/latest/use/migrate-to-10.0.0
-typescript-eslint supported dependency ranges: https://typescript-eslint.com/users/dependency-versions/
-Ticket background: https://linear.app/cwchanap/issue/HPA-913/tracking-dependabot-major-upgrade-plan-by-project
+1. **Lockfile scope:** Edit only the eight \`eslint\`/\`globals\` version declarations, run \`bun install\` in place, inspect \`git diff -- bun.lock\`, and keep all unrelated runtime/package resolutions unchanged. Compare #159/#160 for expected ESLint dependency churn. Check \`bun install --frozen-lockfile\`.
+2. **Effective lint coverage:** \`bun run lint\` and \`bun run lint:scripts\` pass. Compare JSON result counts of \`eslint . -f json\` in API/web/workflows and \`eslint --config scripts/eslint.config.js scripts/ -f json\` at repo root, before and after; no silent reduction in linted files.
+3. **Behavioral guard:** From \`apps/web\`, deliberately lint a production-file probe containing \`import 'virtual:perseus-gameplay-runtime-override';\` with \`--stdin-filename src/routes/probe.ts\`; it **must fail** with \`no-restricted-imports\`. This is more useful than a wholesale \`--print-config\` audit. Do not weaken the test-only import restrictions.
+4. **Implementation CI:** Transition this same PR out of draft only after the implementation is committed; require successful Build & Lint, Unit Tests, and Chromium smoke on the actual implementation SHA. Record their workflow URLs. Keep the existing production-bundle E2E harness assertion.
+5. **Minimal product acceptance:** Run one MCP-controlled web browser flow (Gallery → puzzle → place piece / progress update via existing API-backed fixture or app) and visually inspect one fixed-viewport screenshot against the existing Galaxy Arcade UI. There is no HPA-915 mockup. No separate cross-platform suite, historical baseline-capture exercise, pixel-diff infrastructure, or human sign-off. CI's Chromium smoke provides the broader automated regression coverage.
 
-## Explicit decisions for remaining HPA-915 items
+## Explicit decisions for other HPA-915 majors
 
-| Dependency stream | Current decision | Evidence needed before changing |
-| --- | --- | --- |
-| TypeScript majors | **Hold**; #144 closed without merge | Support confirmed across typescript-eslint, svelte-check, web TypeScript 6, and mobile compiler/NativeScript before considering TypeScript 7. No upgrade in this task. |
-| Mobile Svelte major | **Hold** Svelte 4 in mobile while web uses Svelte 5 | Svelte Native compatibility and an actual iOS device/simulator build with rendered puzzle and working view updates. |
-| sass-loader major | **Hold** | Verify the NativeScript webpack integration and an iOS device/simulator build, not just dependency resolution. |
-| @nativescript/canvas 3 (#177) | **Keep separate**, not auto-merge | Resolve HPA-26's existing iOS native draw/update/layout failures with device evidence. It is not an ESLint change. |
-| Vitest family (core, browser, browser-playwright, coverage-v8) | **Retain all four ignores** | Keep the v5 packages in lockstep; evaluate future bumps as a separate explicit coordinated migration. |
-| ESLint and globals future majors | **Retain major-only ignores** after this manual migration | Future ESLint 11/globals 18 upgrades should be coordinated across all four manifests rather than independent Dependabot PRs. |
+| Stream | Decision / gate |
+| --- | --- |
+| TypeScript 7 | **Hold.** #144 was not merged. Require checker/lint and mobile compiler support before any upgrade. |
+| Mobile Svelte 5 | **Hold.** NativeScript Svelte Native currently pins Svelte 4; require compatible runtime and a working iOS render/update build. |
+| sass-loader major | **Hold.** Require NativeScript webpack compatibility and a device/simulator build. |
+| \`@nativescript/canvas\` 3 (#177) | **Separate HPA-26 validation.** A dependency bump does not establish that native drawing/layout bugs are fixed. |
+| Vitest core + three \`@vitest/*\` companion packages | **Retain all four ignores.** Versions must move in lockstep, not by independent Dependabot PRs. |
+| ESLint/globals future majors | **Retain major-only ignores** after this coordinated migration. Future major changes need their own compatibility check. |
 
-See also HPA-26: https://linear.app/cwchanap/issue/HPA-26
+References: [HPA-913](https://linear.app/cwchanap/issue/HPA-913), [HPA-26](https://linear.app/cwchanap/issue/HPA-26), [Dependabot policy](https://github.com/cwchanap/perseus/blob/main/.github/dependabot.yml).
 
-## Non-goals and boundaries
+## Out of scope
 
-- No web UI design changes, image/audio assets or SFX.
-- No mobile simulator work bundled into lint tooling.
-- No TypeScript/Svelte/webpack/Vitest major migrations.
-- No new lint config abstraction, plugin framework, backend service, or compatibility shim.
-- No separate implementation PRs for different HPA-915 workspaces.
+No app/mobile manifest or lockfile updates; no TypeScript/Svelte/Vitest/sass-loader/canvas migration, game logic, API/schema change, image/SFX generation, lint refactor, compatibility shim, broad ignore/rule disables, or new CI setup.
 
-## Definition of success
-
-One **implementation PR** (the draft PR created for this ticket) contains the coordinated manifest/lockfile change and only proven fixes; all four lint entry points pass; web/API/workflows checks, build and relevant unit tests pass; MCP-driven browser E2E confirms Gallery to puzzle and its API request path; screenshot comparison at the same viewport confirms no unintended visual change. The other major streams have the documented decisions above, not merged upgrades. Record CI and MCP evidence on the implementation commit before marking ready for merge. No manual/human sign-off is an acceptance gate.
+**Done:** One PR with coherent version strings and tightly scoped lockfile; four lint entry points and web negative import guard verified; frozen installation; CI Build & Lint/Unit/Chromium smoke green on the implementation SHA; one MCP-driven end-to-end smoke and screenshot visual check completed; major holds recorded. No human acceptance criteria.
