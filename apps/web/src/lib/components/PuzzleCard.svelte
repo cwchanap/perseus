@@ -56,6 +56,7 @@
 			class="absolute inset-0 block h-full w-full object-cover transition-transform duration-300
 			group-hover:scale-[1.03]"
 			class:opacity-0={thumbnailState !== 'loaded'}
+			aria-hidden={thumbnailState === 'error' ? 'true' : null}
 			loading="lazy"
 			use:imageStatus={{
 				src: getFamilyThumbnailUrl(family.id),
@@ -75,7 +76,7 @@
 			<div
 				class="pointer-events-none absolute inset-0 flex items-center justify-center"
 				data-testid="puzzle-card-art-placeholder"
-				aria-hidden="true"
+				aria-hidden={thumbnailState !== 'error' ? 'true' : null}
 			>
 				{#if thumbnailState === 'pending'}
 					<span class="card-art-loading">Loading…</span>
