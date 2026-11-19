@@ -15,16 +15,17 @@ Design: [2026-11-18-hpa-915-eslint10-globals17-design.md](../specs/2026-11-18-hp
 
 ## Implementation (one small patch)
 
+- [ ] **Before editing package manifests or running `bun install`, capture baseline linted-file counts** for all four entry points with the exact commands under "Focused local verification" (with `pipefail`). Record API, web, workflows and scripts counts on the PR; after the upgrade, compare against these figures. This must be first, to avoid reverting the upgrade just to measure the baseline.
 - [ ] Confirm latest `main` hasn't already upgraded either dependency. Update only `eslint` to `^10.15.0` and `globals` to `^17.14.0` **if those versions are still current/available** in `package.json`, `apps/api/package.json`, `apps/web/package.json`, `apps/workflows/package.json`. No `apps/mobile` changes.
-- [ ] Run **`bun install` in place**. **Do not remove or regenerate `bun.lock` from scratch.** Inspect `git diff -- bun.lock` and ensure all changed packages are ESLint/globals or their exclusively related transitive dependencies (e.g. `@eslint/*`, `espree`, `eslint-scope`, `eslint-visitor-keys`, `@humanfs/*`, relevant transitive utilities). Restore or constrain **unrelated runtime dependency changes** rather than letting them into this PR. Use #159/#160 lockfile diffs as reference, not a fixed line-count target.
+- [ ] Run **`bun install` in place**. **Do not remove or regenerate `bun.lock` from scratch.** Inspect `git diff -- bun.lock` and ensure all changed packages are ESLint/globals or their exclusively related transitive dependencies (e.g. `@eslint/*`, `espree`, `eslint-scope`, `eslint-visitor-keys`, `@humanfs/*`, relevant transitive utilities). Restore or constrain **any unrelated dependency changes**, including runtime packages and non-ESLint dev tooling such as Vitest, TypeScript or Wrangler. `eslint-plugin-svelte@3.23.1` itself depends on `globals ^16.0.0`, so retaining a legitimate nested `globals@16` resolution alongside root `globals@17` is expected, not accidental churn. Use #159/#160 lockfile diffs as reference, not a fixed line-count target.
 - [ ] Verify `bun install --frozen-lockfile` succeeds from the updated lockfile.
-- [ ] Update **only** the ESLint/globals major-ignore explanatory comment in `.github/dependabot.yml`. Retain those major ignores and all Vitest-family holds.
+- [ ] **Retain** the ESLint/globals major-version ignores and all Vitest-family ignores in `.github/dependabot.yml`. Its current ESLint/globals comment is already version-agnostic, so **do not edit the file unless a short comment clarification is genuinely useful**. No policy or configuration change is needed.
 - [ ] Keep all four `eslint.config.js` files, existing script entry points, and web import guardrails. Only make targeted source/config fixes if new lint evidence demands them; avoid unnecessary peer upgrades and lint refactors.
 
 ## Focused local verification
 
 - [ ] **All entry points:** `bun run lint` and `bun run lint:scripts` succeed.
-- [ ] **No silent lint-scope loss:** Capture and compare counts before vs. after (without full `--print-config` sweeps):
+- [ ] **No silent lint-scope loss:** Compare updated counts to the four baseline counts captured **before the manifest edits** (without full `--print-config` sweeps):
   - `cd apps/api && bunx eslint . -f json | jq length`
   - `cd apps/web && bunx eslint . -f json | jq length`
   - `cd apps/workflows && bunx eslint . -f json | jq length`
@@ -39,18 +40,18 @@ Design: [2026-11-18-hpa-915-eslint10-globals17-design.md](../specs/2026-11-18-hp
   ~~~
 
   Confirm a **non-zero ESLint exit with the intended `no-restricted-imports` message**, not a parse/config error. The existing production-bundle E2E harness assertion remains in CI.
-- [ ] Compare lockfile diff with the baseline: zero unrelated runtime-package upgrades. Do not weaken lint errors, expand ignores, or introduce a new lint config package.
+- [ ] Compare lockfile diff with the baseline: zero unrelated package changes, including unrelated devDependencies. Do not weaken lint errors, expand ignores, or introduce a new lint config package.
 
 ## Acceptance after implementation
 
 - [ ] Mark **this same PR** ready for review to enable CI. Require **Build & Lint** (includes `lint`, `lint:scripts`, `check`, `check:scripts` and build), **Unit Tests**, and **Chromium smoke E2E** successful **on the implementation SHA**. Record exact run URLs in the PR and HPA-915. Draft PRs skip these jobs; **skipped does not pass**.
 - [ ] Perform **one MCP-controlled end-to-end browser smoke** on the implemented app/preview: Gallery data loads over existing API path, open one puzzle, select/place a piece, and confirm progress updates with no unexpected console/network errors. Use one desktop Chromium platform only. This is the only separate browser exercise; do **not** build a new E2E fixture framework.
-- [ ] **Visual acceptance:** Capture one fixed-viewport puzzle/board screenshot (and Gallery if available in the same navigation) during that MCP run. Compare visually to the existing Galaxy Arcade UI, not to an invented mockup; HPA-915 has no attached UI mockup. Look for unexpected missing pieces, toolbar, tray, artwork or layout changes. No baseline pixel-diff system or cross-platform captures.
+- [ ] **Visual acceptance:** Have MCP-controlled automation capture one fixed-viewport puzzle/board screenshot (and Gallery if available in the same navigation) during that same run. Have the agent inspect the screenshot against the existing Galaxy Arcade UI, not an invented mockup; HPA-915 has no attached UI mockup. Look for unexpected missing pieces, toolbar, tray, artwork or layout changes. No baseline pixel-diff system or cross-platform captures.
 - [ ] Attach concise lint counts, negative-guard output, lockfile-scope summary, CI links, MCP smoke result and screenshot(s) to PR #182. Do not require human review/sign-off as an acceptance gate.
 
 ## Done conditions
 
-- [ ] One PR changes only the four manifests, root `bun.lock`, Dependabot ignore comment, and any provably required narrow corrections plus these docs.
+- [ ] One PR changes only the four manifests, root `bun.lock`, these docs, and any provably required narrow corrections. An optional Dependabot **comment-only** clarification is allowed, but is not a required file change; all ignore rules remain unchanged.
 - [ ] Frozen install and all four lint entry points pass, linted-file counts do not shrink, and the web production-import negative probe fails for the **correct reason**.
 - [ ] The actual implementation SHA has green CI Build & Lint, Unit Tests and Chromium smoke.
 - [ ] MCP-driven E2E and screenshot visual inspection completed on one platform.
@@ -59,4 +60,4 @@ Design: [2026-11-18-hpa-915-eslint10-globals17-design.md](../specs/2026-11-18-hp
 
 **No-goals:** Runtime/gameplay/backend/schema changes; additional CI jobs, multi-platform testing, lint configuration architecture, TypeScript/Svelte/Vitest/NativeScript major upgrades, compatibility code or generated art/SFX.
 
-**Review disposition (2026-11-19):** Accept factual correction on #159/#160, lockfile-scope guard, narrow lint-count/negative-rule checks and local/CI de-duplication. Partially accept the suggestion to remove browser/visual acceptance: keep a **single minimal MCP E2E and screenshot check** to meet the project's automated end-to-end and visual acceptance convention, without the original multi-step baseline capture and broad screenshot comparison.
+**Review disposition (2026-11-19, second pass):** Capture lint counts before upgrades; reject unrelated runtime **and devDependency** lockfile drift; allow a nested `globals@16` for `eslint-plugin-svelte`; skip the already-sufficient Dependabot comment edit. The suggestion to remove all browser/visual verification is only partially accepted: keep **one MCP-driven E2E with screenshot inspection** for the project's automated end-to-end/visual acceptance requirements, without a baseline capture program, pixel-diff infrastructure or multiple platforms.
