@@ -271,23 +271,24 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		// request-failed/console checks above — so a declaration anchored to
 		// an origin or query is exact, and a path-only regex still matches.
 		// The response must still carry the fixture-router provenance marker
-		// (a real-backend answer is a leak), the method must match the
-		// declaration, and the status must equal the declared failure status —
-		// or, for an abort outcome, ANY response is unexpected (the request
-		// should never answer).
-		const declaredFailure = declaredImageFailures.find((declared) =>
+		// (a real-backend answer is a leak), and at least one declaration for
+		// that URL must match outcome === 'status', the request method, and
+		// the response status (so declaring both an abort and a 404 for the
+		// same URL works in any order, while an abort-only URL still flags any
+		// response).
+		const urlMatches = declaredImageFailures.filter((declared) =>
 			declared.url.test(response.url())
 		);
-		if (declaredFailure) {
+		if (urlMatches.length > 0) {
 			if (marker !== 'fixture-router') {
 				leakedFixtureRequests.push({ url: response.url(), method, status });
 				return;
 			}
-			if (method !== declaredFailure.method) {
-				unexpectedResponses.push({ url: response.url(), method, status });
-				return;
-			}
-			if (declaredFailure.outcome === 'abort' || status !== declaredFailure.status) {
+			const matchedStatus = urlMatches.some(
+				(declared) =>
+					declared.outcome === 'status' && declared.method === method && declared.status === status
+			);
+			if (!matchedStatus) {
 				unexpectedResponses.push({ url: response.url(), method, status });
 			}
 			return;

@@ -91,12 +91,17 @@
 			<p class="text-sm text-white/70">Reference image unavailable</p>
 		{:else}
 			<!-- Kept mounted for nonempty URLs and hidden with opacity (not
-			     display) so a new src can recover from a prior failure. -->
+			     display) so a new src can recover from a prior failure. Positioned
+			     absolutely while errored so the hidden broken img does not push
+			     the unavailable message off-centre in the flex container. -->
 			<img
 				src={url}
 				alt="Puzzle reference"
 				class="max-h-[90%] max-w-[90%] rounded-md object-contain shadow-lg"
 				class:opacity-0={imageState !== 'loaded'}
+				class:pointer-events-none={imageState === 'error'}
+				class:absolute={imageState === 'error'}
+				class:reference-overlay-image-error={imageState === 'error'}
 				use:imageStatus={{ src: url, onStatus: (state) => (imageState = state) }}
 			/>
 			{#if imageState === 'error'}
@@ -113,6 +118,13 @@
 		position: fixed;
 		inset: 0;
 		z-index: 1000;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.reference-overlay-image-error {
+		position: absolute;
+		pointer-events: none;
 	}
 	.reference-overlay-pass-through {
 		pointer-events: none;

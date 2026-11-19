@@ -280,4 +280,40 @@ describe('PuzzleCard', () => {
 			await page.viewport(originalWidth, originalHeight);
 		}
 	});
+
+	it('resets thumbnail state to pending via update() when the family prop URL changes on a mounted card', async () => {
+		const rendered = await render(PuzzleCard, { family: mockFamily });
+
+		const img = (await page.getByTestId('puzzle-card-art').element()).querySelector(
+			'img'
+		) as HTMLImageElement;
+		expect(img).not.toBeNull();
+		// Drive the error state directly: the vitest server's answer to the
+		// fake thumbnail URL is an HTML fallback whose first (cold) fetch can
+		// outlast expect.poll's default timeout.
+		img.dispatchEvent(new Event('error', { bubbles: true }));
+		await expect.poll(() => img.dataset.imageState).toBe('error');
+		await expect
+			.element(page.getByTestId('puzzle-card-art-placeholder'))
+			.toHaveTextContent('No preview');
+
+		// Record every data-image-state transition on the SAME mounted <img> so a
+		// fast 404 on the next URL still proves update() reset state to pending.
+		const observedStates: string[] = [];
+		const observer = new MutationObserver(() => {
+			if (img.dataset.imageState) observedStates.push(img.dataset.imageState);
+		});
+		observer.observe(img, { attributes: true, attributeFilter: ['data-image-state'] });
+
+		try {
+			await rendered.rerender({
+				family: { ...mockFamily, id: 'fam-next', name: 'Next Puzzle' }
+			});
+			expect(observedStates[0]).toBe('pending');
+			expect(img.isConnected).toBe(true);
+			expect(img.getAttribute('src')).toBe(getFamilyThumbnailUrl('fam-next'));
+		} finally {
+			observer.disconnect();
+		}
+	});
 });

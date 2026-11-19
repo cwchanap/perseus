@@ -37,7 +37,11 @@ interface StubRoute {
 	fallbacks: number;
 }
 
-function stubRoute(url: string, method = 'GET'): StubRoute {
+function stubRoute(
+	url: string,
+	method = 'GET',
+	options?: { throwOnFulfill?: Error; throwOnAbort?: Error }
+): StubRoute {
 	const stub: StubRoute = {
 		fulfilled: [],
 		aborted: [],
@@ -49,11 +53,13 @@ function stubRoute(url: string, method = 'GET'): StubRoute {
 					method: () => method
 				}) as unknown as Request,
 			fulfill: async (init: FulfillCall) => {
+				if (options?.throwOnFulfill) throw options.throwOnFulfill;
 				// Record the effective status: Playwright defaults an omitted
 				// status to 200, so the stub must mirror that for assertions.
 				stub.fulfilled.push({ ...init, status: init.status ?? 200 });
 			},
 			abort: async (text?: string) => {
+				if (options?.throwOnAbort) throw options.throwOnAbort;
 				stub.aborted.push({ text });
 			},
 			fallback: async () => {
@@ -97,8 +103,13 @@ function stubPage(): StubPage {
  * handler is invoked only when its pattern matches the URL. An unmatched URL
  * reaches no handler (it would continue to earlier routes / the network).
  */
-async function dispatch(stub: StubPage, url: string, method = 'GET'): Promise<StubRoute> {
-	const route = stubRoute(url, method);
+async function dispatch(
+	stub: StubPage,
+	url: string,
+	method = 'GET',
+	options?: { throwOnFulfill?: Error; throwOnAbort?: Error }
+): Promise<StubRoute> {
+	const route = stubRoute(url, method, options);
 	for (const entry of [...stub.handlers].reverse()) {
 		const pattern = entry.pattern as RegExp;
 		if (pattern instanceof RegExp && !pattern.test(url)) continue;
@@ -312,5 +323,47 @@ describe('image-hold controller', () => {
 		// After dispose a previously-held request falls through: the handler
 		// must no longer be registered on the page.
 		expect(stub.handlers).toHaveLength(0);
+	});
+
+	it('release continues answering remaining held routes if one fulfill throws', async () => {
+		const stub = stubPage();
+		const images = createImageHoldController();
+		const handle = await images.installFixtureImages(stub.page, KNOWN_ID, [
+			{ endpoint: { kind: 'reference' }, outcome: 'hold' }
+		]);
+
+		const stale = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/reference`), 'GET', {
+			throwOnFulfill: new Error('Target page, context or browser has been closed')
+		});
+		const live = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/reference`));
+		expect(handle.pendingCount).toBe(2);
+
+		await handle.release();
+
+		expect(stale.fulfilled).toHaveLength(0);
+		expect(live.fulfilled).toHaveLength(1);
+		expect(handle.pendingCount).toBe(0);
+		expect(() => images.assertClean()).not.toThrow();
+	});
+
+	it('cancel continues aborting remaining held routes if one abort throws', async () => {
+		const stub = stubPage();
+		const images = createImageHoldController();
+		const handle = await images.installFixtureImages(stub.page, KNOWN_ID, [
+			{ endpoint: { kind: 'reference' }, outcome: 'hold' }
+		]);
+
+		const stale = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/reference`), 'GET', {
+			throwOnAbort: new Error('Target page, context or browser has been closed')
+		});
+		const live = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/reference`));
+		expect(handle.pendingCount).toBe(2);
+
+		await handle.cancel();
+
+		expect(stale.aborted).toHaveLength(0);
+		expect(live.aborted).toHaveLength(1);
+		expect(handle.pendingCount).toBe(0);
+		expect(() => images.assertClean()).not.toThrow();
 	});
 });

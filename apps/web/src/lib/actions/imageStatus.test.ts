@@ -26,6 +26,14 @@ function brokenUrl(): string {
 	return url;
 }
 
+function zeroSizeSvgUrl(): string {
+	const svg =
+		'<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" viewBox="0 0 64 64"><rect width="64" height="64" fill="#385" /></svg>';
+	const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+	createdUrls.push(url);
+	return url;
+}
+
 function createImage(src?: string): HTMLImageElement {
 	const img = document.createElement('img');
 	if (src !== undefined) img.src = src;
@@ -106,6 +114,32 @@ describe('imageStatus action', () => {
 		// events, so waiting for one would never leave pending.
 		expect(img.dataset.imageState).toBe('loaded');
 		expect(states).toEqual(['loaded']);
+	});
+
+	it('classifies a zero-intrinsic-width SVG identically on fresh load and cached mount', async () => {
+		const url = zeroSizeSvgUrl();
+		const fresh = createImage(url);
+		const freshStates = collectStates();
+		const freshController = imageStatus(fresh, { src: url, onStatus: freshStates.onStatus });
+
+		await vi.waitFor(() => expect(fresh.complete).toBe(true));
+		expect(fresh.naturalWidth).toBe(0);
+		expect(fresh.dataset.imageState).toBe('error');
+		expect(freshStates.states).toEqual(['pending', 'error']);
+
+		// Reusing the same already-loaded URL (warm cache / second mount) must
+		// classify identically instead of diverging between load and classify().
+		const cached = createImage(url);
+		await vi.waitFor(() => expect(cached.complete).toBe(true));
+		const cachedStates = collectStates();
+		const cachedController = imageStatus(cached, { src: url, onStatus: cachedStates.onStatus });
+
+		expect(cached.naturalWidth).toBe(0);
+		expect(cached.dataset.imageState).toBe('error');
+		expect(cachedStates.states).toEqual(['error']);
+
+		freshController.destroy();
+		cachedController.destroy();
 	});
 
 	it('does not restart the status when an unrelated update arrives', async () => {

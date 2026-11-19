@@ -3,6 +3,12 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCompletionDialog from '../PuzzleCompletionDialog.svelte';
 
+const VALID_ARTWORK_URL =
+	'data:image/svg+xml,' +
+	encodeURIComponent(
+		'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160"><rect width="100%" height="100%" fill="#385"/></svg>'
+	);
+
 function standardTimedProps() {
 	return {
 		puzzleName: 'Test Mission',
@@ -281,7 +287,7 @@ describe('PuzzleCompletionDialog', () => {
 		// the fallback is a role=img — without aria-hidden on the img, screen
 		// readers would announce the artwork twice. A loaded img must stay
 		// announced (no aria-hidden) as the accessible artwork.
-		render(PuzzleCompletionDialog, {
+		const rendered = await render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
 		});
@@ -293,7 +299,7 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.element(page.getByTestId('completion-preview-unavailable')).toBeVisible();
 		expect(img.getAttribute('aria-hidden')).toBe('true');
 
-		img.dispatchEvent(new Event('load'));
+		await rendered.rerender({ referenceImageUrl: VALID_ARTWORK_URL });
 		await expect.poll(() => page.getByTestId('completion-preview-unavailable').query()).toBeNull();
 		expect(img.getAttribute('aria-hidden')).toBeNull();
 	});
@@ -302,7 +308,7 @@ describe('PuzzleCompletionDialog', () => {
 		// A nonempty-but-failed URL keeps the <img> mounted (opacity-hidden)
 		// while the fallback overlays the placeholder stage — it must not sit
 		// beside the image as a second flex item inside the 230px stage.
-		render(PuzzleCompletionDialog, {
+		const rendered = await render(PuzzleCompletionDialog, {
 			...standardTimedProps(),
 			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
 		});
@@ -329,7 +335,7 @@ describe('PuzzleCompletionDialog', () => {
 		// The failed img is aria-hidden (single fallback announcement) but
 		// returns to the accessibility tree once a load succeeds.
 		expect(img.getAttribute('aria-hidden')).toBe('true');
-		img.dispatchEvent(new Event('load'));
+		await rendered.rerender({ referenceImageUrl: VALID_ARTWORK_URL });
 		await expect.poll(() => page.getByTestId('completion-artwork-unavailable').query()).toBeNull();
 		expect(img.getAttribute('aria-hidden')).toBeNull();
 	});
