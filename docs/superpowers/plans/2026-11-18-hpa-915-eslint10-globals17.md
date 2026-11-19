@@ -4,7 +4,7 @@ Linear: https://linear.app/cwchanap/issue/HPA-915/maintenance-stage-ignored-lint
 
 Design: [2026-11-18-hpa-915-eslint10-globals17-design.md](../specs/2026-11-18-hpa-915-eslint10-globals17-design.md)
 
-**Rule:** Implement, test and close this migration in **draft PR #182** (later marked ready); no separate PR for each workspace. Current PR is documentation-only; no new migration or acceptance result is claimed.
+**Rule:** Implement, test and close this migration in **draft PR #182** (later marked ready); no separate PR for each workspace. The implementation is committed on this PR; CI and browser acceptance remain pending, so no acceptance result is claimed yet.
 
 ## Already-established prerequisites (no repeat investigation)
 
@@ -30,7 +30,7 @@ Design: [2026-11-18-hpa-915-eslint10-globals17-design.md](../specs/2026-11-18-hp
   - `cd apps/web && bunx eslint . -f json | jq length`
   - `cd apps/workflows && bunx eslint . -f json | jq length`
   - `bunx eslint --config scripts/eslint.config.js scripts/ -f json | jq length` from the repository root.
-  
+
   Record the four counts on the PR. Use a pipeline with `pipefail` or equivalent so a failed ESLint invocation isn't hidden by `jq`. If a necessary source fix changes file count, justify the difference rather than claiming equality.
 - [ ] **Production import guard must remain active:** From `apps/web`, run:
 

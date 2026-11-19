@@ -4,7 +4,7 @@ Linear: https://linear.app/cwchanap/issue/HPA-915/maintenance-stage-ignored-lint
 
 PR: https://github.com/cwchanap/perseus/pull/182
 
-**Status:** Design/plan only. Do all implementation and verification in **this same PR**, not one PR per workspace. Current planning baseline: main `30b7bf7` (2026-11-18); recheck main before changing code.
+**Status:** Implementation committed on **this same PR**; CI and browser acceptance remain pending. Do all implementation and verification in **this same PR**, not one PR per workspace. Planning baseline: main `30b7bf7` (2026-11-18); recheck main before changing code.
 
 ## Decision
 
