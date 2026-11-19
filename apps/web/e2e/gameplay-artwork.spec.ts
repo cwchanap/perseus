@@ -347,11 +347,18 @@ test.describe('gameplay artwork status @smoke', () => {
 		expect(stageBox!.width).toBeGreaterThan(0);
 		expect(stageBox!.height).toBeGreaterThan(0);
 
-		await gameplayPage.imageHoldHandle!.release();
+		// release() answers only the requests pending at snapshot time — a
+		// non-coalesced artwork request can still land afterwards and stay
+		// held, so keep draining the hold until the artwork actually decodes.
+		await expect
+			.poll(async () => {
+				await gameplayPage.imageHoldHandle!.release();
+				return naturalWidth(artwork);
+			})
+			.toBeGreaterThan(0);
 
 		// Released: the artwork decodes in place and the pending stage drops.
 		await expect(artwork).toHaveAttribute('data-image-state', 'loaded');
-		await expect.poll(() => naturalWidth(artwork)).toBeGreaterThan(0);
 		await expect(stage).toHaveCount(0);
 		await expect(dialog.getByTestId('completion-artwork-unavailable')).toHaveCount(0);
 	});

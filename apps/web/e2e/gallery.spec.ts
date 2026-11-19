@@ -1033,7 +1033,10 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			// so the count below is exactly the post-reload request on every run.
 			await expect.poll(() => handle.pendingCount).toBe(1);
 			await handle.release();
-			await page.reload();
+			// DOM content only: the reload re-issues the continue-art request
+			// into the hold, and an eager <img> in flight before 'load' would
+			// stall the reload past the timeout before release can run.
+			await page.reload({ waitUntil: 'domcontentloaded' });
 
 			const panel = page.getByTestId('continue-on-device');
 			await expect(panel).toBeVisible();
