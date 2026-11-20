@@ -2,85 +2,88 @@
 
 Linear: https://linear.app/cwchanap/issue/HPA-1031
 Design: [2026-11-19-hpa-1031-gameplay-control-clarity-design.md](../specs/2026-11-19-hpa-1031-gameplay-control-clarity-design.md)
-Baseline: current `main`, inspected 2026-11-19
+Baseline: `main` @ `cb5bb13d`, verified during the PR #184 design review
 
-**PR rule:** Keep design, implementation, regression tests, screenshots, and final evidence on **this same draft PR**. Do not create a second implementation PR for HPA-1031. This first commit is documentation-only; implementation and acceptance are still pending.
+**PR rule:** The design, implementation, regressions, and final MCP evidence all land on **draft PR #184**. No second PR for HPA-1031. At this stage only documentation has been committed; no implementation or acceptance is claimed.
 
-## 0. Baseline and safety rails
+## 0. Ground rules
 
-- [ ] Before code changes, verify the branch is current with `main` and capture an automated desktop and narrow-viewport baseline screenshot of the gameplay route, open More panel, and paused dialog. No Linear mockup was attached at planning time: Galaxy Arcade is the visual baseline.
-- [ ] Inspect existing selectors/tests before renaming text: accessible action names and exact Exit/Discard button names are used in component and Playwright tests.
-- [ ] Keep all changes in `apps/web`. No `PuzzleSession`, game-core, API, storage, timer, drag/drop, D1/R2, or mobile NativeScript changes.
+- [ ] Recheck that the branch is current with `main` before implementation. Use `main` as the existing Galaxy Arcade visual baseline; **no mandatory before screenshots**.
+- [ ] Keep the implementation in `apps/web`, using current Svelte components and the existing `PuzzleSession`. Do not modify session rules, first-placement timing, persistence, API/backend, drag mechanics, gallery/tray sizing, or NativeScript.
+- [ ] Preserve exact existing button `aria-label` values and the Exit/Discard/Restart/Resume names used by tests; no compatibility shim, toolbar registry, new onboarding state, art, SFX, or music feature.
 
-## 1. Label the existing toolbar actions
+## 1. Expose labels in More; reuse the rotation-lock element
 
 Files:
 - `apps/web/src/lib/components/PuzzleToolbar.svelte`
 - `apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts`
 
-- [ ] Render short text alongside the SVG for **existing** secondary actions **when More is expanded**: Redo, Zoom out, Zoom in, Rotation mode, Sound effects, Peek reference, Leaderboard, Mission setup. Use a small local span in each button and shared scoped CSS. Do not add a second menu, data registry, action abstraction, or duplicated buttons.
-- [ ] Keep the closed desktop rail icon-sized (including direct Redo and Rotation), preserve hover titles and full accessible button names, and give the expanded desktop flyout enough width for its labels. In the compact two-column More flyout, allow label wrapping while preserving 44px minimum hit targets.
-- [ ] Ensure the visible label is included in the accessible name (`label-content-name-mismatch`) without changing the existing locator contracts. Keep click handlers, `aria-pressed`, More `aria-expanded`, disabled flags, tabindex/roving arrow navigation, and desktop visual order.
-- [ ] Replace the ambiguous rotation-lock `title` / `rotation-lock-reason` with the specific **mode-toggle** explanation. When the mode is locked, render the same short explanation inside **open More** as passive text; do not depend on focus/hover of a disabled button. Respect rotation-enabled vs rotation-disabled wording.
-- [ ] Extend component assertions for the open-panel text, locked-state explanation, button names, toggled state, one enabled Tab stop, keyboard traversal, and resize transitions.
+- [ ] Add a small text span to each **existing** secondary action: Redo, Zoom out, Zoom in, Rotation mode, Sound effects, **Hold to peek**, Leaderboard, Mission setup (when present). Reuse the icon/label style pattern from `PuzzleInventoryPanel.svelte`. A visible label must be a substring of its unchanged `aria-label` (e.g. “Hold to peek” within “Hold to peek reference”) so the open flyout passes axe's `label-content-name-mismatch` rule.
+- [ ] Show those spans **only** under `.toolbar-secondary[data-open='true']`. In the closed desktop rail, preserve 3.25rem icons, including direct Redo/Rotation. Scope the wider flyout and label wrapping to the open panel. Compact layout keeps 44px touch targets, reachable buttons and no horizontal overflow. Retain `aria-pressed`, `aria-expanded`, focus, roving Tab/arrow traversal and DOM callbacks.
+- [ ] **Move**, rather than duplicate, existing `#rotation-lock-reason` into `.toolbar-secondary`. Keep the disabled button's `aria-describedby` and hide the text when More is closed, including desktop's `display: contents` state. Render the same element visibly, passively, only when More is open and mode locked:
+  - rotation on: “Rotation mode is locked after the first placement; you can still rotate unplaced pieces.”
+  - rotation off: “Rotation mode is locked after the first placement; piece rotation is unavailable in this run.”
+- [ ] Do **not** change the disabled button `title`: `pointer-events: none` means the tooltip is not a useful discovery path. Accept the known visual similarity between the mode toggle icon and tray Rotate icon in the closed desktop rail, since the open-panel wording resolves it without an icon redesign.
+- [ ] Add focused tests for label-text/accessible-name agreement, lock wording for both mode states, visibility when More opens/closes, existing action callbacks and stable keyboard focus. Extend present tests rather than creating a toolbar abstraction.
 
-**Implementation note:** CSS differs across breakpoints: ≥1024px uses a vertical 3.25rem desktop rail with `display: contents` reordering and an 11rem expanded flyout; <1024px uses a two-column panel. Limit width and label style adjustments to `.toolbar-secondary[data-open='true']`; do not widen the closed rail or disrupt `offsetParent`-based keyboard traversal.
-
-## 2. Explain Exit versus Discard without changing outcomes
+## 2. Make Exit/Discard copy local and accessible
 
 Files:
 - `apps/web/src/lib/components/SessionPauseDialog.svelte`
 - `apps/web/src/lib/components/__tests__/SessionDialogs.svelte.test.ts`
 
-- [ ] Add a concise visible statement under the Timed/Relaxed subtitle: “Exit saves this run so you can resume later. Discard deletes its saved progress after confirmation.” Show for both `presentation='paused'` and `presentation='resume'`; do not duplicate it in the restart-confirmation view.
-- [ ] Keep **Exit**, **Discard**, **Restart**, and **Resume** button names, order unless visual QA proves an issue, and their callbacks unchanged. Existing `DiscardSessionDialog` remains the destructive confirmation.
-- [ ] Unit-test copy in both presentations, confirm the restart view does not display irrelevant guidance, and preserve focus trapping and callback tests.
-- [ ] Do not modify `exitToArcade`/`discardAndExit`: current route already flushes and persists on Exit and clears on confirmed Discard.
+- [ ] Add **one paragraph** under the Timed/Relaxed mission subtitle for both `presentation='paused'` and `presentation='resume'`: “Exit saves this run **on this device** so you can resume later. Discard deletes it after confirmation.”
+- [ ] Reference the paragraph id in the dialog's conditional `aria-describedby` (following `MissionSetupDialog`). In the restart-confirmation view, show only its existing restart copy and do not reference an absent paragraph.
+- [ ] Component-test presence in both presentations, absence during restart confirmation, and correct descriptive association. Do not change existing callbacks, focus trap or destructive confirmation.
+- [ ] **Reuse** existing E2E in `gameplay-session-controls.spec.ts` for Exit persistence and confirmed Discard removal. Do **not** add redundant Exit→reenter or Discard cancel→confirm journeys to this copy-only ticket.
 
-## 3. Give players an in-game click/tap-to-place hint
+## 3. Reserve a stable gameplay instruction line
 
 Files:
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
-- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` (if focused route assertions fit)
-- `apps/web/e2e/gameplay-interactions.spec.ts` (canonical interaction proof)
+- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
-- [ ] Add a small, visible, noninteractive hint near the existing board/HUD: initially “Select a piece, then click or tap a board cell to place it — or drag a piece.” When a piece is selected, switch to “Piece selected: click or tap a board cell to place it.”
-- [ ] Derive visibility from existing `sessionState.lifecycle`, `placedPieces.length`, `currentSelectedPieceId` and `gameplayInputBlocked`: active before first accepted placement, or active with a selection; never over dialogs/reveal, and clear after placement when no piece is selected. No new tutorial state, storage, event listeners or session fields.
-- [ ] Style a narrow, bounded overlay/pill that does not consume board layout height or intercept pointer input. Check board cell hit targets and both desktop/phone layouts. Do not change the existing board's `dropZoneInteraction` or inventory `onSelect`.
-- [ ] Add a rendered browser regression: hint initially visible, click/tap a tray piece, click/tap its correct board cell, assert accepted placement and hint dismissal; explicitly prove a selected-piece hint and no blockage of a board click. Retain keyboard and mouse-drag tests.
+- [ ] Render **one always-present, fixed-height line** in `.board-stage` between `.hud-header` and `<PuzzleBoardPanel>`. Keep the element and its height even when no hint text applies, so selecting/unselecting never alters board viewport bounds or zoom. Account for the existing desktop `.board-stage` gap; avoid accidentally doubling the 2.25rem gap. The line must not overlay a playable cell or capture pointer input.
+- [ ] Compute text via **one route-derived value** (no persisted tutorial flag, timers or new state):
+  1. **None/empty:** paused, setup, completed, reveal/input blocked, or post-first-placement with no selected piece.
+  2. **Initial:** active, zero accepted placements, nothing selected — “Select a piece, then click or tap a board cell — or drag.”
+  3. **Selected upright:** active, a selected piece is upright — “Piece selected: click or tap its board cell to place it.”
+  4. **Selected not upright:** active, rotation mode on and selected piece's rotation non-zero — “Rotate this piece upright first, then click or tap its cell.”
+- [ ] Derive only from `sessionState.lifecycle`, `placedPieces`, `currentSelectedPieceId`, `gameplayInputBlocked`, `rotationEnabled` and `pieceRotations`. Reserve enough height for all variants at 390px (including wrapping, if needed) **without changing line height when text changes**. Use existing Galaxy Arcade typography and no new live-region announcement; selection already invokes `announceGameplay`.
+- [ ] Route component tests prove initial → selected upright → accepted/cleared, selected non-upright → Rotate → upright, selection after first placement, hint empty on pause and during reveal, and **unchanged board viewport height** across text transitions.
+- [ ] Extend the existing route test for first-placement mode lock: place a piece, then select and rotate a **different unplaced** piece while the mode toggle remains disabled. This guards the real user confusion without changing `PuzzleSession` or the validation rule (`non_upright` is a counted incorrect attempt).
 
-## 4. Prove rotation mode and pause semantics end-to-end
+## 4. Extend existing browser checks at the right level
 
 Files:
-- `apps/web/e2e/gameplay-session-controls.spec.ts`
 - `apps/web/e2e/gameplay-mobile-tap.spec.ts`
-- `apps/web/e2e/gameplay-interactions.spec.ts`
+- `apps/web/e2e/gameplay-accessibility.spec.ts`
+- Existing `apps/web/e2e/gameplay-interactions.spec.ts` / `gameplay-session-controls.spec.ts` remain regression coverage.
 
-- [ ] Extend existing deterministic fixture cases, not the harness: start rotation-enabled, place one piece, confirm the toolbar mode toggle is still disabled, the explanation is visible in More, and the tray Rotate action still operates on an **unplaced** selected piece.
-- [ ] On a pause dialog, assert the explanatory copy. Trigger Exit and confirm saved progress survives reentry/resume; separately trigger Discard, cancel confirmation once, then confirm and assert progress is cleared. Keep these journeys independent of backend auth.
-- [ ] In existing responsive toolbar E2E, open More on desktop and at 390px, assert visible text labels and action names, test an enabled secondary action, keyboard Arrow/Tab traversal, panel bounding box, minimum touch targets, and zero document/`.puzzle-main` horizontal overflow.
-- [ ] Confirm the click/tap route and existing Enter/Space and native desktop drag still place a piece; do not attempt to fix HPA-825's physical-drag observation in this copy ticket.
+- [ ] Extend the existing responsive toolbar test (`gameplay-mobile-tap.spec.ts`) to assert visible More labels, preserved accessible names/keyboard reachability, open panel bounds, touch targets, and no document/`.puzzle-main` horizontal overflow at desktop and 390px. Do not create another toolbar journey.
+- [ ] Add simple hint text + unchanged board viewport height assertions to the existing tap-to-place test; let its existing real placement assertion prove the interaction. Do not introduce a second click-to-place journey or duplicate the keyboard/drag tests.
+- [ ] In the existing active-gameplay accessibility E2E (after a placement), **open More before `assertPageAccessible`** so axe scans the displayed labels and the lock explanation. Explicitly run the separate `test:e2e:a11y` lane as part of acceptance; it is not run by default CI.
+- [ ] Keep the existing Exit/Discard E2E, keyboard Enter/Space, native desktop drag and session-controls regressions passing without reauthoring those flows. Do not fix HPA-825 physical-drag or HPA-1028 harness issues here.
 
-## 5. Automated acceptance and visual evidence
+## 5. Automated acceptance and visual verification
 
-**MCP is the acceptance executor**, using the committed Playwright tests and browser screenshots; do not require manual/human acceptance.
+**MCP executes/inspects the actual Playwright tests and captures the screenshots.** The evidence is the committed commands, results and final images; no manual/human sign-off. One browser engine is sufficient for shared web UI changes.
 
-- [ ] Focused component tests pass (toolbar, pause dialog and any small route test). Run `bun run --cwd apps/web test:unit`.
-- [ ] MCP-driven browser E2E on **one platform (Chromium)** runs the enhanced `gameplay-session-controls` / `gameplay-interactions` / `gameplay-mobile-tap` tests through the repository's existing fixtures. Use **desktop and 390px narrow viewport** for this shared web UI; no independent Windows/macOS/iOS sign-offs are required unless a genuine platform-specific regression is found. Run `bun run --cwd apps/web test:e2e:smoke` and targeted tests as appropriate. If CI flags unrelated HPA-1028 harness races, record the isolated evidence; do not silently broaden this PR into a harness rewrite.
-- [ ] MCP screenshot visual check **on the final committed branch**: desktop closed rail and expanded More, narrow More at 390×844, paused and restored-resume dialogs, locked rotation text after a placement, initial and selected-piece hint. Compare with a Linear UI mockup **if one is attached by acceptance time**, otherwise with the shipped Galaxy Arcade styling and the initial automated screenshots. Verify text readability/contrast, board and tray visibility, no overlapping actionable controls, playable cells, panel containment and horizontal overflow. Save screenshots/observations as PR evidence.
-- [ ] Run `bun run check`, `bun run lint`, `bun run --cwd apps/web test:e2e` where applicable, and required PR CI. Record actual command outcomes; do not claim results before running them.
-- [ ] Preserve accessibility: button label-content-name agreement, More `aria-expanded` and keyboard traversal, dialog focus containment, visible copy, disabled rotation behavior, unchanged live gameplay announcements.
-- [ ] No new art or SFX, no music toggle, no timer scoring changes, no changes to session persistence/API contracts, and no backward-compatibility shim.
+- [ ] Run `bun run --cwd apps/web test:unit`, `bun run check` and `bun run lint`; record outcomes.
+- [ ] Run the existing Playwright suite via MCP in Chromium desktop and 390px mobile viewport, including `bun run --cwd apps/web test:e2e:smoke` and focused route/toolbar tests. Run `bun run --cwd apps/web test:e2e:a11y` **explicitly** (a11y is not in automatic CI). Required PR CI passes. If an unrelated harness flake arises, record it against HPA-1028 rather than expanding this PR.
+- [ ] **Four MCP screenshot checks, final branch only:**
+  1. Desktop expanded More **after one placement** (labels + lock description).
+  2. 390px expanded More **after one placement** (labels, lock description, bounds).
+  3. Desktop hint line (initial or selected, with board visible).
+  4. 390px hint line (prefer selected rotated-piece warning, with board visible).
+- [ ] Compare those screenshots with a Linear mockup **if one becomes available**, otherwise the shipped Galaxy Arcade UI on `main`. Check readable labels, color/contrast, reserved-line geometry, board cells unobscured, functional controls, no horizontal overflow or unexpected board zoom/resize. No separate pause-dialog screenshot required: its local copy/layout is covered by the component test.
+- [ ] Verify no new API/backend/persistence schema, score/timer semantics, toolchain/harness or generated art/SFX changes. CI and test results must be real, not inferred from planning.
 
-## 6. Closeout on this PR only
+## 6. Closeout on this PR
 
-- [ ] Commit implementation and regression tests to this branch.
-- [ ] Add MCP E2E logs, screenshot paths and observed desktop/narrow outcomes to this PR's description; list any reproducible remaining issues separately rather than expanding scope.
-- [ ] Keep draft until implementation and automated acceptance pass. Update Linear HPA-1031 with evidence and mark Done **only after** the implementation is merged and accepted.
+- [ ] Commit all implementation/test updates to **PR #184**, document commands, MCP screenshot evidence and any narrowly deferred issues in its description.
+- [ ] Keep draft until automated acceptance completes, then update Linear HPA-1031. Mark Done only when implementation is merged and accepted.
 
-## Risks and quick decisions
+## Review decisions
 
-- **Compact label fit:** the flyout is two columns and may need scoped font/wrapping or a one-column arrangement at very narrow widths. Avoid enlarging the underlying vertical rail. Screenshot and bounds assertions decide.
-- **Disabled rotation explanation:** a disabled control isn't focusable, so accessible text alone is insufficient for discoverability. Put legible passive copy in the already-open More panel; do not add focusable help controls.
-- **Placement hint geometry:** a normal-flow banner would resize the puzzle board between selection states. Prefer a bounded non-blocking overlay near the HUD, then verify screenshot and board-cell hit tests at desktop and phone widths.
-- **Overlap with other tickets:** HPA-1032 owns tray sizing and Gallery text; HPA-1029 owns artwork loading. Stop if the proposed diff begins to edit those surfaces rather than duplicating their work.
+Accepted 2026-11-19 design-review feedback: (1) rotation-aware selected hint to prevent counted `non_upright` attempts; (2) permanently reserved, stable-height line instead of overlay/dynamic-flow banner; (3) narrower regression scope using existing tests; (4) axe scan with More open; (5) “Hold to peek” visibility; (6) move/reuse lock explanation and skip disabled `title`; (7) device-local Exit wording with `aria-describedby`; (8) no baseline screenshots and only four final screenshots. **Adjustment:** retain explicit MCP-run E2E and screenshot acceptance per project requirements, without duplicating the underlying Playwright journeys.
