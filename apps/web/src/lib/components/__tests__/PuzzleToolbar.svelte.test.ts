@@ -695,6 +695,27 @@ describe('PuzzleToolbar', () => {
 			}
 		});
 
+		it('sets compact open labels in the mono font on wrapping flexible-height buttons', async () => {
+			// layout.css is not loaded for the isolated component render, so
+			// inject sentinel families to prove which custom property is used.
+			const style = document.createElement('style');
+			style.textContent =
+				':root { --font-mono: SentinelMono, monospace; --font-display: SentinelDisplay, serif; }';
+			document.head.appendChild(style);
+			try {
+				renderToolbar();
+				await openMore();
+
+				const button = await page.getByLabelText('Rotation mode').element();
+				const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+				expect(label).not.toBeNull();
+				expect(getComputedStyle(label!).fontFamily.toLowerCase()).toContain('sentinelmono');
+				expect(getComputedStyle(button).whiteSpace).toBe('normal');
+			} finally {
+				style.remove();
+			}
+		});
+
 		it('moves roving focus into the open More panel with ArrowRight', async () => {
 			renderToolbar({ canRedo: true });
 			await openMore();
