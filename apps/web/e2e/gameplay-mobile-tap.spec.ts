@@ -527,6 +527,48 @@ test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gamepla
 	await expect(hint).toHaveText('Rotate upright first, then click/tap its cell.');
 	expect((await hint.boundingBox())?.height).toBe(hintBox!.height);
 	expect((await boardViewport.boundingBox())?.height).toBe(viewportBox!.height);
+
+	// HPA-1031 visual-acceptance fix: the compact header's back button
+	// overhangs its parent by ~10px at 390px. The hint's text line boxes must
+	// clear the button's real bounds so the first word stays readable, and
+	// the copy must still fit inside the reserved two-line slot.
+	const hintClearance = await page.evaluate(() => {
+		const hintEl = document.querySelector('[data-testid="gameplay-hint"]');
+		const back = document.querySelector('.hud-header .back-btn');
+		if (!hintEl || !back) return null;
+		const hintRect = hintEl.getBoundingClientRect();
+		const range = document.createRange();
+		range.selectNodeContents(hintEl);
+		const backRect = back.getBoundingClientRect();
+		return {
+			hint: { top: hintRect.top, bottom: hintRect.bottom },
+			lines: [...range.getClientRects()].map((rect) => ({
+				left: rect.left,
+				right: rect.right,
+				top: rect.top,
+				bottom: rect.bottom
+			})),
+			back: {
+				left: backRect.left,
+				right: backRect.right,
+				top: backRect.top,
+				bottom: backRect.bottom
+			}
+		};
+	});
+	expect(hintClearance).not.toBeNull();
+	expect(hintClearance!.lines.length).toBeGreaterThan(0);
+	expect(hintClearance!.lines.length).toBeLessThanOrEqual(2);
+	for (const line of hintClearance!.lines) {
+		const overlapsBack =
+			line.left < hintClearance!.back.right &&
+			line.right > hintClearance!.back.left &&
+			line.top < hintClearance!.back.bottom &&
+			line.bottom > hintClearance!.back.top;
+		expect(overlapsBack).toBe(false);
+		// Every wrapped line stays inside the reserved slot height.
+		expect(line.bottom).toBeLessThanOrEqual(hintClearance!.hint.bottom);
+	}
 	await page.getByRole('button', { name: 'Expand piece tray to full' }).click();
 	await page.getByRole('button', { name: 'Collapse piece tray to peek' }).click();
 	await expect(toggle).toHaveAttribute('aria-label', 'Expand piece tray to half');
