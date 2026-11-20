@@ -1623,10 +1623,28 @@ describe('Puzzle route gameplay integration', () => {
 	it('re-enables rotation toggle after undoing back to empty board', async () => {
 		await renderPuzzlePage();
 
-		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'true');
 
 		await placePiece(0, 0, 0);
 		await expectPiecesRemaining(1);
+		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
+
+		// The first-placement lock disables the mode toggle, not rotation
+		// itself: a different unplaced piece can still be selected and
+		// rotated while the toggle stays locked (a non-upright placement
+		// then counts as an incorrect attempt).
+		await selectPiece(1);
+		await rotateSelectedPiece();
+		expect(await getPieceRotation(1)).toBe(90);
+		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
+
+		// Undo reverses the rotation first, then the placement.
+		await page.getByLabelText('Undo').click();
+		expect(await getPieceRotation(1)).toBe(0);
 		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
 
 		await page.getByLabelText('Undo').click();
@@ -4568,5 +4586,152 @@ describe('Puzzle page placement feedback state', () => {
 		await placePiece(0, 0, 0);
 
 		await expect.element(page.getByTestId('filter-count-all')).toMatchTextContent('1');
+	});
+});
+
+describe('Puzzle page gameplay instruction line', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		runtimeState.resetRunId();
+		progressState.value = null;
+		sealedCompletionOverride.value = null;
+		puzzleSourceState.override = null;
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		restoredLifecycleState.value = 'active';
+		restoredModeState.value = 'timed';
+		mockPageStore.set({
+			url: { pathname: `/puzzle/${TEST_PUZZLE_ID}` },
+			params: { id: TEST_PUZZLE_ID },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+	});
+
+	function hintText(): string {
+		return (
+			document.querySelector<HTMLElement>('[data-testid="gameplay-hint"]')?.textContent?.trim() ??
+			''
+		);
+	}
+
+	it('renders the instruction line as a direct board-stage child between the HUD and board panel', async () => {
+		await renderPuzzlePage();
+
+		const hint = await page.getByTestId('gameplay-hint').element();
+		expect(hint.parentElement?.classList.contains('board-stage')).toBe(true);
+		expect(hint.previousElementSibling?.classList.contains('hud-header')).toBe(true);
+		expect(hint.nextElementSibling?.classList.contains('board-panel')).toBe(true);
+	});
+
+	it('shows the select-a-piece instruction on an active run with nothing selected', async () => {
+		await renderPuzzlePage();
+
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Select a piece, then click/tap a cell or drag.');
+	});
+
+	it('switches to the selected-piece instruction and clears after an accepted placement', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+
+		await placeSelectedPieceAt(0, 0);
+		await expectPiecesRemaining(1);
+
+		// Post-first-placement with no selection reserves the line but shows
+		// no copy.
+		expect(hintText()).toBe('');
+	});
+
+	it('shows the rotate-first instruction for a non-upright selection and restores when upright', async () => {
+		await renderPuzzlePage();
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+		await selectPiece(0);
+
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+
+		await rotateSelectedPiece();
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Rotate upright first, then click/tap its cell.');
+
+		await rotateSelectedPiece();
+		await rotateSelectedPiece();
+		await rotateSelectedPiece();
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+	});
+
+	it('returns the selected-piece instruction for a selection after the first placement', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		expect(hintText()).toBe('');
+
+		await selectPiece(1);
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+	});
+
+	it('clears the instruction while the pause dialog holds input', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+
+		expect(hintText()).toBe('');
+	});
+
+	it('keeps the instruction line empty during the completion reveal', async () => {
+		setPrefersReducedMotion(false);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		// The reveal holds the finished board for 500 ms before results open;
+		// gameplay input is blocked for the whole window, so the line stays
+		// empty rather than flashing a stale instruction.
+		expect(page.getByTestId('celebration-modal').query()).toBeNull();
+		expect(hintText()).toBe('');
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(hintText()).toBe('');
+	});
+
+	it('keeps the board viewport height unchanged across instruction transitions', async () => {
+		await renderPuzzlePage();
+		const viewport = await page.getByTestId('board-viewport').element();
+		const initialHeight = viewport.getBoundingClientRect().height;
+		expect(initialHeight).toBeGreaterThan(0);
+		expect(hintText()).toBe('Select a piece, then click/tap a cell or drag.');
+
+		await selectPiece(0);
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+		expect(viewport.getBoundingClientRect().height).toBe(initialHeight);
+
+		await placeSelectedPieceAt(0, 0);
+		await expectPiecesRemaining(1);
+		expect(hintText()).toBe('');
+		expect(viewport.getBoundingClientRect().height).toBe(initialHeight);
 	});
 });
