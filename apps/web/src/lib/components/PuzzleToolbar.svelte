@@ -606,20 +606,10 @@
 		display: none;
 	}
 
-	.toolbar-secondary[data-open='true'] .toolbar-button {
-		height: auto;
-		min-height: 3.25rem;
-		justify-content: flex-start;
-		gap: 0.5rem;
-		padding: 0.45rem 0.65rem;
-		white-space: normal;
-		text-align: left;
-	}
-
 	.toolbar-secondary[data-open='true'] .toolbar-action-label {
 		display: block;
 		min-width: 0;
-		font-family: var(--font-display), Orbitron, monospace;
+		font-family: var(--font-mono), monospace;
 		font-size: 0.62rem;
 		letter-spacing: 0.08em;
 		overflow-wrap: anywhere;
@@ -691,6 +681,18 @@
 
 		.toolbar-secondary .toolbar-button {
 			width: 100%;
+		}
+
+		/* Only the compact open panel may relax the fixed icon-button box so
+		   labels wrap beside their icons inside the ~132px grid cells. */
+		.toolbar-secondary[data-open='true'] .toolbar-button {
+			height: auto;
+			min-height: 3.25rem;
+			justify-content: flex-start;
+			gap: 0.5rem;
+			padding: 0.45rem 0.65rem;
+			white-space: normal;
+			text-align: left;
 		}
 	}
 
@@ -880,6 +882,7 @@
 
 		.puzzle-toolbar > .toolbar-secondary[data-open='true'] .toolbar-button {
 			width: 100%;
+			gap: 0.4rem;
 		}
 	}
 
