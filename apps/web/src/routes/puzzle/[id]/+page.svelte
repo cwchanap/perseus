@@ -315,6 +315,22 @@
 	// pending.
 	const gameplayInputBlocked = $derived(hasSessionModal || completionRevealActive);
 
+	// Single route-derived gameplay instruction line. Rendered in a
+	// fixed-height slot so copy changes never move the board viewport; empty
+	// string keeps the reserved space. Derived only from existing route
+	// state — no timers, persistence, or tutorial flags.
+	const gameplayHint = $derived.by(() => {
+		if (sessionState?.lifecycle !== 'active' || gameplayInputBlocked) return '';
+		if (currentSelectedPieceId === null) {
+			return placedPieces.length === 0 ? 'Select a piece, then click/tap a cell or drag.' : '';
+		}
+		// An absent rotation entry is upright, matching the canonical engine.
+		if (rotationEnabled && (pieceRotations[currentSelectedPieceId] ?? 0) !== 0) {
+			return 'Rotate upright first, then click/tap its cell.';
+		}
+		return 'Piece selected: click/tap its board cell.';
+	});
+
 	// The board's settle treatment spans the reveal window AND the completed
 	// lifecycle afterwards — dismissing results must not strip the glow from
 	// the finished board at its peak. It leaves when Play Again / restart
@@ -1541,6 +1557,12 @@
 							</div>
 						</header>
 
+						<!-- Reserved instruction line: fixed height even when empty so
+					     selection transitions never move the board viewport. Purely
+					     presentational — no live region (selection already announces
+					     via announceGameplay) and no pointer interception. -->
+						<div class="gameplay-hint" data-testid="gameplay-hint">{gameplayHint}</div>
+
 						<!-- Board panel -->
 						<PuzzleBoardPanel
 							bind:this={boardPanel}
@@ -2090,6 +2112,22 @@
 		height: 1.2rem;
 	}
 
+	/* Fixed-height instruction slot between the HUD and the board panel.
+	   Height is reserved per breakpoint below; it never collapses with empty
+	   text so copy transitions cannot resize the board viewport. */
+	.board-stage > .gameplay-hint {
+		margin: 0;
+		flex-shrink: 0;
+		overflow: hidden;
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		line-height: 1.4;
+		letter-spacing: 0.08em;
+		text-align: center;
+		color: var(--text-2);
+		pointer-events: none;
+	}
+
 	.game-workspace .game-layout {
 		width: 100%;
 		max-width: none;
@@ -2377,6 +2415,13 @@
 			min-height: 0;
 		}
 
+		/* Desktop reserves one line; the negative margin cancels the second
+		   2.25rem stage gap so the line costs only its own height. */
+		.board-stage > .gameplay-hint {
+			height: 1rem;
+			margin-bottom: -2.25rem;
+		}
+
 		.game-layout > :global(.inventory-panel) {
 			grid-column: 3;
 			grid-row: 1;
@@ -2487,6 +2532,12 @@
 			flex: 1;
 			min-height: 0;
 			padding-top: 0.25rem;
+		}
+
+		/* Compact reserves two lines so the ~46-char copy at 390px wraps
+		   inside the same slot instead of resizing it. */
+		.board-stage > .gameplay-hint {
+			height: 2rem;
 		}
 
 		.game-layout > :global(.inventory-panel) {
