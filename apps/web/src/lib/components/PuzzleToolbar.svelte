@@ -333,6 +333,7 @@
 						d="M21 10H11a5 5 0 000 10h4m6-10l-4-4m4 4l-4 4"
 					/>
 				</svg>
+				<span class="toolbar-action-label">Redo</span>
 			</button>
 			<button
 				type="button"
@@ -352,6 +353,7 @@
 				>
 					<path stroke-linecap="round" d="M5 12h14" />
 				</svg>
+				<span class="toolbar-action-label">Zoom out</span>
 			</button>
 			<button
 				type="button"
@@ -371,6 +373,7 @@
 				>
 					<path stroke-linecap="round" d="M5 12h14M12 5v14" />
 				</svg>
+				<span class="toolbar-action-label">Zoom in</span>
 			</button>
 			<button
 				type="button"
@@ -397,6 +400,7 @@
 						d="M20 11a8 8 0 00-14.6-4.4L4 8m0 0V4m0 4h4M4 13a8 8 0 0014.6 4.4L20 16m0 0v4m0-4h-4"
 					/>
 				</svg>
+				<span class="toolbar-action-label">Rotation mode</span>
 			</button>
 			{#if onSoundToggle}
 				<button
@@ -423,6 +427,7 @@
 							<path stroke-linecap="round" d="M16 9l5 6m0-6l-5 6" />
 						{/if}
 					</svg>
+					<span class="toolbar-action-label">Sound effects</span>
 				</button>
 			{/if}
 		</div>
@@ -460,6 +465,7 @@
 							d="M12 5C7 5 3.2 8.4 2 12c1.2 3.6 5 7 10 7s8.8-3.4 10-7c-1.2-3.6-5-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"
 						/>
 					</svg>
+					<span class="toolbar-action-label">Hold to peek</span>
 				</button>
 			</div>
 		{/if}
@@ -479,6 +485,7 @@
 					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 						<path d="M4 20V9h4v11zM10 20V4h4v16zM16 20v-7h4v7z" />
 					</svg>
+					<span class="toolbar-action-label">Leaderboard</span>
 				</button>
 			</div>
 		{/if}
@@ -508,16 +515,19 @@
 						/>
 						<circle cx="12" cy="12" r="3.5" />
 					</svg>
+					<span class="toolbar-action-label">Mission setup</span>
 				</button>
 			</div>
 		{/if}
-	</div>
 
-	{#if rotationToggleDisabled}
-		<span id="rotation-lock-reason" class="sr-only">
-			Rotation is locked after the first placement
-		</span>
-	{/if}
+		{#if rotationToggleDisabled}
+			<span id="rotation-lock-reason" class="rotation-lock-reason">
+				{rotationEnabled
+					? 'Rotation mode is locked after the first placement; you can still rotate unplaced pieces.'
+					: 'Rotation mode is locked after the first placement; piece rotation is unavailable in this run.'}
+			</span>
+		{/if}
+	</div>
 
 	<span id="assistance-scoring-help" class="sr-only">
 		Hint affects timed results. Peek and Reference do not.
@@ -586,6 +596,44 @@
 
 	.toolbar-secondary[data-open='true'] {
 		pointer-events: auto;
+	}
+
+	/* Action labels and the lock explanation exist only for the open More
+	   panel; the closed rail stays icon-only (including the desktop
+	   display:contents state). */
+	.toolbar-action-label,
+	.rotation-lock-reason {
+		display: none;
+	}
+
+	.toolbar-secondary[data-open='true'] .toolbar-button {
+		height: auto;
+		min-height: 3.25rem;
+		justify-content: flex-start;
+		gap: 0.5rem;
+		padding: 0.45rem 0.65rem;
+		white-space: normal;
+		text-align: left;
+	}
+
+	.toolbar-secondary[data-open='true'] .toolbar-action-label {
+		display: block;
+		min-width: 0;
+		font-family: var(--font-display), Orbitron, monospace;
+		font-size: 0.62rem;
+		letter-spacing: 0.08em;
+		overflow-wrap: anywhere;
+	}
+
+	.toolbar-secondary[data-open='true'] .rotation-lock-reason {
+		display: block;
+		min-width: 0;
+		padding: 0.25rem 0.5rem;
+		font-family: var(--font-display), Orbitron, monospace;
+		font-size: 0.62rem;
+		letter-spacing: 0.06em;
+		line-height: 1.4;
+		color: var(--text-1);
 	}
 
 	.more-toggle {

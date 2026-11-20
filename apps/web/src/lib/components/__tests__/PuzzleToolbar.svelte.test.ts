@@ -639,6 +639,126 @@ describe('PuzzleToolbar', () => {
 		expect(tabbableActions()).toHaveLength(1);
 	});
 
+	describe('secondary action labels', () => {
+		// [aria-label, visible label] — the label must remain a substring of
+		// the unchanged accessible name for axe label-content-name-mismatch.
+		const labeledActions: Array<[string, string]> = [
+			['Redo', 'Redo'],
+			['Zoom out', 'Zoom out'],
+			['Zoom in', 'Zoom in'],
+			['Rotation mode', 'Rotation mode'],
+			['Sound effects', 'Sound effects'],
+			['Hold to peek reference', 'Hold to peek'],
+			['Open family leaderboard', 'Leaderboard'],
+			['Open mission setup', 'Mission setup']
+		];
+
+		async function openMore() {
+			(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+			await expect
+				.element(page.getByTestId('puzzle-toolbar-secondary'))
+				.toHaveAttribute('data-open', 'true');
+		}
+
+		it('renders a label inside each secondary action that stays within its accessible name', async () => {
+			renderToolbar({ onSoundToggle: vi.fn(), canOpenLeaderboard: true, canOpenSetup: true });
+			await openMore();
+
+			for (const [accessibleName, labelText] of labeledActions) {
+				const button = await page.getByLabelText(accessibleName).element();
+				const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+				expect(label, `${accessibleName} label`).not.toBeNull();
+				expect(label!.textContent?.trim()).toBe(labelText);
+				expect(accessibleName.toLowerCase()).toContain(labelText.toLowerCase());
+				expect(label!.checkVisibility(), `${accessibleName} label visible`).toBe(true);
+			}
+		});
+
+		it('hides secondary action labels while More is closed', async () => {
+			renderToolbar({ onSoundToggle: vi.fn(), canOpenLeaderboard: true, canOpenSetup: true });
+
+			for (const [accessibleName] of labeledActions) {
+				const button = await page.getByLabelText(accessibleName).element();
+				const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+				expect(label, `${accessibleName} label`).not.toBeNull();
+				expect(label!.checkVisibility(), `${accessibleName} label hidden`).toBe(false);
+			}
+		});
+
+		it('does not label primary rail actions', async () => {
+			renderToolbar();
+			await openMore();
+
+			for (const name of ['Hint', 'Toggle reference', 'Undo', 'Reset view']) {
+				const button = await page.getByLabelText(name).element();
+				expect(button.querySelector('.toolbar-action-label')).toBeNull();
+			}
+		});
+
+		it('moves roving focus into the open More panel with ArrowRight', async () => {
+			renderToolbar({ canRedo: true });
+			await openMore();
+
+			const more = (await page
+				.getByLabelText('More puzzle actions')
+				.element()) as HTMLButtonElement;
+			const redo = await page.getByRole('button', { name: 'Redo' }).element();
+
+			more.focus();
+			more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+			expect(document.activeElement).toBe(redo);
+		});
+	});
+
+	describe('rotation lock explanation', () => {
+		async function openMore() {
+			(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+			await expect
+				.element(page.getByTestId('puzzle-toolbar-secondary'))
+				.toHaveAttribute('data-open', 'true');
+		}
+
+		it('explains that unplaced pieces can still rotate when rotation stays enabled', async () => {
+			renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
+			await openMore();
+
+			const reason = document.getElementById('rotation-lock-reason');
+			expect(reason).not.toBeNull();
+			expect(reason!.textContent?.trim()).toBe(
+				'Rotation mode is locked after the first placement; you can still rotate unplaced pieces.'
+			);
+			expect(reason!.checkVisibility()).toBe(true);
+		});
+
+		it('explains that rotation is unavailable when rotation is disabled', async () => {
+			renderToolbar({ rotationEnabled: false, rotationToggleDisabled: true });
+			await openMore();
+
+			const reason = document.getElementById('rotation-lock-reason');
+			expect(reason!.textContent?.trim()).toBe(
+				'Rotation mode is locked after the first placement; piece rotation is unavailable in this run.'
+			);
+			expect(reason!.checkVisibility()).toBe(true);
+		});
+
+		it('stays attached to the disabled rotation button and hidden while More is closed', async () => {
+			renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
+
+			const rotation = await page.getByLabelText('Rotation mode').element();
+			expect(rotation.getAttribute('aria-describedby')).toBe('rotation-lock-reason');
+
+			const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+			const reason = document.getElementById('rotation-lock-reason');
+			expect(reason).not.toBeNull();
+			expect(secondary.contains(reason)).toBe(true);
+			expect(reason!.checkVisibility()).toBe(false);
+
+			await openMore();
+			expect(reason!.checkVisibility()).toBe(true);
+		});
+	});
+
 	it('keeps a secondary callback wired through the compact container', async () => {
 		const onZoomIn = vi.fn();
 		renderToolbar({ onZoomIn });
