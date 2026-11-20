@@ -4,13 +4,13 @@ Linear: https://linear.app/cwchanap/issue/HPA-915/maintenance-stage-ignored-lint
 
 PR: https://github.com/cwchanap/perseus/pull/182
 
-**Status:** Implementation committed on **this same PR**; CI and browser acceptance remain pending. Do all implementation and verification in **this same PR**, not one PR per workspace. Planning baseline: main `30b7bf7` (2026-11-18); recheck main before changing code.
+**Status:** Implementation committed on **this same PR** (#182); green Build & Lint, Unit Tests and Chromium smoke on implementation SHA `8f5d73a8`, plus the MCP browser acceptance and screenshots, are recorded on the PR. All implementation and verification happened in **this same PR**, not one PR per workspace. Planning baseline: main `30b7bf7` (2026-11-18); recheck main before changing code.
 
 ## Decision
 
 Make one coordinated development-tooling update across the **root**, **apps/api**, **apps/web**, and **apps/workflows** manifests, moving `eslint` 9 → 10 and `globals` 16 → 17. Preserve the existing lint commands and four flat configs (API, web, workflows, root scripts). No shared config package, new lint rules, CI jobs, or runtime feature changes.
 
-The recommended manifest targets at the 2026-11-19 review are `eslint: ^10.15.0` and `globals: ^17.14.0`; confirm availability during implementation. Use `bun install` **without deleting `bun.lock`**, then prove the diff affects only ESLint/globals and their necessary transitive dependencies—not unrelated runtime or development packages. Keep the existing `eslint` / `globals` semver-major Dependabot ignores; their explanatory comment is already version-agnostic and does not require editing.
+The recommended manifest targets at the 2026-11-19 review are `eslint: ^10.15.0` and `globals: ^17.14.0`; confirm availability during implementation. The root manifest also declares `engines.node` `^20.19.0 || ^22.13.0 || >=24`, ESLint 10's floor, because the `eslint` binary runs on the system Node rather than under Bun. Use `bun install` **without deleting `bun.lock`**, then prove the diff affects only ESLint/globals and their necessary transitive dependencies—not unrelated runtime or development packages. Keep the existing `eslint` / `globals` semver-major Dependabot ignores; their explanatory comment is already version-agnostic and does not require editing.
 
 ## Verified existing evidence
 
@@ -32,19 +32,19 @@ The recommended manifest targets at the 2026-11-19 review are `eslint: ^10.15.0`
 
 ## Explicit decisions for other HPA-915 majors
 
-| Stream | Decision / gate |
-| --- | --- |
-| TypeScript 7 | **Hold.** #144 was not merged. Require checker/lint and mobile compiler support before any upgrade. |
-| Mobile Svelte 5 | **Hold.** NativeScript Svelte Native currently pins Svelte 4; require compatible runtime and a working iOS render/update build. |
-| sass-loader major | **Hold.** Require NativeScript webpack compatibility and a device/simulator build. |
-| `@nativescript/canvas` 3 (#177) | **Separate HPA-26 validation.** A dependency bump does not establish that native drawing/layout bugs are fixed. |
-| Vitest core + three `@vitest/*` companion packages | **Retain all four ignores.** Versions must move in lockstep, not by independent Dependabot PRs. |
-| ESLint/globals future majors | **Retain major-only ignores** after this coordinated migration. Future major changes need their own compatibility check. |
+| Stream                                             | Decision / gate                                                                                                                 |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| TypeScript 7                                       | **Hold.** #144 was not merged. Require checker/lint and mobile compiler support before any upgrade.                             |
+| Mobile Svelte 5                                    | **Hold.** NativeScript Svelte Native currently pins Svelte 4; require compatible runtime and a working iOS render/update build. |
+| sass-loader major                                  | **Hold.** Require NativeScript webpack compatibility and a device/simulator build.                                              |
+| `@nativescript/canvas` 3 (#177)                    | **Separate HPA-26 validation.** A dependency bump does not establish that native drawing/layout bugs are fixed.                 |
+| Vitest core + three `@vitest/*` companion packages | **Retain all four ignores.** Versions must move in lockstep, not by independent Dependabot PRs.                                 |
+| ESLint/globals future majors                       | **Retain major-only ignores** after this coordinated migration. Future major changes need their own compatibility check.        |
 
 References: [HPA-913](https://linear.app/cwchanap/issue/HPA-913), [HPA-26](https://linear.app/cwchanap/issue/HPA-26), [Dependabot policy](https://github.com/cwchanap/perseus/blob/main/.github/dependabot.yml).
 
 ## Out of scope
 
-No app/mobile manifest or lockfile updates; no TypeScript/Svelte/Vitest/sass-loader/canvas migration, game logic, API/schema change, image/SFX generation, lint refactor, compatibility shim, broad ignore/rule disables, or new CI setup.
+No `apps/mobile` manifest changes; no lockfile churn outside ESLint/globals; no TypeScript/Svelte/Vitest/sass-loader/canvas migration, game logic, API/schema change, image/SFX generation, lint refactor, compatibility shim, broad ignore/rule disables, or new CI setup.
 
 **Done:** One PR with coherent version strings and tightly scoped lockfile; four lint entry points and web negative import guard verified; frozen installation; CI Build & Lint/Unit/Chromium smoke green on the implementation SHA; one MCP-driven end-to-end smoke and screenshot visual check completed; major holds recorded. No human acceptance criteria.
