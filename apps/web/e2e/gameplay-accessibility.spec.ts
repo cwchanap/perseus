@@ -139,9 +139,11 @@ test.describe('accessibility @a11y', () => {
 		gameplayPage,
 		page
 	}) => {
+		// Rotation mode is seeded on so the fixture's rotated tray pieces
+		// exercise the rotate-first instruction line during the scan.
 		await gameplayPage.gotoFixture({
 			fixtureId: 'e2e2a000-0000-4000-8000-000000000004',
-			seedPreferences: IMMEDIATE_START
+			seedPreferences: { ...IMMEDIATE_START, rotationEnabled: true }
 		});
 
 		// A board drop-zone lives inside the page's main landmark.
@@ -163,6 +165,31 @@ test.describe('accessibility @a11y', () => {
 			inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')
 		).toHaveCount(1);
 		await expectLiveRegion(page.getByTestId('gameplay-announcer'), 'polite');
+
+		// Piece 1 starts rotated under the seeded rotation mode: selecting it
+		// surfaces the rotate-first instruction, and the reserved line must
+		// not move the board viewport.
+		const boardViewport = page.getByTestId('board-viewport');
+		const viewportHeight = (await boardViewport.boundingBox())!.height;
+		const piece1 = gameplayPage.pieceSource(1).getByTestId('puzzle-piece');
+		await piece1.focus();
+		await piece1.press('Enter');
+		await expect(piece1).toHaveAttribute('data-selected', 'true');
+		await expect(page.getByTestId('gameplay-hint')).toHaveText(
+			'Rotate upright first, then click/tap its cell.'
+		);
+		expect((await boardViewport.boundingBox())?.height).toBe(viewportHeight);
+
+		// Open More before scanning so axe sees the rendered action labels
+		// and the rotation-lock explanation the first placement activates —
+		// not display:none markup.
+		const more = page.getByRole('button', { name: 'More puzzle actions' });
+		await more.click();
+		await expect(more).toHaveAttribute('aria-expanded', 'true');
+		const secondary = page.getByTestId('puzzle-toolbar-secondary');
+		await expect(secondary.locator('.toolbar-action-label').first()).toBeVisible();
+		await expect(page.locator('#rotation-lock-reason')).toBeVisible();
+		await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
 
 		await assertPageAccessible(page, { label: 'active-gameplay' });
 	});

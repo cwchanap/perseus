@@ -32,6 +32,8 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 
 	await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 
+	const toolbar = page.getByTestId('puzzle-toolbar');
+	const secondary = page.getByTestId('puzzle-toolbar-secondary');
 	const more = page.getByRole('button', { name: 'More puzzle actions' });
 	const zoomIn = page.getByRole('button', { name: 'Zoom in' });
 	const resetView = page.getByRole('button', { name: 'Reset view' });
@@ -39,6 +41,29 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	const setup = page.getByRole('button', { name: 'Open mission setup' });
 	const toggleReference = page.getByRole('button', { name: 'Toggle reference' });
 	const peekReference = page.getByRole('button', { name: 'Hold to peek reference' });
+
+	// Every open More action must render its text label, keep that label a
+	// case-insensitive substring of the preserved aria-label (matching the
+	// component test's accessible-name agreement contract), and keep a
+	// >= 44px target. Shared by the desktop flyout and the compact panel.
+	async function expectLabeledPanelActions(): Promise<void> {
+		const panelButtons = secondary.locator('button:visible');
+		const panelButtonCount = await panelButtons.count();
+		expect(panelButtonCount).toBeGreaterThanOrEqual(6);
+		for (let buttonIndex = 0; buttonIndex < panelButtonCount; buttonIndex += 1) {
+			const action = panelButtons.nth(buttonIndex);
+			const label = action.locator('.toolbar-action-label');
+			await expect(label).toBeVisible();
+			const labelText = ((await label.textContent()) ?? '').trim();
+			const name = (await action.getAttribute('aria-label')) ?? '';
+			expect(labelText.length).toBeGreaterThan(0);
+			expect(name.toLowerCase()).toContain(labelText.toLowerCase());
+			const box = await action.boundingBox();
+			expect(box).not.toBeNull();
+			expect(box!.width).toBeGreaterThanOrEqual(44);
+			expect(box!.height).toBeGreaterThanOrEqual(44);
+		}
+	}
 
 	if (project === 'chromium-desktop') {
 		for (const [index, viewport] of [
@@ -78,12 +103,28 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 			await expect(more).toHaveAttribute('aria-expanded', 'true');
 			await expect(zoomIn).toBeVisible();
 			await expect(peekReference).toBeVisible();
+			await expectLabeledPanelActions();
 
-			const secondary = page.getByTestId('puzzle-toolbar-secondary');
+			// The open flyout keeps the roving contract — exactly one visible
+			// Tab stop across rail + panel — and arrow keys walk rail ->
+			// panel (More -> Pause -> first flyout action).
+			await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
+			await more.focus();
+			await page.keyboard.press('ArrowRight');
+			await expect(pause).toBeFocused();
+			await page.keyboard.press('ArrowRight');
+			expect(
+				await page.evaluate(
+					() => document.activeElement?.closest('#puzzle-toolbar-secondary') !== null
+				)
+			).toBe(true);
+
 			const secondaryBox = await secondary.boundingBox();
 			expect(secondaryBox).not.toBeNull();
 			expect(secondaryBox!.x).toBeGreaterThanOrEqual(0);
 			expect(secondaryBox!.x + secondaryBox!.width).toBeLessThanOrEqual(viewport.width);
+			expect(secondaryBox!.y).toBeGreaterThanOrEqual(0);
+			expect(secondaryBox!.y + secondaryBox!.height).toBeLessThanOrEqual(viewport.height);
 			const zoomBox = await zoomIn.boundingBox();
 			expect(zoomBox).not.toBeNull();
 			const zoomHit = await page.evaluate(
@@ -96,6 +137,19 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 			expect(zoomHit).toBe(true);
 			await zoomIn.click();
 
+			// The open flyout must not push the document or .puzzle-main past
+			// the viewport width.
+			const documentOverflow = await page.evaluate(() => ({
+				scrollWidth: document.documentElement.scrollWidth,
+				clientWidth: document.documentElement.clientWidth
+			}));
+			expect(documentOverflow.scrollWidth).toBeLessThanOrEqual(documentOverflow.clientWidth);
+			const mainOverflow = await page.locator('.puzzle-main').evaluate((element) => ({
+				scrollWidth: element.scrollWidth,
+				clientWidth: element.clientWidth
+			}));
+			expect(mainOverflow.scrollWidth).toBeLessThanOrEqual(mainOverflow.clientWidth);
+
 			await more.click();
 			await expect(more).toHaveAttribute('aria-expanded', 'false');
 		}
@@ -105,7 +159,6 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	const viewport = page.viewportSize();
 	expect(viewport).toEqual({ width: 390, height: 844 });
 
-	const toolbar = page.getByTestId('puzzle-toolbar');
 	const toolbarBox = await toolbar.boundingBox();
 	expect(toolbarBox).not.toBeNull();
 	expect(toolbarBox!.x).toBeGreaterThanOrEqual(0);
@@ -143,14 +196,27 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	await expect(zoomIn).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Rotation mode' })).toBeVisible();
 	await expect(setup).toBeVisible();
+	await expectLabeledPanelActions();
+
+	// The open compact panel keeps the roving contract — exactly one visible
+	// Tab stop across rail + panel — and ArrowRight from More (the last rail
+	// action) lands on the first open-panel action.
+	await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
+	await more.focus();
+	await page.keyboard.press('ArrowRight');
+	expect(
+		await page.evaluate(() => document.activeElement?.closest('#puzzle-toolbar-secondary') !== null)
+	).toBe(true);
 
 	// Actionability is the stacking proof. This fails if the board covers the panel.
 	await zoomIn.click();
 
-	const secondaryBox = await page.getByTestId('puzzle-toolbar-secondary').boundingBox();
+	const secondaryBox = await secondary.boundingBox();
 	expect(secondaryBox).not.toBeNull();
 	expect(secondaryBox!.x).toBeGreaterThanOrEqual(0);
 	expect(secondaryBox!.x + secondaryBox!.width).toBeLessThanOrEqual(viewport!.width);
+	expect(secondaryBox!.y).toBeGreaterThanOrEqual(0);
+	expect(secondaryBox!.y + secondaryBox!.height).toBeLessThanOrEqual(viewport!.height);
 
 	const documentOverflow = await page.evaluate(() => ({
 		scrollWidth: document.documentElement.scrollWidth,
@@ -386,8 +452,10 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 
 test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gameplayPage, page }) => {
 	test.skip(!isChromiumMobile(), 'HPA-219 feature flow uses chromium-mobile');
+	// Rotation mode is enabled so the reserved instruction line also proves
+	// its rotate-first copy: fixture pieces 1-3 start non-upright.
 	await gameplayPage.gotoFixture({
-		seedPreferences: IMMEDIATE_START,
+		seedPreferences: { ...IMMEDIATE_START, rotationEnabled: true },
 		completion: { kind: 'success' }
 	});
 
@@ -399,20 +467,39 @@ test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gamepla
 	);
 	await expect(page.getByTestId('puzzle-board')).toBeVisible();
 
-	// Piece 0 belongs at (0, 0); reject it at (1, 1).
+	// HPA-1031: the reserved instruction line guides selection at real 390px
+	// width; its fixed slot height and the board viewport height never change
+	// as the copy transitions.
+	const hint = page.getByTestId('gameplay-hint');
+	const boardViewport = page.getByTestId('board-viewport');
+	await expect(hint).toHaveText('Select a piece, then click/tap a cell or drag.');
+	const hintBox = await hint.boundingBox();
+	const viewportBox = await boardViewport.boundingBox();
+	expect(hintBox).not.toBeNull();
+	expect(hintBox!.height).toBeGreaterThan(0);
+	expect(viewportBox).not.toBeNull();
+
+	// Piece 0 belongs at (0, 0) and starts upright; reject it at (1, 1).
 	await gameplayPage.tapPiece(0);
 	const piece0 = gameplayPage.pieceSource(0).getByTestId('puzzle-piece');
 	await expect(piece0).toHaveAttribute('data-selected', 'true');
+	await expect(hint).toHaveText('Piece selected: click/tap its board cell.');
+	expect((await hint.boundingBox())?.height).toBe(hintBox!.height);
+	expect((await boardViewport.boundingBox())?.height).toBe(viewportBox!.height);
 	await gameplayPage.dropZone(1, 1).tap();
 
 	// Durable rejection contract: the slot stays and selection stays.
 	await expect(gameplayPage.pieceSource(0)).toBeVisible();
 	await expect(piece0).toHaveAttribute('data-selected', 'true');
+	await expect(hint).toHaveText('Piece selected: click/tap its board cell.');
 
 	// Retrying the selected piece at its real cell succeeds and clears selection.
 	await gameplayPage.placeWithTap(0, 0, 0);
 	await gameplayPage.expectPiecePlaced(0, 0, 0);
 	await expect(page.locator('[data-testid="puzzle-piece"][data-selected="true"]')).toHaveCount(0);
+	// Post-first-placement with nothing selected keeps the reserved line empty.
+	await expect(hint).toHaveText('');
+	expect((await boardViewport.boundingBox())?.height).toBe(viewportBox!.height);
 
 	// Prove Cancel remains available in the collapsed header.
 	await gameplayPage.tapPiece(1);
@@ -420,6 +507,11 @@ test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gamepla
 		'data-selected',
 		'true'
 	);
+	// Piece 1 starts rotated under the seeded rotation mode, so the line
+	// instructs the player to rotate upright before the cell accepts the tap.
+	await expect(hint).toHaveText('Rotate upright first, then click/tap its cell.');
+	expect((await hint.boundingBox())?.height).toBe(hintBox!.height);
+	expect((await boardViewport.boundingBox())?.height).toBe(viewportBox!.height);
 	await page.getByRole('button', { name: 'Expand piece tray to full' }).click();
 	await page.getByRole('button', { name: 'Collapse piece tray to peek' }).click();
 	await expect(toggle).toHaveAttribute('aria-label', 'Expand piece tray to half');
@@ -430,13 +522,25 @@ test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gamepla
 	await expect(page.getByTestId('puzzle-board')).toBeVisible();
 	await page.getByRole('button', { name: 'Cancel selected piece' }).click();
 	await expect(page.locator('[data-testid="puzzle-piece"][data-selected="true"]')).toHaveCount(0);
+	await expect(hint).toHaveText('');
 
 	await page.getByRole('button', { name: 'Expand piece tray to half' }).click();
 	await expect(toggle).toHaveAttribute('aria-label', 'Expand piece tray to full');
 
 	const fixture = gameplayPage.fixture!;
+	const rotateSelected = page.getByRole('button', { name: 'Rotate selected piece' });
 	for (const piece of fixture.pieces.filter((candidate) => candidate.id !== 0)) {
-		await gameplayPage.placeWithTap(piece.id, piece.correctX, piece.correctY);
+		await gameplayPage.tapPiece(piece.id);
+		await expect(gameplayPage.pieceSource(piece.id).getByTestId('puzzle-piece')).toHaveAttribute(
+			'data-selected',
+			'true'
+		);
+		// Each remaining fixture piece starts non-upright; rotate it back to
+		// upright so its cell accepts the tap placement.
+		for (let turns = ((360 - fixture.rotations[piece.id]!) / 90) % 4; turns > 0; turns -= 1) {
+			await rotateSelected.click();
+		}
+		await gameplayPage.dropZone(piece.correctX, piece.correctY).tap();
 		await gameplayPage.expectPiecePlaced(piece.id, piece.correctX, piece.correctY);
 	}
 
