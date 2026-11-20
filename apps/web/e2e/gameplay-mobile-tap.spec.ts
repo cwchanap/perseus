@@ -42,16 +42,31 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	const toggleReference = page.getByRole('button', { name: 'Toggle reference' });
 	const peekReference = page.getByRole('button', { name: 'Hold to peek reference' });
 
-	// Every open More action must render its text label, keep that label a
-	// case-insensitive substring of the preserved aria-label (matching the
+	// Every open More action must keep its pre-labels accessible name (asserted
+	// through the computed name, not the aria-label attribute), render its text
+	// label as a case-insensitive substring of that name (matching the
 	// component test's accessible-name agreement contract), and keep a
 	// >= 44px target. Shared by the desktop flyout and the compact panel.
+	const PANEL_ACTION_NAMES: Record<string, string> = {
+		redo: 'Redo',
+		'zoom-out': 'Zoom out',
+		'zoom-in': 'Zoom in',
+		rotation: 'Rotation mode',
+		sound: 'Sound effects',
+		peek: 'Hold to peek reference',
+		leaderboard: 'Open family leaderboard',
+		setup: 'Open mission setup'
+	};
 	async function expectLabeledPanelActions(): Promise<void> {
 		const panelButtons = secondary.locator('button:visible');
 		const panelButtonCount = await panelButtons.count();
 		expect(panelButtonCount).toBeGreaterThanOrEqual(6);
 		for (let buttonIndex = 0; buttonIndex < panelButtonCount; buttonIndex += 1) {
 			const action = panelButtons.nth(buttonIndex);
+			const actionKey = (await action.getAttribute('data-toolbar-action')) ?? '';
+			const expectedName = PANEL_ACTION_NAMES[actionKey];
+			expect(expectedName, `unexpected open-panel action "${actionKey}"`).toBeTruthy();
+			await expect(action).toHaveAccessibleName(expectedName);
 			const label = action.locator('.toolbar-action-label');
 			await expect(label).toBeVisible();
 			const labelText = ((await label.textContent()) ?? '').trim();
