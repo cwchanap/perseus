@@ -2535,9 +2535,12 @@
 		}
 
 		/* Compact reserves two lines so the ~46-char copy at 390px wraps
-		   inside the same slot instead of resizing it. */
+		   inside the same slot instead of resizing it. The inline-start pad
+		   clears the compact header's back button, which overhangs the
+		   header box by ~10px over the slot's top-left corner. */
 		.board-stage > .gameplay-hint {
 			height: 2rem;
+			padding-inline-start: 3.5rem;
 		}
 
 		.game-layout > :global(.inventory-panel) {
