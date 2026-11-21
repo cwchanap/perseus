@@ -841,6 +841,40 @@ describe('PuzzleToolbar', () => {
 		expect(style.overflowY).toBe('auto');
 	});
 
+	it('lets players scroll to the last More action on a short screen', async () => {
+		await page.viewport(414, 320);
+		try {
+			renderToolbar({
+				onSoundToggle: vi.fn(),
+				onOpenLeaderboard: vi.fn(),
+				canOpenLeaderboard: true,
+				onOpenSetup: vi.fn(),
+				canOpenSetup: true,
+				rotationToggleDisabled: true
+			});
+			(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+			const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+
+			// Forced overflow — without it the reachability check below proves nothing.
+			expect(secondary.scrollHeight).toBeGreaterThan(secondary.clientHeight);
+			expect(secondary.getBoundingClientRect().bottom).toBeLessThanOrEqual(window.innerHeight + 1);
+
+			secondary.scrollTop = secondary.scrollHeight;
+			const panelRect = secondary.getBoundingClientRect();
+			const lastAction = secondary.querySelector<HTMLElement>('[data-toolbar-action="setup"]');
+			const lockReason = secondary.querySelector<HTMLElement>('#rotation-lock-reason');
+			expect(lastAction).not.toBeNull();
+			expect(lockReason).not.toBeNull();
+			for (const el of [lastAction!, lockReason!]) {
+				const rect = el.getBoundingClientRect();
+				expect(rect.top).toBeGreaterThanOrEqual(panelRect.top);
+				expect(rect.bottom).toBeLessThanOrEqual(panelRect.bottom + 1);
+			}
+		} finally {
+			await page.viewport(414, 896);
+		}
+	});
+
 	it('keeps a secondary callback wired through the compact container', async () => {
 		const onZoomIn = vi.fn();
 		renderToolbar({ onZoomIn });
