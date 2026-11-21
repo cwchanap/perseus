@@ -809,8 +809,10 @@
 
 	/* Mobile-only tray preview size. Below 1024px the tray decouples from the
 	   board-derived slot size and uses a viewport-fluid preview. Desktop
-	   inherits --piece-slot-size from .game-layout (never reset to initial). */
-	@media (max-width: 1023px) {
+	   inherits --piece-slot-size from .game-layout (never reset to initial).
+	   1023.98px matches the route's compact breakpoint so fractional
+	   viewports never leave the sheet unconstrained inside the clipped grid. */
+	@media (max-width: 1023.98px) {
 		.inventory-panel {
 			--piece-slot-size: clamp(3rem, 16vw, 4.5rem);
 			height: var(--mobile-sheet-height);
@@ -1010,7 +1012,7 @@
 		box-shadow: 0 0 14px rgb(58 255 255 / 16%);
 	}
 
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.inventory-panel {
 			border-radius: 1.25rem 1.25rem 0 0;
 		}
