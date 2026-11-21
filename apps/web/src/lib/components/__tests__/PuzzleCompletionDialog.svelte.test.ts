@@ -3,6 +3,12 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCompletionDialog from '../PuzzleCompletionDialog.svelte';
 
+const VALID_ARTWORK_URL =
+	'data:image/svg+xml,' +
+	encodeURIComponent(
+		'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160"><rect width="100%" height="100%" fill="#385"/></svg>'
+	);
+
 function standardTimedProps() {
 	return {
 		puzzleName: 'Test Mission',
@@ -16,8 +22,13 @@ function standardTimedProps() {
 		rotationUsed: false,
 		bestTime: 68,
 		isNewBest: false,
-		localStatsFailed: false,
-		serverSubmissionRetryable: true,
+		localStats: { status: 'succeeded' as const },
+		serverSubmission: {
+			status: 'failed' as const,
+			code: 'network_error' as const,
+			retryable: true
+		},
+		playerAuthenticated: true,
 		onRetryServerSubmission: vi.fn(),
 		onPlayAgain: vi.fn(),
 		onBackToArcade: vi.fn(),
@@ -26,6 +37,149 @@ function standardTimedProps() {
 }
 
 describe('PuzzleCompletionDialog', () => {
+	it('avoids a dead retry for a locally saved anonymous completion', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: false
+		});
+
+		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('Saved on this device');
+		// Signing in alone does not sync: the retry path lives in the puzzle
+		// route, so the note must name the return-to-puzzle step and the
+		// Play Again cutoff (Play Again clears the seal).
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('reopen this same puzzle to retry syncing before playing again');
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+	});
+
+	it('keeps the retry for a failed local save under the sign-in note', async () => {
+		// retry_completion_effects re-runs the failed local write as well as
+		// the unauthorized submission, so the local save must not lose its
+		// retry path just because the server 401'd.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			localStats: { status: 'failed', code: 'storage_error', retryable: true },
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: false
+		});
+
+		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+	});
+
+	it('offers retry — not sign-in guidance — for an authenticated 401', async () => {
+		// A 401 against an authenticated session (expired cookie, stale tab)
+		// must not tell a signed-in player to sign in.
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+			playerAuthenticated: true
+		});
+
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+		expect(page.getByTestId('completion-sign-in-note').query()).toBeNull();
+	});
+
+	it('labels a local-only save failure without claiming a sync failure', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			localStats: { status: 'failed', code: 'storage_error', retryable: true },
+			serverSubmission: { status: 'succeeded' }
+		});
+
+		const banner = page.getByTestId('server-retry-banner');
+		await expect.element(banner).toBeVisible();
+		await expect.element(banner).toMatchTextContent('LOCAL SAVE FAILED');
+		await expect.element(banner).toMatchTextContent('RETRY SAVE');
+		expect(banner.query()?.textContent).not.toContain('MISSION SYNC FAILED');
+	});
+
+	it.each([
+		{
+			localStats: { status: 'pending' } as const,
+			message: 'Saving on this device',
+			direction: 'reopen this same puzzle to retry syncing before playing again'
+		},
+		{
+			localStats: { status: 'failed', code: 'storage_error', retryable: true } as const,
+			message: 'Local save failed',
+			direction: 'reopen this same puzzle to retry saving and syncing before playing again'
+		}
+	])(
+		'does not claim a successful local save while $message',
+		async ({ localStats, message, direction }) => {
+			render(PuzzleCompletionDialog, {
+				...standardTimedProps(),
+				localStats,
+				serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true },
+				playerAuthenticated: false
+			});
+
+			await expect.element(page.getByTestId('completion-sign-in-note')).toMatchTextContent(message);
+			// Same honest direction as the saved case: sign in, then revisit
+			// this puzzle — Play Again clears the seal before sync can land.
+			await expect
+				.element(page.getByTestId('completion-sign-in-note'))
+				.toMatchTextContent(direction);
+			expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
+				'Saved on this device'
+			);
+		}
+	);
+
+	it('moves focus to the dialog container when retry swaps the button out', async () => {
+		// Clicking retry replaces the banner with the pending note; without an
+		// explicit focus target the removed button drops focus to <body>,
+		// killing the backdrop Escape handler and the Tab trap.
+		const rendered = await render(PuzzleCompletionDialog, standardTimedProps());
+
+		await page.getByTestId('retry-server-submission').click();
+		await rendered.rerender({ serverSubmission: { status: 'pending' } });
+
+		const dialogBox = await page.getByRole('dialog').element();
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
+	});
+
+	it('restores dialog focus when an automatic retry removes the focused control', async () => {
+		// An auth transition dispatches retry_completion_effects outside the
+		// component: the reset clears the failure states and unmounts the
+		// retry control without handleSyncRetry's explicit focus move. The
+		// dialog must recover focus itself or Escape stops reaching the
+		// backdrop.
+		const rendered = await render(PuzzleCompletionDialog, standardTimedProps());
+
+		const retryButton = await page.getByTestId('retry-server-submission').element();
+		retryButton.focus();
+		await rendered.rerender({ serverSubmission: { status: 'pending' } });
+
+		const dialogBox = await page.getByRole('dialog').element();
+		await expect.poll(() => document.activeElement).toBe(dialogBox);
+	});
+
+	it('replaces retry with pending sync state', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			serverSubmission: { status: 'pending' }
+		});
+
+		// Routine progress is announced politely (status), not assertively
+		// (alert) — an assertive region would interrupt the result
+		// announcement on every retry.
+		const pending = page.getByTestId('server-sync-pending');
+		await expect.element(pending).toHaveAttribute('role', 'status');
+		await expect.element(pending).toMatchTextContent('SYNCING RESULT');
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+	});
+
 	it.each([
 		['standard_timed', 'STANDARD TIMED'],
 		['rotation_timed', 'ROTATION TIMED'],
@@ -126,6 +280,64 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.element(page.getByTestId('completion-reference-fallback')).toBeVisible();
 		expect(page.getByTestId('completion-reference-art').query()).toBeNull();
 		expect(page.getByRole('button', { name: 'VIEW ARTWORK' }).query()).toBeNull();
+	});
+
+	it('hides the failed preview img from assistive tech so only the fallback announces', async () => {
+		// The errored img stays mounted (opacity-hidden) but keeps its alt, and
+		// the fallback is a role=img — without aria-hidden on the img, screen
+		// readers would announce the artwork twice. A loaded img must stay
+		// announced (no aria-hidden) as the accessible artwork.
+		const rendered = await render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
+		});
+
+		const img = (await page.getByTestId('completion-reference-art').element()) as HTMLImageElement;
+		expect(img.getAttribute('aria-hidden')).toBeNull();
+
+		img.dispatchEvent(new Event('error'));
+		await expect.element(page.getByTestId('completion-preview-unavailable')).toBeVisible();
+		expect(img.getAttribute('aria-hidden')).toBe('true');
+
+		await rendered.rerender({ referenceImageUrl: VALID_ARTWORK_URL });
+		await expect.poll(() => page.getByTestId('completion-preview-unavailable').query()).toBeNull();
+		expect(img.getAttribute('aria-hidden')).toBeNull();
+	});
+
+	it('overlays the artwork-view fallback on the stage, keeping the failed image mounted', async () => {
+		// A nonempty-but-failed URL keeps the <img> mounted (opacity-hidden)
+		// while the fallback overlays the placeholder stage — it must not sit
+		// beside the image as a second flex item inside the 230px stage.
+		const rendered = await render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			referenceImageUrl: '/api/puzzles/test-puzzle/reference'
+		});
+
+		await page.getByTestId('view-artwork').click();
+		await expect.element(page.getByTestId('completion-artwork-view')).toBeVisible();
+
+		const img = await page.getByTestId('completion-artwork-image').element();
+		img.dispatchEvent(new Event('error'));
+
+		const fallback = page.getByTestId('completion-artwork-unavailable');
+		await expect.element(fallback).toBeVisible();
+
+		expect(img.isConnected).toBe(true);
+		expect(getComputedStyle(fallback.element()!).position).toBe('absolute');
+
+		// The fallback fills the stage's box instead of sharing it.
+		const stage = img.closest('.artwork-image-wrap') as HTMLElement;
+		const stageRect = stage.getBoundingClientRect();
+		const fallbackRect = fallback.element()!.getBoundingClientRect();
+		expect(fallbackRect.width).toBeCloseTo(stageRect.width, 0);
+		expect(fallbackRect.height).toBeCloseTo(stageRect.height, 0);
+
+		// The failed img is aria-hidden (single fallback announcement) but
+		// returns to the accessibility tree once a load succeeds.
+		expect(img.getAttribute('aria-hidden')).toBe('true');
+		await rendered.rerender({ referenceImageUrl: VALID_ARTWORK_URL });
+		await expect.poll(() => page.getByTestId('completion-artwork-unavailable').query()).toBeNull();
+		expect(img.getAttribute('aria-hidden')).toBeNull();
 	});
 
 	it('opens a contained artwork view and restores results with focus', async () => {
@@ -318,7 +530,23 @@ describe('PuzzleCompletionDialog', () => {
 			...standardTimedProps(),
 			bestTime: 75,
 			isNewBest: true,
-			localStatsFailed: true
+			localStats: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('keeps UNSAVED while a failed new-best write is pending on retry', async () => {
+		// retry_completion_effects resets a failed local write to pending while
+		// isNewBest is still true; the badge must not claim a persisted record
+		// until the write actually succeeds (a retried write can sit queued on
+		// a Web Lock indefinitely).
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			bestTime: 75,
+			isNewBest: true,
+			localStats: { status: 'pending' }
 		});
 
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();

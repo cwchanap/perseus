@@ -79,9 +79,32 @@ describe('PuzzleCard', () => {
 	it('should render thumbnail image with correct alt text', async () => {
 		render(PuzzleCard, { family: mockFamily });
 
-		const img = page.getByRole('img', { name: 'Test Puzzle' });
-		await expect.element(img).toHaveAttribute('alt', 'Test Puzzle');
-		await expect.element(img).toHaveAttribute('src', getFamilyThumbnailUrl(mockFamily.id));
+		const img = (await page.getByTestId('puzzle-card-art').element()).querySelector(
+			'img'
+		) as HTMLImageElement;
+		expect(img.getAttribute('alt')).toBe('Test Puzzle');
+		expect(img.getAttribute('src')).toBe(getFamilyThumbnailUrl(mockFamily.id));
+	});
+
+	it('hides the failed thumbnail from assistive tech and exposes No preview instead', async () => {
+		// The errored img stays mounted (opacity-hidden) so a new src can
+		// recover, but opacity alone leaves it in the accessibility tree —
+		// announced as the puzzle's artwork while the aria-hidden placeholder
+		// said nothing. Mirror the completion dialog: the failed img is
+		// aria-hidden and "No preview" is exposed instead.
+		render(PuzzleCard, { family: mockFamily });
+
+		const img = (await page.getByTestId('puzzle-card-art').element()).querySelector(
+			'img'
+		) as HTMLImageElement;
+		expect(img).not.toBeNull();
+		img.dispatchEvent(new Event('error', { bubbles: true }));
+
+		const placeholder = page.getByTestId('puzzle-card-art-placeholder');
+		await expect.element(placeholder).toHaveTextContent('No preview');
+		await expect.poll(() => img.getAttribute('aria-hidden')).toBe('true');
+		expect(page.getByRole('img', { name: 'Test Puzzle' }).query()).toBeNull();
+		expect((await placeholder.element()).getAttribute('aria-hidden')).toBeNull();
 	});
 
 	it('should render category badge when family has a category', async () => {
@@ -278,6 +301,42 @@ describe('PuzzleCard', () => {
 			expect(intersects(stack, rectOf('card-category-status'))).toBe(false);
 		} finally {
 			await page.viewport(originalWidth, originalHeight);
+		}
+	});
+
+	it('resets thumbnail state to pending via update() when the family prop URL changes on a mounted card', async () => {
+		const rendered = await render(PuzzleCard, { family: mockFamily });
+
+		const img = (await page.getByTestId('puzzle-card-art').element()).querySelector(
+			'img'
+		) as HTMLImageElement;
+		expect(img).not.toBeNull();
+		// Drive the error state directly: the vitest server's answer to the
+		// fake thumbnail URL is an HTML fallback whose first (cold) fetch can
+		// outlast expect.poll's default timeout.
+		img.dispatchEvent(new Event('error', { bubbles: true }));
+		await expect.poll(() => img.dataset.imageState).toBe('error');
+		await expect
+			.element(page.getByTestId('puzzle-card-art-placeholder'))
+			.toHaveTextContent('No preview');
+
+		// Record every data-image-state transition on the SAME mounted <img> so a
+		// fast 404 on the next URL still proves update() reset state to pending.
+		const observedStates: string[] = [];
+		const observer = new MutationObserver(() => {
+			if (img.dataset.imageState) observedStates.push(img.dataset.imageState);
+		});
+		observer.observe(img, { attributes: true, attributeFilter: ['data-image-state'] });
+
+		try {
+			await rendered.rerender({
+				family: { ...mockFamily, id: 'fam-next', name: 'Next Puzzle' }
+			});
+			expect(observedStates[0]).toBe('pending');
+			expect(img.isConnected).toBe(true);
+			expect(img.getAttribute('src')).toBe(getFamilyThumbnailUrl('fam-next'));
+		} finally {
+			observer.disconnect();
 		}
 	});
 });

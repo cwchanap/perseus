@@ -220,6 +220,76 @@ describe('ReferenceOverlay', () => {
 			const overlay = await page.getByTestId('reference-overlay').element();
 			expect(overlay.textContent).toContain('Reference image unavailable');
 		});
+
+		it('centres the unavailable message within the overlay instead of letting the hidden broken image displace it', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true
+			});
+
+			const img = (await page
+				.getByRole('img', { name: 'Puzzle reference' })
+				.element()) as HTMLImageElement;
+			// Drive the error state directly: the vitest server's answer to the
+			// fake /api URL is an HTML fallback whose first (cold) fetch can
+			// outlast expect.poll's default timeout.
+			img.dispatchEvent(new Event('error', { bubbles: true }));
+			await expect.poll(() => img.dataset.imageState).toBe('error');
+
+			const overlay = await page.getByTestId('reference-overlay').element();
+			const message = await page.getByTestId('reference-image-unavailable').element();
+			const overlayRect = overlay.getBoundingClientRect();
+			const messageRect = message.getBoundingClientRect();
+
+			const overlayCenterX = overlayRect.left + overlayRect.width / 2;
+			const overlayCenterY = overlayRect.top + overlayRect.height / 2;
+			const messageCenterX = messageRect.left + messageRect.width / 2;
+			const messageCenterY = messageRect.top + messageRect.height / 2;
+
+			expect(Math.abs(messageCenterX - overlayCenterX)).toBeLessThanOrEqual(1);
+			expect(Math.abs(messageCenterY - overlayCenterY)).toBeLessThanOrEqual(1);
+		});
+
+		it('resets to pending and recovers to loaded on the same img when the imageUrl prop changes', async () => {
+			const rendered = await render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true
+			});
+
+			const img = (await page
+				.getByRole('img', { name: 'Puzzle reference' })
+				.element()) as HTMLImageElement;
+			// Drive the error state directly: the vitest server's answer to the
+			// fake /api URL is an HTML fallback whose first (cold) fetch can
+			// outlast expect.poll's default timeout.
+			img.dispatchEvent(new Event('error', { bubbles: true }));
+			await expect.poll(() => img.dataset.imageState).toBe('error');
+			await expect.element(page.getByTestId('reference-image-unavailable')).toBeVisible();
+
+			// Record every data-image-state transition so even a fast data/blob
+			// decode proves update() reset the state to 'pending' first.
+			const observedStates: string[] = [];
+			const observer = new MutationObserver(() => {
+				if (img.dataset.imageState) observedStates.push(img.dataset.imageState);
+			});
+			observer.observe(img, { attributes: true, attributeFilter: ['data-image-state'] });
+
+			const workingSvg =
+				'data:image/svg+xml,' +
+				encodeURIComponent(
+					'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#385"/></svg>'
+				);
+			try {
+				await rendered.rerender({ imageUrl: workingSvg, active: true });
+				await expect.poll(() => img.dataset.imageState).toBe('loaded');
+			} finally {
+				observer.disconnect();
+			}
+
+			expect(observedStates).toEqual(['pending', 'loaded']);
+			expect(img.naturalWidth).toBeGreaterThan(0);
+			expect(page.getByTestId('reference-image-unavailable').query()).toBeNull();
+		});
 	});
 
 	describe('when inactive', () => {
@@ -239,6 +309,18 @@ describe('ReferenceOverlay', () => {
 			render(ReferenceOverlay, { imageUrl: null, active: true });
 			const overlay = await page.getByTestId('reference-overlay').element();
 			expect(overlay.textContent).toContain('Reference image unavailable');
+		});
+	});
+
+	describe('when imageUrl is empty (unavailable, like null)', () => {
+		it('renders the unavailable message instead of a forever-pending empty-src img', async () => {
+			// imageStatus intentionally never classifies an empty source, so an
+			// empty URL would otherwise mount an invisible img stuck on pending
+			// with no explanation — the empty URL must read as unavailable.
+			render(ReferenceOverlay, { imageUrl: '', active: true });
+			const overlay = await page.getByTestId('reference-overlay').element();
+			expect(overlay.textContent).toContain('Reference image unavailable');
+			expect(await page.getByRole('img', { name: 'Puzzle reference' }).query()).toBeNull();
 		});
 	});
 });

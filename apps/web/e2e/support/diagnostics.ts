@@ -33,6 +33,15 @@
 // or 200 (authenticated/anonymous/deferred-release), and tolerates a
 // deferred-session cancel's request abort. A real-backend response (no marker)
 // is flagged as unexpected — proving the persona, not the backend, answered.
+//
+// Declared image failures (HPA-1029): a test that intentionally breaks a
+// fixture image (declared 404 or cancelled request) must declare the exact
+// URL, method, status and outcome up front. Only that narrowly-scoped request
+// is expected: the response still has to carry the fixture-router provenance
+// marker, the method and status must match the declaration, an abort outcome
+// must not produce any response, and the browser's failed-resource console
+// entry is allowed only when its location URL matches the declared image.
+// Every unrelated failure stays fatal.
 import type { ConsoleMessage, Page, Request, Response } from '@playwright/test';
 import type { CompletionScenario } from '../gameplay-fixtures/api-scenario';
 import { completionUrlPattern, SCENARIO_SOURCE } from '../gameplay-fixtures/api-scenario';
@@ -83,6 +92,22 @@ export interface HarnessViolationRecord {
 	violation: string;
 }
 
+/**
+ * One intentionally-failing image request declared by the test (HPA-1029).
+ * Built for gameplay fixture images by the image-hold helper's
+ * `declaredImageFailures()`; Gallery owns its own cleanup instead.
+ */
+export interface DeclaredImageFailure {
+	/** Full-URL regex matching exactly the declared failing image request. */
+	url: RegExp;
+	/** The required request method (the production image contract: GET). */
+	method: string;
+	/** The required response status when outcome is 'status'. */
+	status: number;
+	/** 'status': an HTTP failure response; 'abort': the request is aborted (no response). */
+	outcome: 'status' | 'abort';
+}
+
 export interface PageDiagnostics {
 	/** Declare the active completion scenario so its outcome is expected. */
 	setCompletion(fixtureId: string | undefined, scenario: CompletionScenario | undefined): void;
@@ -95,6 +120,14 @@ export interface PageDiagnostics {
 	 * allowlists the page's auth-failure console errors.
 	 */
 	setAuthPersona(kind: AuthPersonaKind | undefined, failedStatus?: number): void;
+	/**
+	 * Declare the intentionally-failing image requests of this load (HPA-1029).
+	 * Replaces any previous declaration. Only the declared URLs are expected to
+	 * fail — with the declared method, status and provenance — and only their
+	 * browser failed-resource console entries (attributed by location URL) are
+	 * allowed. Everything else stays fatal.
+	 */
+	setDeclaredImageFailures(failures: readonly DeclaredImageFailure[]): void;
 	/** Allowlist a console-error message substring as expected. */
 	expectConsoleError(messageSubstring: string): void;
 	readonly consoleErrors: readonly ConsoleErrorRecord[];
@@ -131,15 +164,28 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 	const expectedConsoleSubstrings: string[] = [];
 	let expectedCompletion: ExpectedCompletion | undefined;
 	let expectedAuth: ExpectedAuth | undefined;
+	let declaredImageFailures: readonly DeclaredImageFailure[] = [];
 
 	function isExpectedConsole(text: string): boolean {
 		return expectedConsoleSubstrings.some((sub) => text.includes(sub));
+	}
+
+	/**
+	 * A browser failed-resource console entry attributable to a declared image
+	 * failure: Chromium logs the failed URL on the console message location, so
+	 * the allowlist can match the declared image URL exactly instead of
+	 * suppressing failed-resource errors globally.
+	 */
+	function isDeclaredImageConsoleFailure(text: string, locationUrl: string | undefined): boolean {
+		if (!text.startsWith('Failed to load resource') || !locationUrl) return false;
+		return declaredImageFailures.some((declared) => declared.url.test(locationUrl));
 	}
 
 	function onConsole(msg: ConsoleMessage): void {
 		if (msg.type() !== 'error') return;
 		const text = msg.text();
 		if (isExpectedConsole(text)) return;
+		if (isDeclaredImageConsoleFailure(text, msg.location()?.url)) return;
 		consoleErrors.push({ text });
 	}
 
@@ -162,6 +208,18 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 			if (path && path.test(url) && request.method() === 'POST') {
 				return;
 			}
+		}
+		// A declared image abort (a cancelled image request) is expected — only
+		// for the exact declared URL and method.
+		if (
+			declaredImageFailures.some(
+				(declared) =>
+					declared.outcome === 'abort' &&
+					declared.url.test(url) &&
+					request.method() === declared.method
+			)
+		) {
+			return;
 		}
 		// A deferred-session persona's cancel() aborts its held GET
 		// /api/auth/session. That abort is the configured outcome, not a
@@ -206,6 +264,35 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 
 		const isE2E = E2E_PATH.test(pathname);
 		const isCompletion = COMPLETION_PATH.test(pathname);
+
+		// Declared image failure: the strictest narrow exception. Matching is
+		// against the FULL response URL (origin + query), consistent with
+		// DeclaredImageFailure.url's documented full-URL regex and with the
+		// request-failed/console checks above — so a declaration anchored to
+		// an origin or query is exact, and a path-only regex still matches.
+		// The response must still carry the fixture-router provenance marker
+		// (a real-backend answer is a leak), and at least one declaration for
+		// that URL must match outcome === 'status', the request method, and
+		// the response status (so declaring both an abort and a 404 for the
+		// same URL works in any order, while an abort-only URL still flags any
+		// response).
+		const urlMatches = declaredImageFailures.filter((declared) =>
+			declared.url.test(response.url())
+		);
+		if (urlMatches.length > 0) {
+			if (marker !== 'fixture-router') {
+				leakedFixtureRequests.push({ url: response.url(), method, status });
+				return;
+			}
+			const matchedStatus = urlMatches.some(
+				(declared) =>
+					declared.outcome === 'status' && declared.method === method && declared.status === status
+			);
+			if (!matchedStatus) {
+				unexpectedResponses.push({ url: response.url(), method, status });
+			}
+			return;
+		}
 
 		if (isCompletion) {
 			if (!expectedCompletion) {
@@ -255,6 +342,15 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 			// Non-completion e2e paths must be answered by the fixture router.
 			if (marker !== 'fixture-router') {
 				leakedFixtureRequests.push({ url: response.url(), method, status });
+				return;
+			}
+			// A router answer with a failure status and no violation header is an
+			// UNDECLARED failure (every router 404/405 carries the violation
+			// marker, so only an undeclared image-failure route can produce
+			// this). Fail loudly — an undeclared 4xx/5xx must stay fatal
+			// (HPA-1029).
+			if (status >= 400) {
+				unexpectedResponses.push({ url: response.url(), method, status });
 			}
 			return;
 		}
@@ -342,6 +438,9 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		},
 		expectConsoleError(messageSubstring) {
 			expectedConsoleSubstrings.push(messageSubstring);
+		},
+		setDeclaredImageFailures(failures) {
+			declaredImageFailures = failures;
 		},
 		get consoleErrors() {
 			return consoleErrors;

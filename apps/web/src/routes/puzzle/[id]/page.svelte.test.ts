@@ -3198,6 +3198,24 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	);
 
+	it('shows local save and sign-in guidance instead of a dead retry after 401', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(401, 'unauthorized', 'Unauthorized')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('Saved on this device');
+		expect(page.getByTestId('server-retry-banner').query()).toBeNull();
+		expect(page.getByTestId('retry-server-submission').query()).toBeNull();
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps a 429 quota failure terminal through the shared status mapper', async () => {
 		// The shared completionFailureCodeFromHttpStatus maps 429 to
 		// completion_quota_exceeded, which isFailureRetryable treats as terminal:
@@ -3293,6 +3311,118 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('completion-best-time')).toBeVisible();
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
 		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('reports the pending local save while a retry reruns a failed write', async () => {
+		// Regression: the local-failure presentation was latched on the first
+		// failed write and never cleared when retry_completion_effects reset
+		// the sealed effect back to pending, so a server retry resolving
+		// unauthorized first claimed "Local save failed" during the in-flight
+		// local retry.
+		const localRetry = createDeferred<Awaited<ReturnType<typeof recordLocalCompletion>>>();
+		vi.mocked(recordLocalCompletion)
+			.mockResolvedValueOnce({
+				status: 'failed',
+				isNewStandardBest: true,
+				inMemoryStats: {
+					schemaVersion: 1,
+					puzzleId: TEST_PUZZLE_ID,
+					standardBestTime: 42,
+					standardBestCompletedAt: Date.now(),
+					totalCompletions: 1,
+					lastCompletedAt: Date.now(),
+					lastRecordedRunId: TEST_RUN_ID,
+					recordedRunIds: [TEST_RUN_ID]
+				},
+				reason: 'storage_error'
+			})
+			.mockReturnValueOnce(localRetry.promise);
+		vi.mocked(recordCompletion)
+			.mockRejectedValueOnce(new ApiError(500, 'internal_error', 'Server error'))
+			.mockRejectedValueOnce(new ApiError(401, 'unauthorized', 'Unauthorized'));
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		// UNSAVED confirms the local failure resolved and was acknowledged
+		// before the retry is issued.
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+		await page.getByTestId('retry-server-submission').click();
+
+		// The local retry is still in flight (deferred) when the server retry
+		// resolves unauthorized: the note must report the pending save rather
+		// than the stale failure.
+		await expect
+			.element(page.getByTestId('completion-sign-in-note'))
+			.toMatchTextContent('Saving on this device');
+		expect(page.getByTestId('completion-sign-in-note').query()?.textContent).not.toContain(
+			'Local save failed'
+		);
+
+		// The record badge must stay UNSAVED while the retried write is in
+		// flight — isNewBest is still true but nothing has been persisted.
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('does not resubmit the completion when RETRY SAVE runs while signed out', async () => {
+		// A signed-out player whose local save failed alongside the 401 gets
+		// RETRY SAVE under the sign-in note. That retry must only re-run the
+		// local write: re-emitting the unauthorized submission fires a
+		// guaranteed second 401.
+		vi.mocked(recordLocalCompletion)
+			.mockResolvedValueOnce({
+				status: 'failed',
+				isNewStandardBest: false,
+				inMemoryStats: {
+					schemaVersion: 1,
+					puzzleId: TEST_PUZZLE_ID,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: Date.now(),
+					lastRecordedRunId: TEST_RUN_ID,
+					recordedRunIds: [TEST_RUN_ID]
+				},
+				reason: 'storage_error'
+			})
+			.mockResolvedValueOnce({
+				status: 'recorded',
+				isNewStandardBest: false,
+				stats: {
+					schemaVersion: 1,
+					puzzleId: TEST_PUZZLE_ID,
+					standardBestTime: 42,
+					standardBestCompletedAt: Date.now(),
+					totalCompletions: 1,
+					lastCompletedAt: Date.now(),
+					lastRecordedRunId: TEST_RUN_ID,
+					recordedRunIds: [TEST_RUN_ID]
+				}
+			});
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(401, 'unauthorized', 'Unauthorized')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		// Sign-in note + local-save retry are both offered; the first
+		// submission already 401'd once.
+		await expect.element(page.getByTestId('completion-sign-in-note')).toBeVisible();
+		await expect.element(page.getByTestId('retry-server-submission')).toBeVisible();
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+		await page.getByTestId('retry-server-submission').click();
+
+		// Flush the async handleLocalStatsEffect retry + acknowledge.
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(2);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 	});
 
 	it('checkpoints the session to storage when serializeSession returns a snapshot', async () => {

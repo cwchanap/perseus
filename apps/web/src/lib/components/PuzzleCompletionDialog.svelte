@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { modalFocus } from '$lib/actions/modalFocus';
+	import { imageStatus } from '$lib/actions/imageStatus';
+	import type { ImageStatusState } from '$lib/actions/imageStatus';
 	import { formatTime } from '$lib/stores/timer';
 	import type { ResultClass } from '@perseus/types';
+	import type { CompletionEffectState } from '@perseus/game-core';
 	import type { CompletionAwards } from '$lib/types/puzzle';
 
 	const ACHIEVEMENT_LABELS: Record<string, string> = {
@@ -41,8 +44,13 @@
 		rotationUsed: boolean;
 		bestTime: number | null;
 		isNewBest: boolean;
-		localStatsFailed: boolean;
-		serverSubmissionRetryable: boolean;
+		// The two sealed completion effect states arrive verbatim (not as
+		// pre-flattened booleans) so combined outcomes stay representable — an
+		// unauthorized server failure alongside a failed local save must show
+		// BOTH the sign-in note and a retry that re-runs the local write.
+		localStats: CompletionEffectState | null;
+		serverSubmission: CompletionEffectState | null;
+		playerAuthenticated: boolean;
 		awards?: CompletionAwards;
 		onRetryServerSubmission: () => void;
 		onPlayAgain: () => void;
@@ -62,8 +70,9 @@
 		rotationUsed,
 		bestTime,
 		isNewBest,
-		localStatsFailed,
-		serverSubmissionRetryable,
+		localStats,
+		serverSubmission,
+		playerAuthenticated,
 		awards,
 		onRetryServerSubmission,
 		onPlayAgain,
@@ -81,6 +90,14 @@
 	// unchecked '' used to render fallback art next to a VIEW ARTWORK button
 	// that opened a broken <img src="">).
 	const artworkUrl = $derived(referenceImageUrl || null);
+
+	// Image load status for the two artwork surfaces. The imageStatus action
+	// reports its initial value on mount, so switching subviews (which
+	// remounts each image) re-syncs these without stale flags, and a changed
+	// URL recovers from a prior failure. Images stay mounted while
+	// pending/error, hidden with opacity, so lazy loading and recovery work.
+	let previewImageState = $state<ImageStatusState>('pending');
+	let artworkImageState = $state<ImageStatusState>('pending');
 
 	// If the reference disappears while the artwork subview is open, fall
 	// back to results; otherwise the focused BACK control is destroyed, focus
@@ -106,6 +123,50 @@
 	const rotationSummary = $derived(
 		`${rotationEnabled ? 'ON' : 'OFF'} · ${rotationUsed ? 'USED' : 'NOT USED'}`
 	);
+
+	const localStatsSaved = $derived(localStats?.status === 'succeeded');
+	const localStatsFailed = $derived(localStats?.status === 'failed');
+	const serverPending = $derived(serverSubmission?.status === 'pending');
+	// Sign-in guidance only applies while the player is actually signed out:
+	// a 401 against an authenticated session (expired cookie, stale tab)
+	// must not tell a signed-in player to sign in — it needs the retry.
+	const serverRequiresSignIn = $derived(
+		serverSubmission?.status === 'failed' &&
+			serverSubmission.code === 'unauthorized' &&
+			!playerAuthenticated
+	);
+	// retry_completion_effects re-runs EVERY failed retryable effect — a
+	// failed local write as well as the server submission — so the retry
+	// affordance must stay reachable while either can still succeed,
+	// including under the sign-in note.
+	const serverRetryable = $derived(
+		serverSubmission?.status === 'failed' && serverSubmission.retryable && !serverRequiresSignIn
+	);
+	const showSyncRetry = $derived(serverRetryable || localStatsFailed);
+
+	let dialogBox = $state<HTMLElement | null>(null);
+
+	function handleSyncRetry() {
+		// The retry replaces this button (with the pending note or nothing),
+		// which would drop focus to <body> — killing the backdrop Escape
+		// handler and the Tab trap. Land focus on the dialog container first.
+		dialogBox?.focus();
+		onRetryServerSubmission();
+	}
+
+	// An automatic retry_completion_effects dispatch (e.g. an auth
+	// transition while the dialog is open) also removes the retry control —
+	// without going through handleSyncRetry. If that control held focus,
+	// the unmount drops focus to <body> and the backdrop's Escape
+	// delegation dies, so land it back on the dialog container.
+	let syncRetryWasShown = false;
+	$effect(() => {
+		const shown = showSyncRetry;
+		if (syncRetryWasShown && !shown && dialogBox && !dialogBox.contains(document.activeElement)) {
+			dialogBox.focus();
+		}
+		syncRetryWasShown = shown;
+	});
 </script>
 
 <div
@@ -120,6 +181,7 @@
 		aria-modal="true"
 		aria-labelledby="modal-title"
 		tabindex="-1"
+		bind:this={dialogBox}
 		use:modalFocus={completionView}
 	>
 		{#if completionView === 'artwork' && artworkUrl !== null}
@@ -128,13 +190,34 @@
 					<div class="modal-tag">// FINISHED ARTWORK</div>
 					<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 				</div>
-				<div class="artwork-image-wrap">
+				<div
+					class="artwork-image-wrap"
+					class:art-stage={artworkImageState !== 'loaded'}
+					class:art-pending={artworkImageState === 'pending'}
+				>
 					<img
 						class="completion-artwork-image"
 						data-testid="completion-artwork-image"
 						src={artworkUrl}
 						alt={`${puzzleName} finished artwork`}
+						class:opacity-0={artworkImageState !== 'loaded'}
+						aria-hidden={artworkImageState === 'error' ? 'true' : null}
+						use:imageStatus={{
+							src: artworkUrl,
+							onStatus: (state) => (artworkImageState = state)
+						}}
 					/>
+					{#if artworkImageState === 'error'}
+						<div
+							class="completion-reference-fallback"
+							data-testid="completion-artwork-unavailable"
+							role="img"
+							aria-label="Finished artwork unavailable"
+						>
+							<span>FINISHED ART</span>
+							<strong>REFERENCE UNAVAILABLE</strong>
+						</div>
+					{/if}
 				</div>
 				<div class="artwork-actions">
 					<button
@@ -151,12 +234,34 @@
 			<div class="completion-layout">
 				<div class="completion-art-column">
 					{#if artworkUrl}
-						<img
-							class="completion-reference-art"
-							data-testid="completion-reference-art"
-							src={artworkUrl}
-							alt={`${puzzleName} finished artwork`}
-						/>
+						<!-- The wrapper owns the existing responsive width/aspect frame;
+						     the img fills it, and the wrapper hosts the pending pulse
+						     and the error fallback over that same frame. -->
+						<div class="completion-art-frame" class:art-pending={previewImageState === 'pending'}>
+							<img
+								class="completion-reference-art"
+								data-testid="completion-reference-art"
+								src={artworkUrl}
+								alt={`${puzzleName} finished artwork`}
+								class:opacity-0={previewImageState !== 'loaded'}
+								aria-hidden={previewImageState === 'error' ? 'true' : null}
+								use:imageStatus={{
+									src: artworkUrl,
+									onStatus: (state) => (previewImageState = state)
+								}}
+							/>
+							{#if previewImageState === 'error'}
+								<div
+									class="completion-reference-fallback"
+									data-testid="completion-preview-unavailable"
+									role="img"
+									aria-label="Finished artwork unavailable"
+								>
+									<span>FINISHED ART</span>
+									<strong>REFERENCE UNAVAILABLE</strong>
+								</div>
+							{/if}
+						</div>
 					{:else}
 						<div
 							class="completion-reference-fallback"
@@ -210,7 +315,7 @@
 										{formatTime(displayedBestTime)}
 									</span>
 									{#if displayedIsNewBest}
-										{#if localStatsFailed && !serverPersonalBest}
+										{#if !localStatsSaved && !serverPersonalBest}
 											<span class="new-record-badge unsaved" data-testid="new-best-unsaved"
 												>UNSAVED</span
 											>
@@ -325,15 +430,39 @@
 							{/if}
 						</div>
 
-						{#if serverSubmissionRetryable}
+						{#if serverRequiresSignIn}
+							<div class="modal-server-retry" role="alert" data-testid="completion-sign-in-note">
+								<span class="server-retry-label server-sync-note-title">SIGN IN TO SYNC</span>
+								<span class="server-sync-help">
+									{#if localStatsSaved}
+										Saved on this device. Sign in, then reopen this same puzzle to retry syncing
+										before playing again.
+									{:else if localStatsFailed}
+										Local save failed. Sign in, then reopen this same puzzle to retry saving and
+										syncing before playing again.
+									{:else}
+										Saving on this device. Sign in, then reopen this same puzzle to retry syncing
+										before playing again.
+									{/if}
+								</span>
+							</div>
+						{/if}
+						{#if serverPending}
+							<div class="modal-server-retry" role="status" data-testid="server-sync-pending">
+								<span class="server-retry-label server-sync-note-title">SYNCING RESULT…</span>
+							</div>
+						{/if}
+						{#if showSyncRetry}
 							<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
-								<span class="server-retry-label">MISSION SYNC FAILED</span>
+								<span class="server-retry-label"
+									>{serverRetryable ? 'MISSION SYNC FAILED' : 'LOCAL SAVE FAILED'}</span
+								>
 								<button
-									onclick={onRetryServerSubmission}
+									onclick={handleSyncRetry}
 									class="arcade-btn-ghost"
 									data-testid="retry-server-submission"
 								>
-									RETRY SYNC
+									{serverRetryable ? 'RETRY SYNC' : 'RETRY SAVE'}
 								</button>
 							</div>
 						{/if}
@@ -390,7 +519,7 @@
 		min-width: 0;
 	}
 
-	.completion-reference-art,
+	.completion-art-frame,
 	.completion-reference-fallback {
 		width: min(100%, 230px);
 		aspect-ratio: 3 / 4;
@@ -401,10 +530,17 @@
 			0 16px 40px rgba(0, 0, 0, 0.55);
 	}
 
-	.completion-reference-art {
+	/* The img FILLS the frame; the wrapper owns the responsive width + aspect.
+	   Sizing from the img itself collapsed the frame to 0 while pending: the
+	   img's min(100%, …) is cyclic inside a shrink-to-fit wrapper, so an
+	   undecoded image reserves nothing. */
+	.completion-art-frame .completion-reference-art {
+		width: 100%;
+		height: 100%;
 		display: block;
 		background: var(--bg-2);
 		object-fit: cover;
+		border-radius: inherit;
 	}
 
 	.completion-reference-fallback {
@@ -430,6 +566,43 @@
 		font-size: 0.55rem;
 		font-weight: 600;
 		letter-spacing: 0.12em;
+	}
+
+	/* Wrapper for a nonempty reference URL: it carries the responsive width
+	   + 3/4 frame (above) and hosts the pending pulse and the error fallback
+	   over that frame. */
+	.completion-art-frame {
+		position: relative;
+	}
+
+	/* Error fallback over a kept-mounted (opacity-hidden) img: fill the
+	   existing frame instead of the in-flow size used by the null-URL case. */
+	.completion-art-frame .completion-reference-fallback {
+		position: absolute;
+		inset: 0;
+		width: auto;
+		height: auto;
+	}
+
+	/* Pending pulse: recognizable gold frame + soft breathing instead of an
+	   inexplicable dark area. */
+	.art-pending {
+		border-radius: 1.25rem;
+		background:
+			radial-gradient(circle at 50% 30%, var(--accent-glow-strong), transparent 48%), var(--bg-2);
+		animation: art-pending-pulse 1.6s ease-in-out infinite;
+	}
+
+	@keyframes art-pending-pulse {
+		50% {
+			opacity: 0.6;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.art-pending {
+			animation: none;
+		}
 	}
 
 	.completion-result-column {
@@ -652,6 +825,18 @@
 		letter-spacing: 0.12em;
 	}
 
+	.server-sync-note-title {
+		color: var(--text-1);
+	}
+
+	.server-sync-help {
+		max-width: 25rem;
+		color: var(--text-2);
+		font-size: 0.75rem;
+		line-height: 1.5;
+		text-align: center;
+	}
+
 	@media (min-width: 900px) {
 		.modal-box {
 			width: min(calc(100% - 2rem), 84rem);
@@ -663,7 +848,7 @@
 			gap: clamp(2rem, 4vw, 2.75rem);
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 396px;
 		}
@@ -684,7 +869,7 @@
 			gap: 3.5rem;
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 504px;
 		}
@@ -760,7 +945,7 @@
 		align-items: flex-start;
 	}
 
-	.completion-reference-art,
+	.completion-art-frame,
 	.completion-reference-fallback {
 		width: min(100%, 235px);
 		border-radius: 1.2rem;
@@ -946,7 +1131,7 @@
 			grid-row: auto;
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 396px;
 		}
@@ -1009,7 +1194,7 @@
 			width: min(100%, 1128px);
 		}
 
-		.completion-reference-art,
+		.completion-art-frame,
 		.completion-reference-fallback {
 			width: 512px;
 		}
@@ -1134,7 +1319,9 @@
 
 	/* The wrapper absorbs the flex stretch; the img inside sizes to its own
 	   aspect ratio (max-width/max-height contain-fit), so a wide image is
-	   never letterboxed with dark bars inside the gold frame. */
+	   never letterboxed with dark bars inside the gold frame. While the image
+	   is pending/errored the wrap becomes a bounded, nonzero placeholder
+	   stage — the auto-sized img alone reserves nothing before decode. */
 	.artwork-image-wrap {
 		flex: 1 1 auto;
 		min-height: 0;
@@ -1142,6 +1329,26 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	.artwork-image-wrap.art-stage {
+		position: relative;
+		flex: 0 0 auto;
+		width: min(100%, 230px);
+		aspect-ratio: 3 / 4;
+		border-radius: 1.25rem;
+		box-shadow: var(--gold-frame);
+	}
+
+	/* Full-artwork error fallback overlays the bounded stage (as the preview's
+	   fallback overlays its frame) instead of sharing the stage as a second
+	   flex item beside the kept-mounted, opacity-hidden image. Higher
+	   specificity than the breakpoint width rules on the fallback class. */
+	.artwork-image-wrap.art-stage .completion-reference-fallback {
+		position: absolute;
+		inset: 0;
+		width: auto;
+		height: auto;
 	}
 
 	.completion-artwork-image {

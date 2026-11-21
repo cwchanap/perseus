@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/test';
@@ -9,7 +9,16 @@ import {
 	getFixture,
 	type GameplayFixtureId
 } from './gameplay-fixtures/catalog';
-import { createFixtureRouter } from './gameplay-fixtures/fixture-router';
+import {
+	createFixtureRouter,
+	FIXTURE_ROUTER_HEADER,
+	FIXTURE_ROUTER_SOURCE
+} from './gameplay-fixtures/fixture-router';
+import {
+	createImageHoldController,
+	type ImageHoldController
+} from './gameplay-fixtures/image-hold';
+import { createPageDiagnostics, type PageDiagnostics } from './support/diagnostics';
 import {
 	buildMinimalSeed,
 	createPersistedStateController,
@@ -75,6 +84,17 @@ async function mockFamilyList(page: Page, families: PuzzleFamilySummary[]) {
 
 async function mockPuzzleDetail(page: Page, puzzle: { id: string }) {
 	await page.route(`**/api/puzzles/${puzzle.id}`, (route) => route.fulfill({ json: puzzle }));
+}
+
+const GALLERY_THUMBNAIL_SVG =
+	'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
+	'<rect width="64" height="64" fill="#385" /></svg>';
+
+/** Serve a decodable SVG for one family thumbnail (the plain success route). */
+async function mockFamilyThumbnail(page: Page, familyId: string) {
+	await page.route(new RegExp(`/api/puzzle-families/${familyId}/thumbnail(?:\\?.*)?$`), (route) =>
+		route.fulfill({ contentType: 'image/svg+xml', body: GALLERY_THUMBNAIL_SVG })
+	);
 }
 
 // Plant the frozen gameplay config global for a fixture so a navigation into
@@ -707,5 +727,457 @@ test.describe('Main Gallery Page', () => {
 
 		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
 		await expect.poll(() => callCount).toBe(2);
+	});
+});
+
+test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
+	// @smoke scopes this whole block: it is the CI smoke gate (desktop +
+	// mobile), so these HPA-1029 regressions cannot silently drop out of the
+	// automatic lane the way untagged gallery tests do. No unrelated gallery
+	// test is tagged.
+	// The Gallery family thumbnail is NOT under the gameplay fixture namespace,
+	// so gameplayPage.assertSettled() is a no-op here. The Gallery tests own
+	// their diagnostics and hold cleanup: every test attaches page diagnostics
+	// (so unrelated console/page/request/response failures stay fatal) and
+	// declares its intentional image failures (exact URL/method/status/
+	// provenance), disposes its routes in finally, and the afterEach guard
+	// asserts no image hold was left pending and no unexpected error occurred
+	// (belt and suspenders — dispose() unroutes, assertClean() reports a
+	// forgotten release even after a route is gone).
+	let activeHolds: ImageHoldController | null = null;
+	let activeDiagnostics: PageDiagnostics | null = null;
+
+	test.afterEach(() => {
+		activeHolds?.assertClean();
+		activeDiagnostics?.assertNoUnexpectedErrors();
+		activeDiagnostics?.assertNoUnexpectedFixtureRequests();
+		activeHolds = null;
+		activeDiagnostics = null;
+	});
+
+	// Real catalog fixtures for card navigation: the fixture router serves
+	// their full puzzle payload with provenance, so navigating into a card is
+	// fully controlled — never dependent on the real backend.
+	const CARD_FIXTURE_A: GameplayFixtureId = 'e2e2b000-0000-4000-8000-000000000012';
+
+	/** Attach page diagnostics to this test and register it for teardown. */
+	function attachDiagnostics(page: Page): PageDiagnostics {
+		const diagnostics = createPageDiagnostics(page);
+		activeDiagnostics = diagnostics;
+		return diagnostics;
+	}
+
+	const FAMILY_A = '00000000-0000-4000-8000-000000000c02';
+	const FAMILY_B = '00000000-0000-4000-8000-000000000c03';
+	const CONTINUE_FAMILY = '00000000-0000-4000-8000-000000000d01';
+	const CONTINUE_EASY_VARIANT = '00000000-0000-4000-8000-000000000d11';
+	const CONTINUE_B_FAMILY = '00000000-0000-4000-8000-000000000d02';
+	const CONTINUE_B_EASY_VARIANT = '00000000-0000-4000-8000-000000000d21';
+
+	function thumbnailPattern(familyId: string): RegExp {
+		return new RegExp(`/api/puzzle-families/${familyId}/thumbnail(?:\\?.*)?$`);
+	}
+
+	async function decodedWidth(img: ReturnType<Page['locator']>): Promise<number> {
+		return img.evaluate((el) => (el as HTMLImageElement).naturalWidth);
+	}
+
+	/** Declare one intentional family-thumbnail failure (GET + exact status). */
+	function declareThumbnailFailure(diagnostics: PageDiagnostics, familyId: string): void {
+		diagnostics.setDeclaredImageFailures([
+			{ url: thumbnailPattern(familyId), method: 'GET', status: 404, outcome: 'status' }
+		]);
+	}
+
+	/**
+	 * Wait for the declared thumbnail failure: exact URL, GET method, and the
+	 * fixture-router provenance marker (a real-backend answer cannot match).
+	 */
+	function declaredThumbnailFailure(page: Page, familyId: string): Promise<Response> {
+		return page.waitForResponse(
+			(response) =>
+				thumbnailPattern(familyId).test(response.url()) &&
+				response.request().method() === 'GET' &&
+				response.headers()[FIXTURE_ROUTER_HEADER] === FIXTURE_ROUTER_SOURCE
+		);
+	}
+
+	test('held card thumbnail shows Loading…, then loads decoded after release', async ({ page }) => {
+		const diagnostics = attachDiagnostics(page);
+		const family = makeFamily(FAMILY_A, { name: 'Hold Thumbnail' });
+		await mockFamilyList(page, [family]);
+		const images = createImageHoldController();
+		activeHolds = images;
+		try {
+			const handle = await images.installImageUrl(page, thumbnailPattern(FAMILY_A));
+
+			await page.goto('/');
+			const card = page.getByTestId('puzzle-card');
+			await expect(card).toHaveCount(1);
+			const cardImg = card.locator('img');
+			const placeholder = card.getByTestId('puzzle-card-art-placeholder');
+
+			// Held request: the card shows the pending placeholder and the <img>
+			// reports pending with no decoded pixels.
+			await expect.poll(() => handle.pendingCount).toBe(1);
+			await expect(placeholder).toBeVisible();
+			await expect(placeholder).toContainText('Loading…');
+			await expect(cardImg).toHaveAttribute('data-image-state', 'pending');
+			expect(await decodedWidth(cardImg)).toBe(0);
+
+			await handle.release();
+
+			await expect(cardImg).toHaveAttribute('data-image-state', 'loaded');
+			await expect.poll(() => decodedWidth(cardImg)).toBeGreaterThan(0);
+			await expect(placeholder).toHaveCount(0);
+		} finally {
+			await images.dispose();
+			diagnostics.dispose();
+		}
+	});
+
+	test('failed card thumbnail shows an explicit No preview state, asserts the exact 404, and still navigates', async ({
+		page
+	}) => {
+		const diagnostics = attachDiagnostics(page);
+		const family = makeFamily(FAMILY_A, {
+			name: 'Failed Thumbnail',
+			// The easy variant is a real catalog fixture: the fixture router
+			// serves its puzzle payload with provenance, so the navigation below
+			// is fully controlled — the real backend is never consulted.
+			variants: {
+				easy: { id: CARD_FIXTURE_A, difficulty: 'easy', pieceCount: 12, status: 'ready' },
+				normal: {
+					id: `${FAMILY_A}-normal`,
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: `${FAMILY_A}-hard`,
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
+		await mockFamilyList(page, [family]);
+		await createFixtureRouter().install(page);
+		await plantGameplayConfig(page, CARD_FIXTURE_A);
+		const images = createImageHoldController();
+		activeHolds = images;
+		try {
+			await images.installImageUrl(page, thumbnailPattern(FAMILY_A), { failStatus: 404 });
+			declareThumbnailFailure(diagnostics, FAMILY_A);
+
+			// Assert the exact intentional negative: the declared thumbnail URL
+			// really answered GET 404 with fixture-router provenance (not a
+			// network error, another method, or a real-backend answer).
+			const thumbnail404 = declaredThumbnailFailure(page, FAMILY_A);
+
+			await page.goto('/');
+			const card = page.getByTestId('puzzle-card');
+			await expect(card).toHaveCount(1);
+			const cardImg = card.locator('img');
+			const placeholder = card.getByTestId('puzzle-card-art-placeholder');
+
+			expect((await thumbnail404).status()).toBe(404);
+			await expect(placeholder).toBeVisible();
+			await expect(placeholder).toContainText('No preview');
+			await expect(cardImg).toHaveAttribute('data-image-state', 'error');
+			expect(await decodedWidth(cardImg)).toBe(0);
+
+			// A failed preview is presentation-only: card navigation still works
+			// and lands on the fixture-served puzzle page.
+			const easyLink = page
+				.locator('[data-testid="difficulty-action"][data-difficulty="easy"]')
+				.first();
+			await expect(easyLink).toBeVisible();
+			await easyLink.click();
+			await expect(page).toHaveURL(new RegExp(`/puzzle/${CARD_FIXTURE_A}`));
+			// Fresh fixture entry presents the mandatory Mission Setup dialog —
+			// proof the puzzle page actually loaded (not just a URL change).
+			await expect(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+		} finally {
+			await images.dispose();
+			diagnostics.dispose();
+		}
+	});
+
+	test('replaces a failed card thumbnail when returning to an updated catalog without a reload', async ({
+		page
+	}) => {
+		const diagnostics = attachDiagnostics(page);
+		const familyA = makeFamily(FAMILY_A, {
+			name: 'Changed Thumbnail A',
+			// The easy variant is a real catalog fixture: the fixture router
+			// serves its puzzle payload with provenance, so leaving through the
+			// card is fully controlled — no backend-dependent error panel.
+			variants: {
+				easy: { id: CARD_FIXTURE_A, difficulty: 'easy', pieceCount: 12, status: 'ready' },
+				normal: {
+					id: `${FAMILY_A}-normal`,
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: `${FAMILY_A}-hard`,
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
+		const familyB = makeFamily(FAMILY_B, { name: 'Changed Thumbnail B' });
+		await mockFamilyList(page, [familyA]);
+		await mockFamilyThumbnail(page, FAMILY_B);
+		await createFixtureRouter().install(page);
+		await plantGameplayConfig(page, CARD_FIXTURE_A);
+		const images = createImageHoldController();
+		activeHolds = images;
+		try {
+			await images.installImageUrl(page, thumbnailPattern(FAMILY_A), { failStatus: 404 });
+			declareThumbnailFailure(diagnostics, FAMILY_A);
+
+			await page.goto('/');
+			const card = page.getByTestId('puzzle-card');
+			await expect(card).toHaveCount(1);
+			const cardImg = card.locator('img');
+			await expect(card.getByTestId('puzzle-card-art-placeholder')).toContainText('No preview');
+			await expect(cardImg).toHaveAttribute('data-image-state', 'error');
+
+			// The failure is asserted — retire the declaration so any NEW
+			// failure (including a spurious repeat of A's 404) stays fatal.
+			diagnostics.setDeclaredImageFailures([]);
+
+			// A full reload would reset this marker; recovery must keep it set.
+			await page.evaluate(() => {
+				(window as unknown as { __galleryNoReload?: boolean }).__galleryNoReload = true;
+			});
+
+			// The catalog changes: the family list now returns family B. Leave
+			// through family A's card — the fixture router serves its puzzle page
+			// (controlled) — and return via browser history: SPA navigation, so
+			// the gallery load re-runs without a full reload and the keyed card
+			// list mounts family B's card with its (working) URL.
+			await mockFamilyList(page, [familyB]);
+			const easyLink = page
+				.locator('[data-testid="difficulty-action"][data-difficulty="easy"]')
+				.first();
+			await easyLink.click();
+			await expect(page).toHaveURL(new RegExp(`/puzzle/${CARD_FIXTURE_A}`));
+			await expect(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+			await page.goBack();
+
+			await expect(page).toHaveURL(/\/$/);
+			await expect(page.getByTestId('puzzle-card')).toHaveCount(1);
+			await expect(page.getByTestId('puzzle-card-title')).toHaveText('Changed Thumbnail B');
+			await expect(cardImg).toHaveAttribute('data-image-state', 'loaded');
+			await expect.poll(() => decodedWidth(cardImg)).toBeGreaterThan(0);
+			await expect(page.getByTestId('puzzle-card-art-placeholder')).toHaveCount(0);
+
+			expect(
+				await page.evaluate(
+					() => (window as unknown as { __galleryNoReload?: boolean }).__galleryNoReload
+				)
+			).toBe(true);
+		} finally {
+			await images.dispose();
+			diagnostics.dispose();
+		}
+	});
+
+	test('continue-on-device art stays silent while held, then loads decoded after release', async ({
+		page
+	}) => {
+		const diagnostics = attachDiagnostics(page);
+		const family = makeFamily(CONTINUE_FAMILY, {
+			name: 'Continue Art',
+			variants: {
+				easy: {
+					id: CONTINUE_EASY_VARIANT,
+					difficulty: 'easy',
+					pieceCount: 16,
+					status: 'ready'
+				},
+				normal: {
+					id: '00000000-0000-4000-8000-000000000d12',
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: '00000000-0000-4000-8000-000000000d13',
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
+		await mockFamilyList(page, [family]);
+		const images = createImageHoldController();
+		activeHolds = images;
+		try {
+			const handle = await images.installImageUrl(page, thumbnailPattern(CONTINUE_FAMILY));
+
+			await page.goto('/');
+			// Seeded progress surfaces the continue panel; the reload re-runs the
+			// load against the same mocks (routes live on the page across reloads).
+			await seedApiVariantProgress(page, CONTINUE_EASY_VARIANT, '1:1', 16);
+			// The first load's gallery card already requests this same thumbnail
+			// URL. Under trace/mobile overhead that pre-reload request is captured
+			// before page.reload() tears the document down, and its stale route
+			// entry survives into the hold (count 2 instead of 1). Drain the first
+			// load deterministically — wait for the card's capture, release it —
+			// so the count below is exactly the post-reload request on every run.
+			await expect.poll(() => handle.pendingCount).toBe(1);
+			await handle.release();
+			// DOM content only: the reload re-issues the continue-art request
+			// into the hold, and an eager <img> in flight before 'load' would
+			// stall the reload past the timeout before release can run.
+			await page.reload({ waitUntil: 'domcontentloaded' });
+
+			const panel = page.getByTestId('continue-on-device');
+			await expect(panel).toBeVisible();
+			// Decorative art: held silently behind the text overlay — the panel
+			// content itself stays fully visible.
+			const continueArt = panel.locator('img.continue-art');
+			await expect.poll(() => handle.pendingCount).toBe(1);
+			await expect(continueArt).toHaveAttribute('data-image-state', 'pending');
+			await expect(panel.locator('#continue-on-device-title')).toBeVisible();
+
+			await handle.release();
+
+			await expect(continueArt).toHaveAttribute('data-image-state', 'loaded');
+			await expect.poll(() => decodedWidth(continueArt)).toBeGreaterThan(0);
+			await expect(panel.locator('#continue-on-device-title')).toBeVisible();
+		} finally {
+			await images.dispose();
+			diagnostics.dispose();
+		}
+	});
+
+	test('changed continue-on-device art URL recovers from a prior failure without a reload', async ({
+		page
+	}) => {
+		const diagnostics = attachDiagnostics(page);
+		const familyA = makeFamily(CONTINUE_FAMILY, {
+			name: 'Continue Fail A',
+			variants: {
+				easy: {
+					id: CONTINUE_EASY_VARIANT,
+					difficulty: 'easy',
+					pieceCount: 16,
+					status: 'ready'
+				},
+				normal: {
+					id: '00000000-0000-4000-8000-000000000d12',
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: '00000000-0000-4000-8000-000000000d13',
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
+		const familyB = makeFamily(CONTINUE_B_FAMILY, {
+			name: 'Continue Ok B',
+			variants: {
+				easy: {
+					id: CONTINUE_B_EASY_VARIANT,
+					difficulty: 'easy',
+					pieceCount: 16,
+					status: 'ready'
+				},
+				normal: {
+					id: '00000000-0000-4000-8000-000000000d22',
+					difficulty: 'normal',
+					pieceCount: 49,
+					status: 'ready'
+				},
+				hard: {
+					id: '00000000-0000-4000-8000-000000000d23',
+					difficulty: 'hard',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			}
+		});
+		await mockFamilyList(page, [familyA, familyB]);
+		const images = createImageHoldController();
+		activeHolds = images;
+		try {
+			await images.installImageUrl(page, thumbnailPattern(CONTINUE_FAMILY), { failStatus: 404 });
+			declareThumbnailFailure(diagnostics, CONTINUE_FAMILY);
+			const handleB = await images.installImageUrl(page, thumbnailPattern(CONTINUE_B_FAMILY));
+
+			await page.goto('/', { waitUntil: 'domcontentloaded' });
+			// Two saved sessions: family A is newest (its thumbnail 404s), family
+			// B is the next-newest whose held thumbnail proves update() resets
+			// the mounted img back to pending before loading.
+			await seedApiVariantProgress(page, CONTINUE_EASY_VARIANT, '1:1', 16, {
+				lastUpdated: 3_000
+			});
+			await seedApiVariantProgress(page, CONTINUE_B_EASY_VARIANT, '1:1', 16, {
+				lastUpdated: 2_000
+			});
+			await page.reload({ waitUntil: 'domcontentloaded' });
+
+			const panel = page.getByTestId('continue-on-device');
+			const continueArt = panel.locator('img.continue-art');
+			await expect(panel).toContainText('Continue Fail A');
+			// The failed decorative art stays silent (no caption) but the <img>
+			// reports the failure with no decoded pixels.
+			await expect(continueArt).toHaveAttribute('data-image-state', 'error');
+			expect(await decodedWidth(continueArt)).toBe(0);
+
+			// The failure is asserted — retire the declaration so any NEW
+			// failure (including a spurious repeat of A's 404) stays fatal.
+			diagnostics.setDeclaredImageFailures([]);
+
+			// A full reload would reset this marker; the recovery must keep it.
+			await page.evaluate(() => {
+				(window as unknown as { __galleryNoReload?: boolean }).__galleryNoReload = true;
+			});
+			await continueArt.evaluate((el) => {
+				(el as HTMLImageElement).dataset.urlChangeProbe = 'mounted';
+			});
+
+			// Discarding the newest save promotes family B: resumeImageUrl swaps
+			// to B's URL through the Svelte prop on the SAME <img> element,
+			// exercising imageStatus.update() (error -> pending -> loaded).
+			await page.getByTestId('continue-secondary-toggle').click();
+			await page.getByRole('button', { name: 'Discard saved progress' }).click();
+			await page
+				.getByRole('dialog', { name: 'Discard saved progress' })
+				.getByRole('button', { name: 'Discard' })
+				.click();
+
+			await expect(panel).toContainText('Continue Ok B');
+			await expect(continueArt).toHaveAttribute('data-image-state', 'pending');
+			expect(await continueArt.getAttribute('data-url-change-probe')).toBe('mounted');
+			await expect.poll(() => handleB.pendingCount).toBeGreaterThanOrEqual(1);
+			await expect
+				.poll(async () => {
+					await handleB.release();
+					return decodedWidth(continueArt);
+				})
+				.toBeGreaterThan(0);
+
+			await expect(continueArt).toHaveAttribute('data-image-state', 'loaded');
+			expect(
+				await page.evaluate(
+					() => (window as unknown as { __galleryNoReload?: boolean }).__galleryNoReload
+				)
+			).toBe(true);
+		} finally {
+			await images.dispose();
+			diagnostics.dispose();
+		}
 	});
 });

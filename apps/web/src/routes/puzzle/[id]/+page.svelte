@@ -69,6 +69,10 @@
 	// finished board for this long before opening results. Presentation only —
 	// completion effects are dispatched immediately by the engine's events.
 	const COMPLETION_REVEAL_DURATION_MS = 500;
+	// An unbounded completion POST would leave SYNCING RESULT on screen
+	// forever on a hung connection; a timeout maps to a retryable
+	// network_error through mapCompletionError.
+	const COMPLETION_SUBMISSION_TIMEOUT_MS = 15_000;
 
 	const sessionStorageAdapter = createSessionStorageAdapter();
 	const clock = createDefaultClock();
@@ -159,10 +163,6 @@
 	let restartConfirmation = $state(false);
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
-	// True when the local stats write failed for the current completion. The
-	// in-memory new-best presentation is still shown, but the persisted-best
-	// wording (NEW RECORD) is suppressed until the write succeeds.
-	let localStatsFailed = $state(false);
 	let completionAwards = $state<CompletionAwards | undefined>(undefined);
 	let showFamilyLeaderboard = $state(false);
 	let activeLoadRequestId = 0;
@@ -273,14 +273,8 @@
 	const activeReferenceMode = $derived(sessionState?.activeReferenceMode ?? null);
 	const referenceActive = $derived(activeReferenceMode !== null);
 	const referenceToggled = $derived(activeReferenceMode === 'toggle');
-	// A retryable server-submission failure surfaces a manual retry affordance
-	// in the celebration modal. The engine's retry_completion_effects action
-	// re-emits the server_submission effect request, which re-runs
-	// recordCompletion through handleServerSubmissionEffect.
-	const serverSubmissionRetryable = $derived.by(() => {
-		const submission = sessionState?.sealedCompletion?.serverSubmission;
-		return submission?.status === 'failed' && submission.retryable === true;
-	});
+	// The sealed completion effect states are passed to the dialog verbatim;
+	// the modal decides save/sync presentation from them plus auth status.
 	const timerState = $derived<TimerState>({
 		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
 		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
@@ -496,15 +490,11 @@
 			puzzle?.id === originPuzzleId && sessionState?.sealedCompletion?.runId === originRunId;
 
 		if (stillActiveRun) {
-			if (result.status === 'failed') {
-				isNewBest = result.isNewStandardBest;
-				bestTime = result.inMemoryStats.standardBestTime;
-				localStatsFailed = true;
-			} else {
-				isNewBest = result.isNewStandardBest;
-				bestTime = result.stats.standardBestTime;
-				localStatsFailed = false;
-			}
+			isNewBest = result.isNewStandardBest;
+			bestTime =
+				result.status === 'failed'
+					? result.inMemoryStats.standardBestTime
+					: result.stats.standardBestTime;
 			// Do not independently reopen the celebration modal here. The
 			// completion_sealed and lifecycle->completed events already open
 			// it when the run seals. Reopening on the local-stats resolution
@@ -536,7 +526,11 @@
 		// unconditionally so the engine reconciles the effect either way.
 		const originPuzzleId = puzzle.id;
 		try {
-			const awards = await recordCompletion(puzzle.id, completionRequestFromSeal(seal));
+			const awards = await recordCompletion(
+				puzzle.id,
+				completionRequestFromSeal(seal),
+				AbortSignal.timeout(COMPLETION_SUBMISSION_TIMEOUT_MS)
+			);
 			// The server may now hold clears the loaded account snapshot
 			// predates (e.g. the local stats write failed but this POST
 			// landed). Invalidate so the next Gallery/Bookmarks load()
@@ -564,14 +558,17 @@
 	}
 
 	function handleRetryServerSubmission() {
-		// Re-emits any retryable-failed completion effects (here, the server
-		// submission). The engine resets the effect to pending and fires a new
-		// completion_effect_request, which handleServerSubmissionEffect picks
-		// up. includeUnauthorized lets an explicit user retry attempt an
-		// unauthorized submission (e.g. after the user logs in).
+		// Re-emits every retryable-failed completion effect — a failed local
+		// stats write as well as the server submission. The engine resets
+		// each to pending and fires a new completion_effect_request, picked
+		// up by handleLocalStatsEffect / handleServerSubmissionEffect.
+		// includeUnauthorized only while authenticated: for a signed-out
+		// player the dialog offers this button only to salvage the local
+		// write (RETRY SAVE under the sign-in note), and re-emitting the
+		// unauthorized submission would fire a guaranteed second 401.
 		sessionStore?.dispatch({
 			type: 'retry_completion_effects',
-			includeUnauthorized: true
+			includeUnauthorized: prevAuthStatus === 'authenticated'
 		});
 	}
 
@@ -762,7 +759,6 @@
 			clearPlacementFeedback();
 			bestTime = getBestTime(id);
 			isNewBest = false;
-			localStatsFailed = false;
 
 			// Construct the session store. Runtime gameplay dependencies (run-id
 			// factory, tray order, rotations) are sourced from the gameplay runtime
@@ -1305,7 +1301,6 @@
 		showCelebration = false;
 		clearCompletionReveal();
 		isNewBest = false;
-		localStatsFailed = false;
 		// The prior run's awards must not survive into the next run's
 		// celebration (or linger behind a still-pending server submission from
 		// the prior run).
@@ -1626,8 +1621,9 @@
 		rotationUsed={sessionState.sealedCompletion?.rotationUsed ?? sessionState.facts.rotationUsed}
 		{bestTime}
 		{isNewBest}
-		{localStatsFailed}
-		{serverSubmissionRetryable}
+		localStats={sessionState.sealedCompletion?.localStats ?? null}
+		serverSubmission={sessionState.sealedCompletion?.serverSubmission ?? null}
+		playerAuthenticated={$playerAuth.status === 'authenticated'}
 		awards={completionAwards}
 		onRetryServerSubmission={handleRetryServerSubmission}
 		onPlayAgain={handlePlayAgain}

@@ -40,6 +40,13 @@ import {
 	type DeferredHandle
 } from '../gameplay-fixtures/api-scenario';
 import {
+	createImageHoldController,
+	declaredImageFailures,
+	type ImageHoldController,
+	type ImageHoldHandle,
+	type ImageHoldSpec
+} from '../gameplay-fixtures/image-hold';
+import {
 	GAMEPLAY_PREFERENCES_KEY,
 	type GameplayPreferences
 } from '../../src/lib/services/gameplay/session/preferences';
@@ -89,6 +96,14 @@ export interface GotoFixtureOptions {
 	 */
 	completion?: CompletionScenario;
 	/**
+	 * Gameplay fixture image endpoints to hold or fail (HPA-1029). Installed
+	 * AFTER the fixture router so the hold runs first; every fail spec is
+	 * declared to diagnostics, so its exact URL/status/method is expected and
+	 * nothing else is forgiven. Held routes must be released or cancelled
+	 * before the test ends — `assertSettled()` fails teardown otherwise.
+	 */
+	imageHolds?: ImageHoldSpec[];
+	/**
 	 * Expected number of tray pieces once the fixture is ready. Defaults to
 	 * fixture.pieceCount (a full tray). Pass the restored count when
 	 * seedSession already placed pieces, so the ready-state wait matches the
@@ -116,6 +131,10 @@ export class GameplayPage {
 	readonly page: Page;
 	readonly diagnostics: PageDiagnostics;
 	readonly apiController: ApiScenarioController;
+	/** Image hold/fail routes for gameplay fixture images (HPA-1029). */
+	readonly imageHolds: ImageHoldController = createImageHoldController();
+	/** Handle for the image holds installed by the last gotoFixture(), if any. */
+	imageHoldHandle: ImageHoldHandle | null = null;
 	/** Handle for the most recently installed completion scenario, if deferred. */
 	completionHandle: DeferredHandle | null = null;
 	/** Handle for a deferred-session auth persona, if installed. */
@@ -179,6 +198,24 @@ export class GameplayPage {
 
 		// --- Stage 2: route registration ----------------------------------------
 		await this.fixtureRouter.install(this.page);
+		// Image holds (HPA-1029): registered after the router, so Playwright's
+		// reverse-registration order runs the hold FIRST and defers the request;
+		// anything the holds do not claim falls through to the fixture router.
+		if (options.imageHolds?.length) {
+			this.imageHoldHandle = await this.imageHolds.installFixtureImages(
+				this.page,
+				fixtureId,
+				options.imageHolds
+			);
+			// Declare every fail spec so diagnostics expects exactly these
+			// failures (URL, method, status) and nothing else.
+			this.diagnostics.setDeclaredImageFailures(
+				declaredImageFailures(fixtureId, options.imageHolds)
+			);
+		} else {
+			this.imageHoldHandle = null;
+			this.diagnostics.setDeclaredImageFailures([]);
+		}
 		if (options.completion) {
 			this.completionHandle = await this.apiController.install(
 				this.page,
@@ -369,10 +406,16 @@ export class GameplayPage {
 		const targetBox = await target.boundingBox();
 		// Feedback from an earlier drop stays on the target cell for
 		// REJECTED_DURATION_MS (500 ms); waiting for it to detach keeps
-		// awaitPlacementOutcome's verdict tied to this drag.
-		await target
-			.locator('[data-testid="placement-feedback"]')
-			.waitFor({ state: 'detached', timeout: 1000 });
+		// awaitPlacementOutcome's verdict tied to this drag. Under a paused
+		// page clock the clear timer never fires, so this wait can only time
+		// out — surface it with the drag context rather than a bare error.
+		try {
+			await target
+				.locator('[data-testid="placement-feedback"]')
+				.waitFor({ state: 'detached', timeout: 1000 });
+		} catch (error) {
+			throw this.enrichDragError(error, sourceBox, targetBox);
+		}
 
 		if (isDesktopChromiumProject()) {
 			try {
@@ -627,6 +670,7 @@ export class GameplayPage {
 	assertSettled(): void {
 		if (!this.loaded) return;
 		this.apiController.assertClean();
+		this.imageHolds.assertClean();
 		this.assertAuthClean();
 		this.diagnostics.assertNoUnexpectedErrors();
 	}
