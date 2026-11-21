@@ -639,6 +639,242 @@ describe('PuzzleToolbar', () => {
 		expect(tabbableActions()).toHaveLength(1);
 	});
 
+	describe('secondary action labels', () => {
+		// [aria-label, visible label] — the label must remain a substring of
+		// the unchanged accessible name for axe label-content-name-mismatch.
+		const labeledActions: Array<[string, string]> = [
+			['Redo', 'Redo'],
+			['Zoom out', 'Zoom out'],
+			['Zoom in', 'Zoom in'],
+			['Rotation mode', 'Rotation mode'],
+			['Sound effects', 'Sound effects'],
+			['Hold to peek reference', 'Hold to peek'],
+			['Open family leaderboard', 'Leaderboard'],
+			['Open mission setup', 'Mission setup']
+		];
+
+		async function openMore() {
+			(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+			await expect
+				.element(page.getByTestId('puzzle-toolbar-secondary'))
+				.toHaveAttribute('data-open', 'true');
+		}
+
+		it('renders a label inside each secondary action that stays within its accessible name', async () => {
+			renderToolbar({ onSoundToggle: vi.fn(), canOpenLeaderboard: true, canOpenSetup: true });
+			await openMore();
+
+			for (const [accessibleName, labelText] of labeledActions) {
+				const button = await page.getByLabelText(accessibleName).element();
+				const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+				expect(label, `${accessibleName} label`).not.toBeNull();
+				expect(label!.textContent?.trim()).toBe(labelText);
+				expect(accessibleName.toLowerCase()).toContain(labelText.toLowerCase());
+				expect(label!.checkVisibility(), `${accessibleName} label visible`).toBe(true);
+			}
+		});
+
+		it('hides secondary action labels while More is closed on the desktop rail', async () => {
+			await page.viewport(1440, 900);
+			try {
+				renderToolbar({
+					canRedo: true,
+					onSoundToggle: vi.fn(),
+					canOpenLeaderboard: true,
+					canOpenSetup: true
+				});
+
+				// On desktop (>=1024px) .toolbar-secondary[data-open='false'] is
+				// display:contents, so Redo and Rotation mode are visible in the
+				// closed rail while their text labels must stay hidden.
+				for (const railButtonName of ['Redo', 'Rotation mode']) {
+					const railButton = await page.getByLabelText(railButtonName).element();
+					expect(railButton.checkVisibility(), `${railButtonName} rail button visible`).toBe(true);
+				}
+
+				for (const [accessibleName] of labeledActions) {
+					const button = await page.getByLabelText(accessibleName).element();
+					const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+					expect(label, `${accessibleName} label`).not.toBeNull();
+					expect(label!.checkVisibility(), `${accessibleName} label hidden`).toBe(false);
+				}
+			} finally {
+				await page.viewport(414, 896);
+			}
+		});
+
+		it('disables text selection on press-and-hold toolbar buttons and labels', async () => {
+			renderToolbar();
+			await openMore();
+
+			const peekButton = await page.getByLabelText('Hold to peek reference').element();
+			const peekLabel = peekButton.querySelector<HTMLElement>('.toolbar-action-label');
+			expect(peekLabel).not.toBeNull();
+			expect(getComputedStyle(peekButton).userSelect).toBe('none');
+			expect(getComputedStyle(peekLabel!).userSelect).toBe('none');
+		});
+
+		it('does not label primary rail actions', async () => {
+			renderToolbar();
+			await openMore();
+
+			for (const name of ['Hint', 'Toggle reference', 'Undo', 'Reset view']) {
+				const button = await page.getByLabelText(name).element();
+				expect(button.querySelector('.toolbar-action-label')).toBeNull();
+			}
+		});
+
+		it('sets compact open labels in the mono font on wrapping flexible-height buttons', async () => {
+			// layout.css is not loaded for the isolated component render, so
+			// inject sentinel families to prove which custom property is used.
+			const style = document.createElement('style');
+			style.textContent =
+				':root { --font-mono: SentinelMono, monospace; --font-display: SentinelDisplay, serif; }';
+			document.head.appendChild(style);
+			try {
+				renderToolbar();
+				await openMore();
+
+				const button = await page.getByLabelText('Rotation mode').element();
+				const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+				expect(label).not.toBeNull();
+				expect(getComputedStyle(label!).fontFamily.toLowerCase()).toContain('sentinelmono');
+				expect(getComputedStyle(button).whiteSpace).toBe('normal');
+			} finally {
+				style.remove();
+			}
+		});
+
+		it('moves roving focus into the open More panel with ArrowRight', async () => {
+			renderToolbar({ canRedo: true });
+			await openMore();
+
+			const more = (await page
+				.getByLabelText('More puzzle actions')
+				.element()) as HTMLButtonElement;
+			const redo = await page.getByRole('button', { name: 'Redo' }).element();
+
+			more.focus();
+			more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+			expect(document.activeElement).toBe(redo);
+		});
+	});
+
+	describe('rotation lock explanation', () => {
+		async function openMore() {
+			(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+			await expect
+				.element(page.getByTestId('puzzle-toolbar-secondary'))
+				.toHaveAttribute('data-open', 'true');
+		}
+
+		it('explains that unplaced pieces can still rotate when rotation stays enabled', async () => {
+			renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
+			await openMore();
+
+			const reason = document.getElementById('rotation-lock-reason');
+			expect(reason).not.toBeNull();
+			expect(reason!.textContent?.trim()).toBe(
+				'Rotation mode is locked after the first placement; you can still rotate unplaced pieces.'
+			);
+			expect(reason!.checkVisibility()).toBe(true);
+		});
+
+		it('explains that rotation is unavailable when rotation is disabled', async () => {
+			renderToolbar({ rotationEnabled: false, rotationToggleDisabled: true });
+			await openMore();
+
+			const reason = document.getElementById('rotation-lock-reason');
+			expect(reason!.textContent?.trim()).toBe(
+				'Rotation mode is locked after the first placement; piece rotation is unavailable in this run.'
+			);
+			expect(reason!.checkVisibility()).toBe(true);
+		});
+
+		it('stays attached to the disabled rotation button as sr-only while More is closed and unclips when open', async () => {
+			await page.viewport(1440, 900);
+			try {
+				renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
+
+				const rotation = await page.getByLabelText('Rotation mode').element();
+				expect(rotation.getAttribute('aria-describedby')).toBe('rotation-lock-reason');
+				// The sr-only reference still resolves as the button's description —
+				// the clip checks below verify presentation, not what AT receives.
+				await expect
+					.element(page.getByLabelText('Rotation mode'))
+					.toHaveAccessibleDescription(
+						'Rotation mode is locked after the first placement; you can still rotate unplaced pieces.'
+					);
+
+				const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+				const reason = document.getElementById('rotation-lock-reason');
+				expect(reason).not.toBeNull();
+				expect(secondary.contains(reason)).toBe(true);
+
+				// On the closed desktop rail, #rotation-lock-reason stays in the
+				// accessibility tree via sr-only rules instead of display:none.
+				const closedStyle = getComputedStyle(reason!);
+				expect(closedStyle.display).not.toBe('none');
+				expect(closedStyle.position).toBe('absolute');
+				expect(closedStyle.width).toBe('1px');
+				expect(closedStyle.height).toBe('1px');
+
+				await openMore();
+				const openStyle = getComputedStyle(reason!);
+				expect(openStyle.position).toBe('static');
+				expect(reason!.getBoundingClientRect().height).toBeGreaterThan(1);
+			} finally {
+				await page.viewport(414, 896);
+			}
+		});
+	});
+
+	it('keeps the compact More panel a single scrollable column', async () => {
+		renderToolbar();
+		(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+		const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+
+		const style = getComputedStyle(secondary);
+		expect(style.flexDirection).toBe('column');
+		expect(style.flexWrap).toBe('nowrap');
+		expect(style.overflowY).toBe('auto');
+	});
+
+	it('lets players scroll to the last More action on a short screen', async () => {
+		await page.viewport(414, 320);
+		try {
+			renderToolbar({
+				onSoundToggle: vi.fn(),
+				onOpenLeaderboard: vi.fn(),
+				canOpenLeaderboard: true,
+				onOpenSetup: vi.fn(),
+				canOpenSetup: true,
+				rotationToggleDisabled: true
+			});
+			(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+			const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+
+			// Forced overflow — without it the reachability check below proves nothing.
+			expect(secondary.scrollHeight).toBeGreaterThan(secondary.clientHeight);
+			expect(secondary.getBoundingClientRect().bottom).toBeLessThanOrEqual(window.innerHeight + 1);
+
+			secondary.scrollTop = secondary.scrollHeight;
+			const panelRect = secondary.getBoundingClientRect();
+			const lastAction = secondary.querySelector<HTMLElement>('[data-toolbar-action="setup"]');
+			const lockReason = secondary.querySelector<HTMLElement>('#rotation-lock-reason');
+			expect(lastAction).not.toBeNull();
+			expect(lockReason).not.toBeNull();
+			for (const el of [lastAction!, lockReason!]) {
+				const rect = el.getBoundingClientRect();
+				expect(rect.top).toBeGreaterThanOrEqual(panelRect.top);
+				expect(rect.bottom).toBeLessThanOrEqual(panelRect.bottom + 1);
+			}
+		} finally {
+			await page.viewport(414, 896);
+		}
+	});
+
 	it('keeps a secondary callback wired through the compact container', async () => {
 		const onZoomIn = vi.fn();
 		renderToolbar({ onZoomIn });

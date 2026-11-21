@@ -5,11 +5,13 @@ import {
 	DESKTOP_BOARD_MIN_WIDTH,
 	DESKTOP_TRAY_SEPARATOR_WIDTH,
 	clampTrayWidth,
+	COMPACT_GAMEPLAY_HINT_HEIGHT,
 	getDefaultPuzzleTrayWidth,
 	GAMEPLAY_RAIL_WIDTH,
 	getPuzzleBoardViewportTier,
 	getResponsivePuzzleBoardMetrics,
-	MOBILE_GAMEPLAY_GAP
+	MOBILE_GAMEPLAY_GAP,
+	MOBILE_SHEET_HEIGHT
 } from './puzzleLayout';
 
 const portraitPuzzle = {
@@ -127,6 +129,19 @@ describe('puzzle layout', () => {
 
 			expect(metrics.boardWidth).toBeLessThanOrEqual(boardColumnWidth);
 		}
+	});
+
+	it('reserves the compact hint line height on short phone viewports', () => {
+		const shortViewport = { width: 375, height: 667 };
+		const metrics = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			shortViewport,
+			DESKTOP_TRAY_BASE_WIDTH
+		);
+
+		const maxBoardHeight =
+			shortViewport.height - MOBILE_SHEET_HEIGHT.half - COMPACT_GAMEPLAY_HINT_HEIGHT;
+		expect(metrics.boardHeight).toBeLessThanOrEqual(maxBoardHeight);
 	});
 
 	it('preserves image-derived aspect ratio for mismatched image/grid', () => {

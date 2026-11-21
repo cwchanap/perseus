@@ -39,6 +39,7 @@
 		role="dialog"
 		aria-modal="true"
 		aria-label={presentation === 'resume' ? 'Resume Mission' : 'Mission Paused'}
+		aria-describedby={confirmingRestart ? undefined : 'session-pause-exit-help'}
 		tabindex="-1"
 		use:modalFocus={confirmingRestart}
 		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden border border-(--accent)
@@ -70,6 +71,13 @@
 				</h2>
 				<p class="mt-1 text-[0.8rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
 					{mode === 'timed' ? 'Timed' : 'Relaxed'} mission
+				</p>
+				<p
+					id="session-pause-exit-help"
+					class="mt-2 text-[0.7rem] font-(--font-mono) text-(--text-2)"
+				>
+					Exit saves this run on this device so you can resume later. Discard deletes it after
+					confirmation.
 				</p>
 				<div class="mt-6 flex flex-wrap justify-end gap-2">
 					<button type="button" onclick={onExit} class={secondaryButtonClass}>Exit</button>

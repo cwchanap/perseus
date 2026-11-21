@@ -257,6 +257,74 @@ describe('SessionPauseDialog', () => {
 		expect(onConfirmRestart).toHaveBeenCalledOnce();
 	});
 
+	it('explains local Exit persistence and confirmed Discard for a paused session', async () => {
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'timed',
+			confirmingRestart: false,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
+		});
+		const help = await page
+			.getByText(
+				'Exit saves this run on this device so you can resume later. Discard deletes it after confirmation.'
+			)
+			.element();
+		expect(help.id).toBe('session-pause-exit-help');
+		const dialog = await page.getByRole('dialog', { name: 'Mission Paused' }).element();
+		expect(dialog.getAttribute('aria-describedby')).toBe('session-pause-exit-help');
+	});
+
+	it('explains local Exit persistence for the resume presentation', async () => {
+		render(SessionPauseDialog, {
+			presentation: 'resume',
+			mode: 'relaxed',
+			confirmingRestart: false,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
+		});
+		await expect
+			.element(
+				page.getByText(
+					'Exit saves this run on this device so you can resume later. Discard deletes it after confirmation.'
+				)
+			)
+			.toBeVisible();
+		const dialog = await page.getByRole('dialog', { name: 'Resume Mission' }).element();
+		expect(dialog.getAttribute('aria-describedby')).toBe('session-pause-exit-help');
+	});
+
+	it('omits the exit/discard paragraph during restart confirmation', async () => {
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'timed',
+			confirmingRestart: true,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
+		});
+		await expect
+			.element(
+				page.getByText(
+					'Exit saves this run on this device so you can resume later. Discard deletes it after confirmation.'
+				)
+			)
+			.not.toBeInTheDocument();
+		const dialog = await page.getByRole('dialog').element();
+		expect(dialog.getAttribute('aria-describedby')).toBeNull();
+	});
+
 	it('labels the dialog Resume Mission for the resume presentation', async () => {
 		render(SessionPauseDialog, {
 			presentation: 'resume',
