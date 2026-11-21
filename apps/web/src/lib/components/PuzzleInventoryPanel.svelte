@@ -138,12 +138,12 @@
 
 	let filterDisclosureOpen = $state(false);
 
-	function usesDirectFilterLayout(width: number): boolean {
-		return width < 1024 || width >= 1280;
-	}
-
+	// Ask the same question the CSS flat bands do (<1024px or >=1280px):
+	// innerWidth is an integer and can round a fractional compact viewport
+	// (<=1023.98px) up to 1024, which would leave the details closed while
+	// its summary is hidden and the filters unreachable.
 	function syncFilterDisclosure(): void {
-		filterDisclosureOpen = usesDirectFilterLayout(window.innerWidth);
+		filterDisclosureOpen = window.matchMedia('(max-width: 1023.98px), (min-width: 1280px)').matches;
 	}
 
 	function handleFilterDisclosureToggle(event: Event): void {
