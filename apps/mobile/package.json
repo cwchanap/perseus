@@ -9,7 +9,7 @@
 	},
 	"dependencies": {
 		"@nativescript-community/svelte-native": "~1.0.30",
-		"@nativescript/canvas": "^2.1.18",
+		"@nativescript/canvas": "^3.0.10",
 		"@nativescript/core": "^9.1.4",
 		"@nativescript/google-signin": "^2.1.1",
 		"@nativescript/secure-storage": "^4.0.2",
