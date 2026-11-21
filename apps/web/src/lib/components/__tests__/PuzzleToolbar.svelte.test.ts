@@ -830,6 +830,17 @@ describe('PuzzleToolbar', () => {
 		});
 	});
 
+	it('keeps the compact More panel a single scrollable column', async () => {
+		renderToolbar();
+		(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+		const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+
+		const style = getComputedStyle(secondary);
+		expect(style.flexDirection).toBe('column');
+		expect(style.flexWrap).toBe('nowrap');
+		expect(style.overflowY).toBe('auto');
+	});
+
 	it('keeps a secondary callback wired through the compact container', async () => {
 		const onZoomIn = vi.fn();
 		renderToolbar({ onZoomIn });

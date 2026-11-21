@@ -676,7 +676,8 @@
 		/* The panel anchors at the compact rail's top (~viewport top) and the
 		   route clips .puzzle-main, so bound it to the viewport and scroll
 		   internally — otherwise short landscape heights cut off the lower
-		   actions and the lock explanation. */
+		   actions and the lock explanation. nowrap keeps the column overflow
+		   scrollable; wrap would spill the excess into a side column. */
 		.toolbar-secondary {
 			position: absolute;
 			top: 0;
@@ -688,6 +689,7 @@
 			overflow-y: auto;
 			box-sizing: border-box;
 			flex-direction: column;
+			flex-wrap: nowrap;
 			align-items: stretch;
 			gap: 0.5rem;
 			padding: 0.5rem;
