@@ -595,6 +595,7 @@ describe('PuzzleInventoryPanel', () => {
 	it('keeps the filter disclosure open exactly inside the flat filter bands', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
+		const matchMedia = vi.spyOn(window, 'matchMedia');
 		try {
 			render(PuzzleInventoryPanel, baseProps());
 			const disclosure = (await page
@@ -607,7 +608,13 @@ describe('PuzzleInventoryPanel', () => {
 			await expect.poll(() => disclosure.open).toBe(false);
 			await page.viewport(1400, 900);
 			await expect.poll(() => disclosure.open).toBe(true);
+
+			// Integer viewports cannot distinguish matchMedia from a rounded
+			// innerWidth check; require the flat-band query itself so a
+			// rounding regression fails here.
+			expect(matchMedia).toHaveBeenCalledWith('(max-width: 1023.98px), (min-width: 1280px)');
 		} finally {
+			matchMedia.mockRestore();
 			await page.viewport(originalWidth, originalHeight);
 		}
 	});
