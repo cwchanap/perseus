@@ -6,83 +6,81 @@ Baseline: `main` @ `c7f20d314088519e063da3eb49b68d40ebaee588`, including merged 
 
 **Rule:** Extend this draft PR into **one implementation PR for HPA-1032**. No second PR for Gallery (absorbed HPA-1036) or for tests. Keep the branch draft until real tests, MCP E2E and final screenshots are verified. All checkboxes are pending because this branch currently contains documentation only.
 
-## 0. Establish failures and scope before editing
+## 0. Confirm code seams and reuse existing tests
 
-- [ ] Check for changes to `main` and rebase/refresh before coding; confirm current layouts using the same deterministic test fixtures in `apps/web/e2e`. Distinguish gallery-request loading from HPA-1029 image placeholders and expected infinite-scroll loading.
-- [ ] At desktop **1440×900**, intermediate **1100×800**, and narrow **390×844**, reproduce a 16-piece puzzle's normal, 90° and 270° rotated tray silhouette near its neighbors and header; test selected 2×2 inspection. Include a large (100-piece) inventory for filters and scroll. Capture the final visible art, **not just the transparent 140% image wrapper's DOM rectangle**.
-- [ ] At a fixed viewport, compare the **settled** `board-viewport`, `inventory-panel` and `piece-slot` bounds before/after reload and after `document.fonts.ready`/ResizeObserver settle. Do not confuse initial placeholder metrics or a manually resized tray with a reload regression.
-- [ ] Use the existing `gallery.spec.ts` fixture router / `page.route` with held and out-of-order first-page requests, success, empty and error, and a held/failed next-page request. Record which of `loading-state`, `load-more-spinner` and image placeholders is actually stuck. Avoid speculative fixes if baseline coverage already passes.
+- [ ] Refresh against `main` before implementation. This design review already established two code causes: the 140% jigsaw wrapper can put opaque tab tips outside a slot, and the tray's default width is calculated only at load. Write targeted regressions before fixing those causes; no full viewport × 0°/90°/180°/270° screenshot matrix.
+- [ ] In `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`, reproduce 1×1 piece, selected 2×2 piece, and one 90° rotation/hover with measured 140% wrapper bounds; inspect visible tabs once in browser screenshots to validate the geometry check.
+- [ ] Use existing `apps/web/e2e/gameplay-large-fixtures.spec.ts` to reproduce an **untouched** tray at 1100px, resize to 1440px, then reload at 1440px, measuring settled board/tray/slot dimensions. Manual separator changes are a distinct intentional session-only override and **reset on reload**.
+- [ ] For Gallery, distinguish `loading-state` (exclusive of cards) from `load-more-spinner` (can coexist with cards) and HPA-1029 image placeholders. Inspect **existing** `apps/web/src/routes/page.svelte.test.ts` coverage before adding only missing settle/race assertions. Do not duplicate the prior success/empty/failure/retry matrix.
 
-## 1. Correct only demonstrated tray presentation/layout faults
-
-Files to inspect/change as needed:
-
-- `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
-- `apps/web/src/lib/components/PuzzlePiece.svelte`
-- `apps/web/src/routes/puzzle/[id]/+page.svelte` and `apps/web/src/lib/services/puzzleLayout.ts` **only if a reload metric mismatch is reproduced**
-- `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`; existing `PuzzlePiece` and puzzle-layout tests where appropriate
-
-- [ ] Scope the piece visual sizing/inset to **unselected tray pieces**, accounting for the 140% masked image, 90° rotations and hover scale, so the **opaque silhouette** has breathing room without touching neighboring slots or toolbar. Preserve recognizably protruding jigsaw tabs; do **not** apply blanket `overflow: hidden` to the piece, disable rotation, change image generation, or scale **board-placed** pieces. Retain the full-slot button/drag hit target and the 100%-slot pending/error fallback.
-- [ ] Preserve the intended selected `selected-expanded` 2×2 footprint and its larger visual, keyboard roving-tabstop, selection ring, hint badge, scroll-to-hint, and filter counts. If selected art causes collisions, use existing grid/scroll spacing rather than treating it as an ordinary piece.
-- [ ] If fixed-viewport reload geometry still changes **after settle**, fix the specific `ResizeObserver`/viewport fallback or CSS sizing inconsistency. Keep `getResponsivePuzzleBoardMetrics` and its existing width clamp as the single authority; no new global state or persisted tray width. Assert board/tray/slot settled dimensions agree within a small pixel tolerance (e.g. ≤2px) at the same viewport.
-- [ ] Write a focused component or route regression for each confirmed fault; use browser screenshot/geometry proof for real visible silhouette containment (wrapper DOM bounds include intentional transparent padding). Keep scroll-only inventory with Corners/Edges/Center filters; no pagination.
-
-## 2. Make Gallery loading correspond to active requests
+## 1. Fix proportional tray inset and responsive default on resize
 
 Files:
 
-- `apps/web/src/routes/+page.svelte`
-- `apps/web/src/routes/page.svelte.spec.ts`
+- `apps/web/src/lib/components/PuzzlePiece.svelte` / `PuzzleInventoryPanel.svelte` (small tray-only presentation rule)
+- `apps/web/src/routes/puzzle/[id]/+page.svelte` (derive default tray width; keep `puzzleLayout.ts` unchanged unless an additional proven issue)
+- `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`, relevant existing route tests, `apps/web/e2e/gameplay-large-fixtures.spec.ts`
+
+- [ ] Make the 140% masked-image envelope fit its **own** slot using one proportional inset. The mathematical minimum on each side is ~14.29% without hover (140% expansion); existing `hover:scale-105` increases it to ~15.99%. Prefer **~16%** if preserving hover or remove hover scaling with ~14.3% inset. Use the measured geometry to settle the actual CSS rule. Keep the full-size interaction target, image-status overlay and visual jigsaw tabs; do not clip the image, touch generators, or invent a second preview. The same rule works on selected 2×2 inspection because its containing area is larger.
+- [ ] In the browser-mode component test, verify wrapper/visual `getBoundingClientRect()` fits each actual 1×1/2×2 slot to within half the existing grid gap; test an unselected upright piece, one 90° rotated piece, and selected/hovered state. At a normal scroll position, check the first row's tabs are not clipped by the scroll edge; re-run selection, hint scroll, roving focus, filter counts and large-tray scroll.
+- [ ] Replace one-time `requestedTrayWidth` load assignment with route-local `manualTrayWidth: number | null`, derive default `requestedTrayWidth = manualTrayWidth ?? getDefaultPuzzleTrayWidth(puzzle, viewport)`, and keep `appliedTrayWidth` clamping based on measured `.game-layout`. Set manual override only on pointer/keyboard tray resize; reset it on new-puzzle load/reload. Do **not** add persistence or change session model. Board metrics continue using `getResponsivePuzzleBoardMetrics` without new state owners.
+- [ ] Add one focused **MCP Playwright** desktop E2E alongside `gameplay-large-fixtures.spec.ts`'s widened-tray test: visit 1100×800 → resize to 1440×900 (without touching separator) → wait for fonts/ResizeObserver settle → record `--tray-width`, board-viewport dimensions and slot size → reload at **1440×900** → assert values equal within ≤2px. Check that a manually resized tray resets to its responsive default on reload using the existing resize test (not a new journey). Do not add a redundant 390px reload geometry case because the compact sheet uses CSS `clamp(3rem,16vw,4.5rem)` independent of tray width.
+
+## 2. Prove Gallery spinner state and fix only a failing transition
+
+Files:
+
+- `apps/web/src/routes/page.svelte.test.ts` (**full lifecycle suite**; do not put race cases in the short `page.svelte.spec.ts`)
 - `apps/web/e2e/gallery.spec.ts`
+- `apps/web/src/routes/+page.svelte` **only** if focused tests reveal a real defect
 
-- [ ] Write deterministic held-request/response-order cases: initial response success, empty, failure; fast `q`/category switch where older request completes last; aborted first-page request; next-page success/error/reset on filter switch. Test the actual URL-driven navigation, current list, and spinner's settled absence without relying on sleeps.
-- [ ] Reuse the existing `queryVersion`, `AbortController`, `loadMoreController` and `.finally()` lifecycle. If a reproduced path leaves either spinner stale, make the smallest local state-transition fix. Never let a superseded request overwrite current cards/error/total, or let its completion hide the current request's real loading indicator. **Do not** remove legitimate `load-more-spinner` behavior introduced by PR #83.
-- [ ] Keep separate and meaningful: first-page `loading-state`, pagination `load-more-spinner`/retry, empty/no-results, and HPA-1029 image-status pending/error. No new request abstraction, spinner component or backend work.
-- [ ] If baseline already passes all deterministic request-settle cases, document the report as not reproduced under those fixtures rather than manufacturing a code change; focused regression tests still protect the intended behavior.
+- [ ] Reuse existing lifecycle cases: initial empty/error, stale next-page result, abort-by-query, load-more error/retry and IntersectionObserver gates. Do **not** reimplement these cases.
+- [ ] Add **one parameterized current-next-page settle test** (success / error / abort by a committed filter switch) asserting **neither** `loading-state` nor `load-more-spinner` persists once the current request has settled; retain a visible spinner while the request is genuinely pending.
+- [ ] Add **one out-of-order first-page response test**: older request completes after the newer URL search/category request, and cannot restore outdated cards, total, errors or spinner.
+- [ ] Extend the **existing infinite-scroll E2E** in `apps/web/e2e/gallery.spec.ts` with a settled no-spinner assertion after page 2 arrives. Keep race timing in deterministic unit tests; avoid an E2E request matrix.
+- [ ] If these pass on baseline, record **spinner not reproduced under controlled requests**, keep existing `queryVersion`/abort/`.finally()` unchanged and close this sub-finding. Otherwise patch only the failing state transition without creating a new request abstraction or masking HPA-1029 image states.
 
-## 3. Improve category and card-title discoverability
+## 3. Ship minimal category-label and two-line-title changes
 
 Files:
 
-- `apps/web/src/lib/components/CategoryFilter.svelte` and its existing test coverage
-- `apps/web/src/lib/components/PuzzleCard.svelte` and its existing test coverage
-- `apps/web/src/routes/page.svelte.spec.ts` and `apps/web/e2e/gallery.spec.ts`
+- `apps/web/src/lib/components/CategoryFilter.svelte`, `CategoryBadge.svelte` only if needed, existing `CategoryFilter.svelte.test.ts`
+- `apps/web/src/lib/components/PuzzleCard.svelte`, existing `PuzzleCard.svelte.test.ts`
+- Existing Gallery E2E for smoke confirmation
 
-- [ ] Keep the existing radio group, category icons, URL commits and immediate `chosen` intent reconciliation. Display a short category label alongside the icon at widths where the topbar has room; on narrow screens, keep compact icon controls with **explicit** accessible names and a sensible hover title. Preserve checked/focus styling, touch target and horizontal containment. No dropdown, custom radio state manager or extra controls.
-- [ ] Confirm `PuzzleCard` heading already retains the full `title={family.name}` tooltip and an untruncated DOM/accessibility name. Verify with a long fixture title; on narrow touch widths, allow a **bounded two-line presentation** if needed to distinguish cards, checking it does not cover progress/bookmark/clear badges or difficulty actions. No new popover/modal.
-- [ ] Re-run category click/keyboard-focus tests. The historically timing-out `Abstract` radio test must be checked on this branch; if still hit by a hidden child, fix the **label hit target or test locator** only as warranted, without changing URL filter semantics.
-- [ ] Preserve card navigation, bookmark toggle, family clear badges, category deep links, URL history, search focus, infinite scroll and HPA-1029 thumbnails.
+- [ ] **Category names:** reuse the `CategoryBadge` compact component's existing `sr-only` label and expose it alongside the icon only above a **measured wide Gallery-header breakpoint**. At narrow widths retain icon-sized controls and the **already-tested** native radio accessible name (do not duplicate the screen-reader text/name tests); keep checked/focus and URL `chosen` reconciliation. No dropdown or new state.
+- [ ] **Card names:** replace `truncate` with `line-clamp-2` for card heading at **all** widths; reserve stable two-line title height for uniform cards and keep `title={family.name}`. Extend the existing **390×844** status-stack/bookmark/category non-overlap regression with an intentionally long family name. Verify difficulty actions, clear badges, thumbnail overlay and links remain unobscured; do not add a tooltip-only touch workaround or modal.
+- [ ] Preserve Gallery search focus/history, category deep-link behavior, bookmarks, family clear badges and HPA-1029 image placeholders. If the pre-existing `Abstract` radio click test flakes, reproduce and address only a genuine filter hit-target/locator fault, not the navigation state model.
 
-## 4. End-to-end verification (MCP, single web platform)
+## 4. MCP end-to-end and final visual acceptance (single browser engine)
 
-MCP must execute/inspect Playwright in the actual app/browser; a unit-only or static-document review is insufficient. Build on existing tests rather than new duplicated journeys.
+**MCP must run and inspect the actual Playwright/browser session** on the implementation head. Static plan review or component tests alone are insufficient.
 
-- [ ] MCP-run Chromium desktop and narrow-browser E2E using `apps/web/e2e/gallery.spec.ts`, `apps/web/e2e/gameplay-mobile-tap.spec.ts`, `apps/web/e2e/gameplay-interactions.spec.ts` and a focused additional test only for an uncovered regression. Assert a representative real puzzle loads, selected and rotated tray pieces remain usable, a piece places by click/keyboard or drag, progress remains, and the saved game resumes after reload. Assert 100-piece inventory remains scrollable and filterable.
-- [ ] MCP-check the Gallery with controlled success, empty, error, stale/raced and pagination requests: when each **current** request settles, neither spinner remains unless another current page is actively fetching. Test category names and selection (desktop + compact), full long-title access, search URL/deep-link/back, and preserved card links/bookmarks/badges.
-- [ ] MCP-assert settled responsive geometry at **1440×900**, **1100×800**, and **390×844**, including identical viewport before and after reload; check no document horizontal overflow and the compact gameplay More/header/hint controls from HPA-1031 remain reachable. Only one browser engine is required for this shared web change; no separate macOS/Windows/iOS/native acceptance.
+- [ ] Extend **`apps/web/e2e/gameplay-large-fixtures.spec.ts`** for the untouched-tray desktop resize→reload case; reuse its 100-/225-piece scrolling, one-piece placement, tooltip/hint and horizontal-overflow coverage. Rerun relevant `gameplay-mobile-tap.spec.ts` / `gameplay-interactions.spec.ts` existing smoke instead of duplicating a second 100-piece or full-solve journey. Confirm current-device progress resumes after reload using existing session tests.
+- [ ] Gallery uses the existing `apps/web/e2e/gallery.spec.ts` infinite-scroll case for the new idle spinner check and existing URL/search/filter/bookmark/clear-badge cases; the two deterministic race regressions run in the full `page.svelte.test.ts` suite. Confirm category labels desktop and icons/names narrow, two-line card titles and no horizontal overflow.
+- [ ] One supported Chromium browser engine with desktop **1440×900** and narrow **390×844** presentation acceptance is sufficient for shared web UI; the resize→reload comparison also begins at **1100×800**. No native/macOS/Windows/iOS sign-offs and no additional viewport × rotation matrix.
 
-### Required final-branch visual evidence
+### Final-branch MCP visual evidence — attach to PR, not git
 
-There is **no attached Linear mockup as of 2026-11-21**. If one appears, compare against it; otherwise compare against the shipped Galaxy Arcade layout. MCP captures and inspects real screenshots, and the PR links/attaches the evidence:
+No attached Linear mockup as of 2026-11-21. Compare to the current Galaxy Arcade UI on `main` or any later-attached Linear mockup. MCP captures, **inspects** and links the following screenshots:
 
-1. Gallery desktop after settle: category labels, loaded cards, representative long title.
-2. Gallery 390px after settle: compact category accessibility/visibility and long title without card overlay collision.
-3. Puzzle desktop with ordinary and rotated pieces, selected enlarged piece, inventory header, board and toolbar in frame.
-4. Puzzle 390px tray open with ordinary/rotated pieces and reachable header controls.
-5. Same viewport puzzle **before and after reload** after fonts/layout settle, with measured board, tray and slot rectangles recorded alongside images.
+1. Gallery **desktop**: visible category labels, representative long two-line title and resolved cards.
+2. Gallery **390px**: compact icon filters, long title, bookmark/clear badges and no collisions.
+3. Tray **desktop**: ordinary and one rotated piece, 2×2 selected inspection, unclipped top-row tabs, board and inventory header.
+4. Tray **390px**: open mobile sheet, readable/usable pieces, toolbar/hint and no horizontal overflow.
+5. A **settled desktop resize→reload comparison** (1440px before and after reload), with recorded `--tray-width`, board-viewport and slot measurements.
 
-The screenshot/geometry review must establish visually no opaque neighbor/header overhang, no clipped jigsaw tabs, no hidden category/text controls, no horizontal overflow, and consistent settled proportions. Do not mark it passed from an uninspected screenshot or an earlier branch head. **No human approval gate.**
+- [ ] Confirm the browser-mode **numeric envelope containment test** passes and screenshots show recognizable tabs/selection, title readability, visible filter text, correct clipping at scroll boundary and no overlaps. Numeric test is the primary overlap regression; **MCP screenshot visual check is still mandatory**.
+- [ ] Attach PNGs as GitHub PR comment/description assets (or a stable external artifact link referenced there), **never commit binary screenshots into git history**. No human approval criterion.
 
 ## 5. Quality gates and closeout
 
-- [ ] Run focused web component/route tests, `bun run --cwd apps/web test:unit`, `bun run check`, `bun run lint`, and required PR CI. Record actual commands/results and classify pre-existing unrelated failures accurately; do not claim green based on another PR's results.
-- [ ] If any shared backend handler is touched despite the initial scope, add a corresponding real API-to-browser **MCP end-to-end** check; otherwise keep this strictly web-only.
-- [ ] Verify no new persistence contract, API, gameplay/session rules, NativeScript changes, framework, compatible legacy adapter, generated art or SFX. New asset work must be a separately scoped ticket if genuinely required.
-- [ ] Commit implementation, tests and inspected final screenshots/evidence to **this same PR**. Update its description and HPA-1032 with outcome/remaining limitations. Mark the Linear ticket Done **only after merge and acceptance**, not on planning-doc creation.
+- [ ] Run focused web component/route tests, `bun run --cwd apps/web test:unit`, `bun run check`, `bun run lint` and required PR CI. Record actual commands, browser projects and results; no inherited green status from other PRs.
+- [ ] If a backend handler is unexpectedly changed, add an API-to-browser **MCP end-to-end** regression. Otherwise keep this PR web-only, with no API, `PuzzleSession`, game rules, persistence schema, NativeScript, compatibility shims, generated art or SFX.
+- [ ] Commit **code, tests and markdown evidence links** on **PR #185**; attach image files to GitHub, not to source control. Update this PR description and HPA-1032 with verified outcome, reproduction status, and screenshots. Mark the issue Done **only after this same PR merges and automated acceptance passes**.
 
-### Scope/risk decisions
+### Review decisions (2026-11-21)
 
-- The original `loading-state` is guarded by request version and a current-request `.finally()`; a bad spinner report may actually describe infinite scroll or image decode. Evidence decides, not assumption.
-- The 140% image wrapper is necessary for tabs and can exceed its slot **as a DOM rectangle even when transparent**; require visible-silhouette evidence before shrinking it.
-- Selected 2×2 expansion is intentional; a too-strict “every pixel inside original 1×1 slot” assertion would be incorrect.
-- HPA-1031 changed breakpoints and viewport/hint reserves on `main`; check those exact boundaries, especially the fractional <1024px band, without reopening toolbar scope.
+- **Accepted:** deterministic viewport resize/reload root cause; route-local manual override with no persistence; analytic 140% tray overlap and proportional inset; single quarter-turn envelope test; existing Gallery test suite reuse and much smaller race coverage; two-line titles; expose current compact badge text where space allows; use `gameplay-large-fixtures.spec.ts`; attach images rather than committing them.
+- **Refinements:** account explicitly for `hover:scale-105` (~16% inset when retained rather than 14.3%); keep the full button/image-status hit area; the envelope measurement is the regression gate **but does not waive MCP screenshot visual acceptance**. Scroll clipping prevents header overlap but requires top-row tab-visibility inspection. Keep one narrow screenshot for shared UX rather than a full viewport×rotation matrix.
+- **Not claimed:** any implementation, test, browser screenshot or CI result. All acceptance checkboxes remain pending.
