@@ -393,12 +393,24 @@ import { clearedDifficulties } from '$lib/stores/clearedDifficulties';
 import { serializeSession } from '@perseus/game-core';
 import { goto } from '$app/navigation';
 
-// Minimal MediaQueryList stand-in: the route only reads `.matches` for the
-// reduced-motion query at seal time, so listeners are inert stubs.
+// Minimal MediaQueryList stand-in: prefers-reduced-motion answers from the
+// suite flag and (min|max)-width terms evaluate against the live innerWidth
+// so viewport-band logic (e.g. the inventory filter disclosure) behaves as
+// in a real browser; listeners are inert stubs.
+function evaluateStubbedMediaQuery(query: string): boolean {
+	if (query === '(prefers-reduced-motion: reduce)') return reducedMotionPreference.value;
+	for (const [, bound, px] of query.matchAll(/\(\s*(min|max)-width\s*:\s*([\d.]+)px\s*\)/g)) {
+		if (bound === 'min' ? window.innerWidth >= Number(px) : window.innerWidth <= Number(px)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function installMatchMediaStub(): void {
 	window.matchMedia = ((query: string): MediaQueryList => {
 		return {
-			matches: query === '(prefers-reduced-motion: reduce)' ? reducedMotionPreference.value : false,
+			matches: evaluateStubbedMediaQuery(query),
 			media: query,
 			onchange: null,
 			addListener: () => undefined,
