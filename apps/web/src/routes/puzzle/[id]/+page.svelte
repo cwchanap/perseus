@@ -1735,7 +1735,7 @@
 	   (its .board-wrap scrolls) and the open inventory drawer's bottom stays
 	   within the fold at 390x844. Desktop keeps the content-driven min-height so
 	   the sidebar layout grows with the board. */
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.puzzle-page {
 			height: 100vh;
 			height: 100dvh;
@@ -1966,7 +1966,7 @@
 	/* Mobile: fill the viewport-bound main so the board's 1fr row shrinks
 	   (instead of the grid growing past the fold) and the auto inventory row
 	   anchors to the bottom. Desktop stays content-sized. */
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.game-layout {
 			height: 100%;
 		}
@@ -2051,7 +2051,7 @@
 		}
 	}
 
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.tray-resizer {
 			display: none;
 		}
@@ -2112,13 +2112,18 @@
 		height: 1.2rem;
 	}
 
-	/* Fixed-height instruction slot between the HUD and the board panel.
-	   Height is reserved per breakpoint below; it never collapses with empty
-	   text so copy transitions cannot resize the board viewport. */
+	/* Reserved instruction slot between the HUD and the board panel.
+	   Compact two-line reservation is the base rule so subpixel viewports
+	   below 1024px (e.g. 1023.5px under fractional scaling) never drop the
+	   height budget; min-height (without overflow:hidden) keeps the slot
+	   constant across normal copy states while allowing extra wrapped lines
+	   on ultra-narrow widths or large minimum font sizes. */
 	.board-stage > .gameplay-hint {
+		box-sizing: border-box;
+		min-height: 2rem;
 		margin: 0;
+		padding-inline: 3.5rem;
 		flex-shrink: 0;
-		overflow: hidden;
 		font-family: var(--font-mono);
 		font-size: 0.7rem;
 		line-height: 1.4;
@@ -2179,7 +2184,7 @@
 		display: none;
 	}
 
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.puzzle-main {
 			padding: 0;
 			overflow: hidden;
@@ -2418,8 +2423,9 @@
 		/* Desktop reserves one line; the negative margin cancels the second
 		   2.25rem stage gap so the line costs only its own height. */
 		.board-stage > .gameplay-hint {
-			height: 1rem;
+			min-height: 1rem;
 			margin-bottom: -2.25rem;
+			padding-inline: 0;
 		}
 
 		.game-layout > :global(.inventory-panel) {
@@ -2485,7 +2491,7 @@
 		}
 	}
 
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.game-layout {
 			grid-template-columns: minmax(0, 1fr) var(--gameplay-rail-width);
 			grid-template-rows: minmax(0, 1fr) auto;
@@ -2535,12 +2541,12 @@
 		}
 
 		/* Compact reserves two lines so the ~46-char copy at 390px wraps
-		   inside the same slot instead of resizing it. The inline-start pad
-		   clears the compact header's back button, which overhangs the
-		   header box by ~10px over the slot's top-left corner. */
+		   inside the same slot instead of resizing it. Symmetric inline
+		   padding keeps the centered text aligned with the board stage while
+		   clearing the compact header's overhanging back button on the left. */
 		.board-stage > .gameplay-hint {
-			height: 2rem;
-			padding-inline-start: 3.5rem;
+			min-height: 2rem;
+			padding-inline: 3.5rem;
 		}
 
 		.game-layout > :global(.inventory-panel) {

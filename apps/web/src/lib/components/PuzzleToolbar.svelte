@@ -567,6 +567,9 @@
 		line-height: 1;
 		white-space: nowrap;
 		pointer-events: auto;
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
 	}
 
 	.toolbar-button:focus-visible {
@@ -598,12 +601,27 @@
 		pointer-events: auto;
 	}
 
-	/* Action labels and the lock explanation exist only for the open More
-	   panel; the closed rail stays icon-only (including the desktop
-	   display:contents state). */
-	.toolbar-action-label,
-	.rotation-lock-reason {
+	/* Action labels are shown only in the open More panel so the closed rail
+	   stays icon-only (including the desktop display:contents state). The
+	   lock reason stays sr-only while More is closed so screen readers keep
+	   its description on the desktop rail, then unclips inside the open panel. */
+	.toolbar-action-label {
 		display: none;
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
+	}
+
+	.rotation-lock-reason {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.toolbar-secondary[data-open='true'] .toolbar-action-label {
@@ -616,9 +634,16 @@
 	}
 
 	.toolbar-secondary[data-open='true'] .rotation-lock-reason {
+		position: static;
 		display: block;
+		width: auto;
+		height: auto;
 		min-width: 0;
+		margin: 0;
 		padding: 0.25rem 0.5rem;
+		overflow: visible;
+		clip: auto;
+		white-space: normal;
 		font-family: var(--font-display), Orbitron, monospace;
 		font-size: 0.62rem;
 		letter-spacing: 0.06em;
@@ -630,7 +655,7 @@
 		display: none;
 	}
 
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.puzzle-toolbar {
 			align-items: stretch;
 			flex-direction: column;
@@ -886,7 +911,7 @@
 		}
 	}
 
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.puzzle-toolbar {
 			gap: 0.625rem;
 			padding: 0.875rem 0.25rem;
