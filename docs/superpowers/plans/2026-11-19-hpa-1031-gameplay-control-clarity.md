@@ -87,7 +87,8 @@ Files:
 
 ## 6. Closeout on this PR
 
-- [x] Commit all implementation/test updates to **PR #184**, document commands, MCP screenshot evidence and any narrowly deferred issues in its description.
+- [x] Commit all implementation/test updates to **PR #184**; its description documents commands, the `cfe5cb56` MCP evidence, narrowly deferred issues, and the outstanding final-head screenshot capture from section 5.
+- [ ] Attach the four final-head screenshots to PR #184 after section 5's capture completes.
 - [ ] Keep draft until automated acceptance completes, then update Linear HPA-1031. Mark Done only when implementation is merged and accepted.
 
 ## Review decisions
