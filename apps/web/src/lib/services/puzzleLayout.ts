@@ -55,6 +55,7 @@ export const MOBILE_SHEET_HEIGHT = {
 } as const;
 
 export const MOBILE_GAMEPLAY_GAP = 20;
+export const COMPACT_GAMEPLAY_HINT_HEIGHT = 32;
 
 const DESKTOP_TRAY_CHROME_WIDTH = 42;
 
@@ -95,7 +96,9 @@ function getWidthReserve(tier: PuzzleBoardViewportTier): number {
 }
 
 function getHeightReserve(tier: PuzzleBoardViewportTier): number {
-	if (tier === 'small' || tier === 'medium') return MOBILE_SHEET_HEIGHT.half;
+	if (tier === 'small' || tier === 'medium') {
+		return MOBILE_SHEET_HEIGHT.half + COMPACT_GAMEPLAY_HINT_HEIGHT;
+	}
 	return 260;
 }
 

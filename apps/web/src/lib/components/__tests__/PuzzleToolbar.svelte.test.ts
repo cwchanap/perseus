@@ -674,15 +674,44 @@ describe('PuzzleToolbar', () => {
 			}
 		});
 
-		it('hides secondary action labels while More is closed', async () => {
-			renderToolbar({ onSoundToggle: vi.fn(), canOpenLeaderboard: true, canOpenSetup: true });
+		it('hides secondary action labels while More is closed on the desktop rail', async () => {
+			await page.viewport(1440, 900);
+			try {
+				renderToolbar({
+					canRedo: true,
+					onSoundToggle: vi.fn(),
+					canOpenLeaderboard: true,
+					canOpenSetup: true
+				});
 
-			for (const [accessibleName] of labeledActions) {
-				const button = await page.getByLabelText(accessibleName).element();
-				const label = button.querySelector<HTMLElement>('.toolbar-action-label');
-				expect(label, `${accessibleName} label`).not.toBeNull();
-				expect(label!.checkVisibility(), `${accessibleName} label hidden`).toBe(false);
+				// On desktop (>=1024px) .toolbar-secondary[data-open='false'] is
+				// display:contents, so Redo and Rotation mode are visible in the
+				// closed rail while their text labels must stay hidden.
+				for (const railButtonName of ['Redo', 'Rotation mode']) {
+					const railButton = await page.getByLabelText(railButtonName).element();
+					expect(railButton.checkVisibility(), `${railButtonName} rail button visible`).toBe(true);
+				}
+
+				for (const [accessibleName] of labeledActions) {
+					const button = await page.getByLabelText(accessibleName).element();
+					const label = button.querySelector<HTMLElement>('.toolbar-action-label');
+					expect(label, `${accessibleName} label`).not.toBeNull();
+					expect(label!.checkVisibility(), `${accessibleName} label hidden`).toBe(false);
+				}
+			} finally {
+				await page.viewport(414, 896);
 			}
+		});
+
+		it('disables text selection on press-and-hold toolbar buttons and labels', async () => {
+			renderToolbar();
+			await openMore();
+
+			const peekButton = await page.getByLabelText('Hold to peek reference').element();
+			const peekLabel = peekButton.querySelector<HTMLElement>('.toolbar-action-label');
+			expect(peekLabel).not.toBeNull();
+			expect(getComputedStyle(peekButton).userSelect).toBe('none');
+			expect(getComputedStyle(peekLabel!).userSelect).toBe('none');
 		});
 
 		it('does not label primary rail actions', async () => {
@@ -763,20 +792,34 @@ describe('PuzzleToolbar', () => {
 			expect(reason!.checkVisibility()).toBe(true);
 		});
 
-		it('stays attached to the disabled rotation button and hidden while More is closed', async () => {
-			renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
+		it('stays attached to the disabled rotation button as sr-only while More is closed and unclips when open', async () => {
+			await page.viewport(1440, 900);
+			try {
+				renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
 
-			const rotation = await page.getByLabelText('Rotation mode').element();
-			expect(rotation.getAttribute('aria-describedby')).toBe('rotation-lock-reason');
+				const rotation = await page.getByLabelText('Rotation mode').element();
+				expect(rotation.getAttribute('aria-describedby')).toBe('rotation-lock-reason');
 
-			const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
-			const reason = document.getElementById('rotation-lock-reason');
-			expect(reason).not.toBeNull();
-			expect(secondary.contains(reason)).toBe(true);
-			expect(reason!.checkVisibility()).toBe(false);
+				const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
+				const reason = document.getElementById('rotation-lock-reason');
+				expect(reason).not.toBeNull();
+				expect(secondary.contains(reason)).toBe(true);
 
-			await openMore();
-			expect(reason!.checkVisibility()).toBe(true);
+				// On the closed desktop rail, #rotation-lock-reason stays in the
+				// accessibility tree via sr-only rules instead of display:none.
+				const closedStyle = getComputedStyle(reason!);
+				expect(closedStyle.display).not.toBe('none');
+				expect(closedStyle.position).toBe('absolute');
+				expect(closedStyle.width).toBe('1px');
+				expect(closedStyle.height).toBe('1px');
+
+				await openMore();
+				const openStyle = getComputedStyle(reason!);
+				expect(openStyle.position).toBe('static');
+				expect(reason!.getBoundingClientRect().height).toBeGreaterThan(1);
+			} finally {
+				await page.viewport(414, 896);
+			}
 		});
 	});
 

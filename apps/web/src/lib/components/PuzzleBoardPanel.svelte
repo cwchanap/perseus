@@ -371,7 +371,7 @@
 	   shrinking flex column so .board-wrap absorbs the height variance and
 	   scrolls instead of pushing the inventory drawer past the fold. Desktop is
 	   content-sized (no definite row height), so this stays inert there. */
-	@media (max-width: 1023px) {
+	@media (max-width: 1023.98px) {
 		.board-panel {
 			border: 0;
 			border-radius: 0;
@@ -388,6 +388,10 @@
 		.board-wrap {
 			flex: 1 1 0;
 			min-height: 0;
+		}
+
+		.board-viewport {
+			min-height: 16rem;
 		}
 	}
 

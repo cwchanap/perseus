@@ -4700,15 +4700,36 @@ describe('Puzzle page gameplay instruction line', () => {
 		expect(hintText()).toBe('');
 	});
 
+	it('clears the instruction while a modal blocks input on an still-active run', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+
+		// Opening Mission Setup from the toolbar keeps sessionState.lifecycle === 'active'
+		// and preserves the selection, so only gameplayInputBlocked clears the hint.
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Open mission setup' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		expect(hintText()).toBe('');
+
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		await expect
+			.element(page.getByTestId('gameplay-hint'))
+			.toHaveTextContent('Piece selected: click/tap its board cell.');
+	});
+
 	it('keeps the instruction line empty during the completion reveal', async () => {
 		setPrefersReducedMotion(false);
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
 		await placePiece(1, 1, 0);
 
-		// The reveal holds the finished board for 500 ms before results open;
-		// gameplay input is blocked for the whole window, so the line stays
-		// empty rather than flashing a stale instruction.
+		// The reveal holds the finished board (lifecycle === 'completed') for
+		// 500 ms before results open, so the line stays empty rather than
+		// showing an active-play instruction.
 		expect(page.getByTestId('celebration-modal').query()).toBeNull();
 		expect(hintText()).toBe('');
 
@@ -4733,5 +4754,36 @@ describe('Puzzle page gameplay instruction line', () => {
 		await expectPiecesRemaining(1);
 		expect(hintText()).toBe('');
 		expect(viewport.getBoundingClientRect().height).toBe(initialHeight);
+	});
+
+	it('centers the compact instruction slot with symmetric padding, unclipped min-height, and a 16rem board-viewport floor', async () => {
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			await page.viewport(375, 667);
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 667 });
+			await renderPuzzlePage();
+
+			const hint = await page.getByTestId('gameplay-hint').element();
+			const hintStyle = getComputedStyle(hint);
+			expect(hintStyle.paddingInlineStart).toBe('56px');
+			expect(hintStyle.paddingInlineEnd).toBe('56px');
+			expect(hintStyle.minHeight).toBe('32px');
+			expect(hintStyle.overflow).not.toBe('hidden');
+
+			const viewport = await page.getByTestId('board-viewport').element();
+			expect(getComputedStyle(viewport).minHeight).toBe('256px');
+		} finally {
+			await page.viewport(originalInnerWidth, originalInnerHeight);
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
 	});
 });
