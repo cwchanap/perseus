@@ -799,6 +799,13 @@ describe('PuzzleToolbar', () => {
 
 				const rotation = await page.getByLabelText('Rotation mode').element();
 				expect(rotation.getAttribute('aria-describedby')).toBe('rotation-lock-reason');
+				// The sr-only reference still resolves as the button's description —
+				// the clip checks below verify presentation, not what AT receives.
+				await expect
+					.element(page.getByLabelText('Rotation mode'))
+					.toHaveAccessibleDescription(
+						'Rotation mode is locked after the first placement; you can still rotate unplaced pieces.'
+					);
 
 				const secondary = await page.getByTestId('puzzle-toolbar-secondary').element();
 				const reason = document.getElementById('rotation-lock-reason');

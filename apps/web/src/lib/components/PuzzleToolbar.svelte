@@ -673,6 +673,10 @@
 			display: inline-flex;
 		}
 
+		/* The panel anchors at the compact rail's top (~viewport top) and the
+		   route clips .puzzle-main, so bound it to the viewport and scroll
+		   internally — otherwise short landscape heights cut off the lower
+		   actions and the lock explanation. */
 		.toolbar-secondary {
 			position: absolute;
 			top: 0;
@@ -680,6 +684,8 @@
 			z-index: 20;
 			display: none;
 			width: min(18rem, calc(100vw - 2rem));
+			max-height: calc(100dvh - 1rem);
+			overflow-y: auto;
 			box-sizing: border-box;
 			flex-direction: column;
 			align-items: stretch;
