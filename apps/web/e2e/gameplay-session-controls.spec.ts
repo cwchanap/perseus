@@ -28,7 +28,7 @@
 // keyboard interactions used here are reliable on WebKit (see README).
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';
-import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
+import { buildMinimalSeed } from './gameplay-fixtures/persisted-state';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const IMMEDIATE_START = {
@@ -200,24 +200,12 @@ test.describe('mission session controls', () => {
 		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
 
-		// Capture the snapshot the app itself persisted mid-run.
+		// Prove the app itself persisted the run before reload — the fixture
+		// harness clears/seeds storage only on initial entry, so this snapshot
+		// (not a re-planted copy) is what the reload restores.
 		const persisted = await gameplayPage.readPersistedSession();
 		expect(persisted?.placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
 
-		// gotoFixture's init script clears storage on every navigation — a bare
-		// reload would lose the run — so a second init script re-plants the real
-		// captured snapshot. Init scripts run in registration order, after the
-		// clear/seed script, simulating storage surviving the reload.
-		await page.addInitScript(
-			(args: { key: string; json: string }) => {
-				try {
-					localStorage.setItem(args.key, args.json);
-				} catch {
-					/* storage may be unavailable pre-navigation */
-				}
-			},
-			{ key: progressKey(FIXTURE_ID), json: JSON.stringify(persisted) }
-		);
 		await page.reload({ waitUntil: 'domcontentloaded' });
 
 		// The restored timed run gates on explicit re-engagement, then the board
