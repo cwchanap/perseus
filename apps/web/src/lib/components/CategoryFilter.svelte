@@ -74,6 +74,11 @@
 	.category-filter {
 		display: flex;
 		max-width: 100%;
+		/* Fieldsets get a UA min-inline-size: min-content floor that overrides
+		   max-width and pushes the chip row past the viewport on narrow
+		   screens; min-width: 0 lets max-width: 100% constrain the box so the
+		   row scrolls inside it as designed. */
+		min-width: 0;
 		flex-wrap: nowrap;
 		gap: 0.5625rem;
 		margin: 0;
