@@ -1045,6 +1045,127 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('tracks the responsive tray default on viewport resize and resets a manual override on puzzle load', async () => {
+		// Two regressed behaviors covered together through one mounted route:
+		// 1) an untouched tray must re-derive its default when the desktop
+		//    viewport changes (the old code computed it once at load);
+		// 2) a deliberate resize survives ordinary layout shrink/re-widen but
+		//    is cleared by the next loadPuzzle on the same mounted route.
+		// The portrait source keeps the responsive default strictly below the
+		// clamped manual maximum so the post-navigation assertion is
+		// unambiguous.
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: NEXT_PUZZLE_ID,
+			name: 'Next Mission',
+			imageWidth: 400,
+			imageHeight: 800,
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: NEXT_PUZZLE_ID }),
+				createPiece(1, 1, 0, { puzzleId: NEXT_PUZZLE_ID })
+			]
+		};
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
+			id === NEXT_PUZZLE_ID ? nextPuzzle : createMockPuzzle()
+		);
+
+		const puzzle = createMockPuzzle();
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1100 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+			render(PuzzlePage);
+			await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+			let layoutWidth = 1100;
+			// .game-layout lives in the {:else} of {#if loading}, so loading a
+			// different puzzle recreates the element — the clientWidth stub
+			// must be re-applied on the fresh node after navigation.
+			const stubLayoutWidth = () => {
+				Object.defineProperty(document.querySelector<HTMLElement>('.game-layout')!, 'clientWidth', {
+					configurable: true,
+					get: () => layoutWidth
+				});
+			};
+			stubLayoutWidth();
+			const trayWidth = () =>
+				document
+					.querySelector<HTMLElement>('.game-layout')!
+					.style.getPropertyValue('--tray-width')
+					.trim();
+
+			window.dispatchEvent(new Event('resize'));
+			const expected1100 = `${clampTrayWidth(
+				1100,
+				getDefaultPuzzleTrayWidth(puzzle, { width: 1100, height: 800 }),
+				getGameplayRailWidth(1100)
+			)}px`;
+			await expect.poll(trayWidth).toBe(expected1100);
+
+			// Untouched tray: widening the viewport re-derives the default.
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+			layoutWidth = 1440;
+			window.dispatchEvent(new Event('resize'));
+			const rail1440 = getGameplayRailWidth(1440);
+			const expected1440 = `${clampTrayWidth(
+				1440,
+				getDefaultPuzzleTrayWidth(puzzle, { width: 1440, height: 900 }),
+				rail1440
+			)}px`;
+			await expect.poll(trayWidth).toBe(expected1440);
+			expect(expected1440).not.toBe(expected1100);
+
+			// Deliberate keyboard resize sets the manual override.
+			const separator = await page.getByTestId('tray-resizer').element();
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+			const manualMax = `${clampTrayWidth(1440, Number.POSITIVE_INFINITY, rail1440)}px`;
+			await expect.poll(trayWidth).toBe(manualMax);
+
+			// The override survives ordinary layout shrink/re-widen...
+			layoutWidth = 1100;
+			window.dispatchEvent(new Event('resize'));
+			const shrunkManual = `${clampTrayWidth(1100, Number.POSITIVE_INFINITY, rail1440)}px`;
+			await expect.poll(trayWidth).toBe(shrunkManual);
+			layoutWidth = 1440;
+			window.dispatchEvent(new Event('resize'));
+			await expect.poll(trayWidth).toBe(manualMax);
+
+			// ...until a different loadPuzzle on the same mounted route clears
+			// it and the responsive default takes over again.
+			mockPageStore.set({
+				url: { pathname: `/puzzle/${NEXT_PUZZLE_ID}` },
+				params: { id: NEXT_PUZZLE_ID },
+				route: { id: '/puzzle/[id]' },
+				status: 200,
+				error: null
+			});
+			await expectMissionName('NEXT MISSION');
+			stubLayoutWidth();
+			// The recreated layout element was measured before the stub
+			// landed; nudge the resize path so gameLayoutWidth re-reads the
+			// stubbed clientWidth.
+			window.dispatchEvent(new Event('resize'));
+			const expectedNext = `${clampTrayWidth(
+				1440,
+				getDefaultPuzzleTrayWidth(nextPuzzle, { width: 1440, height: 900 }),
+				rail1440
+			)}px`;
+			await expect.poll(trayWidth).toBe(expectedNext);
+			expect(expectedNext).not.toBe(manualMax);
+		} finally {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
+	});
+
 	it('recomputes board metrics from the applied tray width', async () => {
 		const restoreViewport = setDesktopViewport();
 		try {
