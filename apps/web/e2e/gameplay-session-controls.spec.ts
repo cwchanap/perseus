@@ -10,7 +10,9 @@
 //   3. A restored active Relaxed+rotation session enters directly, then
 //      exercises Pause and Restart with a fresh run id and retained choices.
 //   4. A restored active Timed session still presents Resume Mission.
-//   5. webkit-mobile reachability of the setup dialog and Pause action,
+//   5. A real progressed run resumes after reload: the placed piece is back
+//      on the board and the tray is short the placed slot.
+//   6. webkit-mobile reachability of the setup dialog and Pause action,
 //      a dynamic-height viewport, and Shift+Tab focus wrap.
 //
 // Determinism: the timer test passes `clock: { startAt }` to gotoFixture,
@@ -26,7 +28,7 @@
 // keyboard interactions used here are reliable on WebKit (see README).
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';
-import { buildMinimalSeed } from './gameplay-fixtures/persisted-state';
+import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const IMMEDIATE_START = {
@@ -188,6 +190,41 @@ test.describe('mission session controls', () => {
 		await expect(page.getByRole('dialog', { name: 'Exit Mission' })).toHaveCount(0);
 		const persisted = await gameplayPage.readPersistedSession();
 		expect(persisted?.placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
+	});
+
+	test('reloaded run resumes with restored board and tray state @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
+		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+
+		// Capture the snapshot the app itself persisted mid-run.
+		const persisted = await gameplayPage.readPersistedSession();
+		expect(persisted?.placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
+
+		// gotoFixture's init script clears storage on every navigation — a bare
+		// reload would lose the run — so a second init script re-plants the real
+		// captured snapshot. Init scripts run in registration order, after the
+		// clear/seed script, simulating storage surviving the reload.
+		await page.addInitScript(
+			(args: { key: string; json: string }) => {
+				try {
+					localStorage.setItem(args.key, args.json);
+				} catch {
+					/* storage may be unavailable pre-navigation */
+				}
+			},
+			{ key: progressKey(FIXTURE_ID), json: JSON.stringify(persisted) }
+		);
+		await page.reload({ waitUntil: 'domcontentloaded' });
+
+		// The restored timed run gates on explicit re-engagement, then the board
+		// shows the placed piece and the tray is short exactly one slot.
+		await gameplayPage.resumeMission();
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(3);
 	});
 
 	test('Pause Discard removes saved progress after confirmation @smoke', async ({
