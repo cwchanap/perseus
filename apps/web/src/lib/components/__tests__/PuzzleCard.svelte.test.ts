@@ -304,12 +304,24 @@ describe('PuzzleCard', () => {
 		expect(rowStyle.alignItems).toMatch(/^(flex|flow)-end$/);
 	});
 
-	it('keeps the status stack clear of the title row and category badge at 390x844', async () => {
+	it('keeps the status stack clear of the title row and category badge at 390x844 (ready and processing)', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
+		const intersects = (a: DOMRect, b: DOMRect) =>
+			a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+		// Every edge inside the art box, not just the bottom.
+		const containedBy = (inner: DOMRect, outer: DOMRect) =>
+			inner.left >= outer.left &&
+			inner.right <= outer.right &&
+			inner.top >= outer.top &&
+			inner.bottom <= outer.bottom;
+		const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
+		// Mobile gallery: viewport minus 1.125rem padding on both sides.
+		const GALLERY_CARD_390 = 390 - 2 * 18;
 		try {
 			await page.viewport(390, 844);
-			render(PuzzleCard, {
+
+			const ready = await render(PuzzleCard, {
 				family: {
 					...mockFamily,
 					category: 'Nature',
@@ -319,23 +331,58 @@ describe('PuzzleCard', () => {
 				progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]),
 				onBookmarkToggle: () => {}
 			});
+			const readyCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+			readyCard.style.width = `${GALLERY_CARD_390}px`;
 
-			const intersects = (a: DOMRect, b: DOMRect) =>
-				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
 			const stack = rectOf('card-status-stack');
 			const art = rectOf('puzzle-card-art');
 			const title = rectOf('puzzle-card-title');
 			const bookmark = rectOf('card-bookmark');
+			const category = rectOf('card-category-status');
 
 			expect(intersects(stack, title)).toBe(false);
 			expect(intersects(stack, bookmark)).toBe(false);
-			expect(intersects(stack, rectOf('card-category-status'))).toBe(false);
+			expect(intersects(stack, category)).toBe(false);
 			// Two-line clamp grows upward from the bottom row: the title and
-			// bookmark stay inside the art area and never collide.
+			// bookmark stay fully inside the art area and never collide.
 			expect(intersects(title, bookmark)).toBe(false);
-			expect(title.bottom).toBeLessThanOrEqual(art.bottom);
-			expect(bookmark.bottom).toBeLessThanOrEqual(art.bottom);
+			expect(containedBy(title, art)).toBe(true);
+			expect(containedBy(bookmark, art)).toBe(true);
+			expect(containedBy(stack, art)).toBe(true);
+			expect(containedBy(category, art)).toBe(true);
+			ready.unmount();
+
+			// Processing card at the same footprint: centered overlay text must
+			// not collide with the title row or bookmark.
+			render(PuzzleCard, {
+				family: {
+					...mockFamily,
+					category: 'Nature',
+					status: 'processing',
+					name: 'An Exceptionally Long Puzzle Family Name That Wraps To Two Lines',
+					variants: {
+						easy: { ...mockFamily.variants.easy, status: 'processing' },
+						normal: { ...mockFamily.variants.normal, status: 'processing' },
+						hard: { ...mockFamily.variants.hard, status: 'processing' }
+					}
+				},
+				onBookmarkToggle: () => {}
+			});
+			const processingCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+			processingCard.style.width = `${GALLERY_CARD_390}px`;
+
+			const pArt = rectOf('puzzle-card-art');
+			const pTitle = rectOf('puzzle-card-title');
+			const pBookmark = rectOf('card-bookmark');
+			const overlay = await page.getByTestId('card-status-overlay').element();
+			const overlayText = (overlay.querySelector('span') as HTMLElement).getBoundingClientRect();
+
+			await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+			expect(intersects(overlayText, pTitle)).toBe(false);
+			expect(intersects(overlayText, pBookmark)).toBe(false);
+			expect(intersects(pTitle, pBookmark)).toBe(false);
+			expect(containedBy(pTitle, pArt)).toBe(true);
+			expect(containedBy(pBookmark, pArt)).toBe(true);
 		} finally {
 			await page.viewport(originalWidth, originalHeight);
 		}
@@ -346,11 +393,17 @@ describe('PuzzleCard', () => {
 		const originalHeight = window.innerHeight;
 		const intersects = (a: DOMRect, b: DOMRect) =>
 			a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+		const containedBy = (inner: DOMRect, outer: DOMRect) =>
+			inner.left >= outer.left &&
+			inner.right <= outer.right &&
+			inner.top >= outer.top &&
+			inner.bottom <= outer.bottom;
 		const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
 		try {
 			await page.viewport(640, 800);
 
 			// Ready card: real difficulty links plus clear/progress badges.
+			const onBookmarkToggle = vi.fn();
 			const ready = await render(PuzzleCard, {
 				family: {
 					...mockFamily,
@@ -359,7 +412,7 @@ describe('PuzzleCard', () => {
 				},
 				highestClearedDifficulty: 'normal',
 				progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]),
-				onBookmarkToggle: () => {}
+				onBookmarkToggle
 			});
 			// Three-column grid at 640px lands cards at ~180px squares.
 			const readyCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
@@ -374,16 +427,31 @@ describe('PuzzleCard', () => {
 			expect(intersects(stack, title)).toBe(false);
 			expect(intersects(stack, bookmark)).toBe(false);
 			expect(intersects(stack, rectOf('card-category-status'))).toBe(false);
-			expect(title.bottom).toBeLessThanOrEqual(art.bottom);
-			expect(bookmark.bottom).toBeLessThanOrEqual(art.bottom);
-			await expect.element(page.getByRole('button', { name: /Add bookmark:/ })).toBeVisible();
-			await expect
-				.element(page.getByRole('link', { name: /Hard difficulty/ }))
-				.toHaveAttribute('href', '/puzzle/var-h');
+			expect(containedBy(title, art)).toBe(true);
+			expect(containedBy(bookmark, art)).toBe(true);
+			expect(containedBy(stack, art)).toBe(true);
+
+			// Activation, not just visibility: a physical click must reach the
+			// bookmark button and the hard-difficulty link at this footprint.
+			await page.getByRole('button', { name: /Add bookmark:/ }).click();
+			expect(onBookmarkToggle).toHaveBeenCalledOnce();
+
+			const hardLink = (await page
+				.getByRole('link', { name: /Hard difficulty/ })
+				.element()) as HTMLAnchorElement;
+			expect(hardLink.getAttribute('href')).toBe('/puzzle/var-h');
+			let linkActivated = false;
+			hardLink.addEventListener('click', (e) => {
+				linkActivated = true;
+				e.preventDefault();
+			});
+			await page.getByRole('link', { name: /Hard difficulty/ }).click();
+			expect(linkActivated).toBe(true);
 			ready.unmount();
 
 			// Processing card: centered overlay text must not collide with the
 			// title row, and actions are unavailable groups, not links.
+			const onProcessingBookmark = vi.fn();
 			render(PuzzleCard, {
 				family: {
 					...mockFamily,
@@ -396,7 +464,7 @@ describe('PuzzleCard', () => {
 						hard: { ...mockFamily.variants.hard, status: 'processing' }
 					}
 				},
-				onBookmarkToggle: () => {}
+				onBookmarkToggle: onProcessingBookmark
 			});
 			const processingCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 			processingCard.style.width = '180px';
@@ -411,8 +479,12 @@ describe('PuzzleCard', () => {
 			expect(intersects(overlayText, pTitle)).toBe(false);
 			expect(intersects(overlayText, pBookmark)).toBe(false);
 			expect(intersects(pTitle, pBookmark)).toBe(false);
-			expect(pTitle.bottom).toBeLessThanOrEqual(pArt.bottom);
-			expect(pBookmark.bottom).toBeLessThanOrEqual(pArt.bottom);
+			expect(containedBy(pTitle, pArt)).toBe(true);
+			expect(containedBy(pBookmark, pArt)).toBe(true);
+			// The dimming overlay is pointer-events-none, so the bookmark must
+			// still receive a physical click underneath it.
+			await page.getByRole('button', { name: /Add bookmark:/ }).click();
+			expect(onProcessingBookmark).toHaveBeenCalledOnce();
 			expect(page.getByRole('link', { name: /difficulty/ }).query()).toBeNull();
 			const unavailable = page.getByTestId('difficulty-action').nth(2);
 			await expect.element(unavailable).toBeVisible();
