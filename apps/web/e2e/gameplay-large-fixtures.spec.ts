@@ -308,26 +308,50 @@ test.describe('gameplay workspace polish smoke', () => {
 				};
 			});
 
+		// Every compared metric must be stable before it is recorded: the
+		// tray width, board viewport and slot size settle on different
+		// frames (ResizeObserver, fonts, layout), so a tray-width-only wait
+		// could capture still-moving geometry and the ≤2px reload compare
+		// below would measure noise, not the responsive default.
+		const waitForStableGeometry = async () => {
+			let previous: Awaited<ReturnType<typeof measure>> | null = null;
+			await expect
+				.poll(
+					async () => {
+						const next = await measure();
+						const stable =
+							previous !== null &&
+							next.trayWidth === previous.trayWidth &&
+							next.boardViewportWidth === previous.boardViewportWidth &&
+							next.boardViewportHeight === previous.boardViewportHeight &&
+							next.slotSize === previous.slotSize;
+						previous = next;
+						return stable;
+					},
+					{ timeout: 10_000 }
+				)
+				.toBe(true);
+			return previous!;
+		};
+
 		await page.evaluate(() => document.fonts.ready);
 		const at1100 = await measure();
 
 		// Widen the viewport WITHOUT any separator interaction.
 		await page.setViewportSize({ width: 1440, height: 900 });
 		await page.evaluate(() => document.fonts.ready);
-		// Let the ResizeObserver/layout settle at the new viewport.
-		await expect
-			.poll(async () => (await measure()).trayWidth, { timeout: 5000 })
-			.not.toBe(at1100.trayWidth);
-		const at1440 = await measure();
+		// Let the ResizeObserver/layout settle at the new viewport, then
+		// confirm the untouched tray actually followed the responsive
+		// default — a no-op resize would make the reload compare below
+		// assert stale geometry trivially.
+		const at1440 = await waitForStableGeometry();
+		expect(at1440.trayWidth).not.toBe(at1100.trayWidth);
 
 		await page.reload();
 		await page.setViewportSize({ width: 1440, height: 900 });
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 		await page.evaluate(() => document.fonts.ready);
-		await expect
-			.poll(async () => (await measure()).trayWidth, { timeout: 5000 })
-			.toBeGreaterThan(0);
-		const reloaded = await measure();
+		const reloaded = await waitForStableGeometry();
 
 		// The untouched resize must land on the same geometry a fresh load at
 		// 1440x900 produces — within 2px for sub-pixel/board rounding.

@@ -731,6 +731,66 @@ test.describe('Main Gallery Page', () => {
 		await expect(page.getByTestId('load-more-spinner')).toBeHidden();
 		await expect(page.getByTestId('loading-state')).toBeHidden();
 	});
+
+	test('labeled category chips fit the real header with search open at 1440/1201 and stay compact at 390', async ({
+		page
+	}) => {
+		const family = makeFamily('fam-header-fit');
+		await mockFamilyList(page, [family]);
+		await page.goto('/');
+		await expect(page.getByTestId('loading-state')).toBeHidden();
+		const filter = page.getByTestId('category-filter');
+		await expect(filter).toBeVisible();
+
+		// The wide band (>= 75.0625rem) is the two-column header with an
+		// always-open search. The component fit test pins a synthetic 50rem
+		// wrapper around the fieldset; here the fieldset must fit the REAL
+		// auto-sized categories column, unadjusted — scrollWidth <=
+		// clientWidth with every chip inside the fieldset's box.
+		for (const width of [1440, 1201]) {
+			await page.setViewportSize({ width, height: 900 });
+			await page.getByTestId('gallery-search-disclosure').evaluate((el) => {
+				(el as HTMLDetailsElement).open = true;
+			});
+			await expect(page.getByTestId('search-input')).toBeVisible();
+			// Filter-local labels are the wide-band presentation.
+			await expect(filter.locator('.category-chip-label').first()).toBeVisible();
+
+			const fit = await filter.evaluate((el) => {
+				const box = el.getBoundingClientRect();
+				return {
+					scrollWidth: el.scrollWidth,
+					clientWidth: el.clientWidth,
+					left: box.left,
+					right: box.right,
+					chips: [...el.querySelectorAll('.category-option')].map((chip) => {
+						const r = chip.getBoundingClientRect();
+						return { left: r.left, right: r.right };
+					})
+				};
+			});
+			expect(
+				fit.scrollWidth,
+				`category filter scrolls at ${width}px: scrollWidth ${fit.scrollWidth} > clientWidth ${fit.clientWidth}`
+			).toBeLessThanOrEqual(fit.clientWidth);
+			for (const chip of fit.chips) {
+				expect(chip.left).toBeGreaterThanOrEqual(fit.left - 0.5);
+				expect(chip.right).toBeLessThanOrEqual(fit.right + 0.5);
+			}
+			const docOverflow = await page.evaluate(
+				() => document.documentElement.scrollWidth - window.innerWidth
+			);
+			expect(docOverflow, `document horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
+		}
+
+		// Below the compact band the chips collapse to icons while the
+		// radios keep their accessible names.
+		await page.setViewportSize({ width: 390, height: 844 });
+		await expect(filter.locator('.category-chip-label').first()).toBeHidden();
+		for (const name of ['Animals', 'Architecture', 'Travel']) {
+			await expect(page.getByRole('radio', { name })).toBeVisible();
+		}
+	});
 });
 
 test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
