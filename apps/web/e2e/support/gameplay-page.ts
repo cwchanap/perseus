@@ -16,6 +16,10 @@
 // scripts have an unspecified evaluation order, so seeding the session after
 // the app read it (or vice versa) would be non-deterministic. One script does
 // clear -> seed -> freeze-config, synchronously, before any app script runs.
+// The clear/seed half runs only on initial entry (gated on a sessionStorage
+// once-flag, which survives reload), so progress the app itself persists is
+// still there after page.reload(); the config global is re-installed on every
+// navigation because each load is a fresh realm.
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { loadPersistedSession, type PersistedPuzzleSessionV1 } from '@perseus/game-core';
@@ -291,33 +295,51 @@ export class GameplayPage {
 				configJson: string;
 				configGlobal: string;
 			}) => {
+				// Clear/seed only on initial entry. sessionStorage survives a
+				// page reload within the tab, so the once-flag keeps the second
+				// and later navigations from erasing progress the app itself
+				// persisted — reload-resume tests exercise the real restore
+				// path rather than a re-seeded snapshot.
+				let seeded = false;
 				try {
-					localStorage.clear();
+					seeded = sessionStorage.getItem('__perseus_e2e_storage_seeded__') === '1';
 				} catch {
 					/* storage may be unavailable pre-navigation */
 				}
-				try {
-					sessionStorage.clear();
-				} catch {
-					/* same */
-				}
-				if (args.sessionJson) {
+				if (!seeded) {
 					try {
-						localStorage.setItem(args.progressKey, args.sessionJson);
+						localStorage.clear();
 					} catch {
-						/* ignore quota/access errors */
+						/* storage may be unavailable pre-navigation */
 					}
-				}
-				if (args.statsJson) {
 					try {
-						localStorage.setItem(args.statsKey, args.statsJson);
+						sessionStorage.clear();
 					} catch {
-						/* ignore quota/access errors */
+						/* same */
 					}
-				}
-				if (args.preferencesJson) {
+					if (args.sessionJson) {
+						try {
+							localStorage.setItem(args.progressKey, args.sessionJson);
+						} catch {
+							/* ignore quota/access errors */
+						}
+					}
+					if (args.statsJson) {
+						try {
+							localStorage.setItem(args.statsKey, args.statsJson);
+						} catch {
+							/* ignore quota/access errors */
+						}
+					}
+					if (args.preferencesJson) {
+						try {
+							localStorage.setItem(args.preferencesKey, args.preferencesJson);
+						} catch {
+							/* ignore quota/access errors */
+						}
+					}
 					try {
-						localStorage.setItem(args.preferencesKey, args.preferencesJson);
+						sessionStorage.setItem('__perseus_e2e_storage_seeded__', '1');
 					} catch {
 						/* ignore quota/access errors */
 					}
