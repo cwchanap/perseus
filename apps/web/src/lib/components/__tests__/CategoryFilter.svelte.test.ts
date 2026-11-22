@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
+import '../../../routes/layout.css';
 import CategoryFilter from '../CategoryFilter.svelte';
 import { PUZZLE_CATEGORIES, CATEGORY_ALL } from '$lib/constants/categories';
 
@@ -138,16 +139,10 @@ describe('CategoryFilter', () => {
 				column.style.width = `${WIDE_CATEGORY_BUDGET_PX}px`;
 				filter.parentElement!.insertBefore(column, filter);
 				column.appendChild(filter);
-				// In production the radios are clipped to 1px and add no width;
-				// this harness has no Tailwind, so subtract whatever their
-				// rendered boxes contribute before comparing to the budget.
-				const radioWidth = [...filter.querySelectorAll('input[type="radio"]')].reduce(
-					(sum, input) => sum + (input as HTMLElement).getBoundingClientRect().width,
-					0
-				);
-				const chipRowWidth = filter.scrollWidth - radioWidth;
-				expect(chipRowWidth).toBeLessThanOrEqual(filter.clientWidth);
-				expect(chipRowWidth).toBeLessThanOrEqual(WIDE_CATEGORY_BUDGET_PX);
+				// The radios are absolutely positioned overlays, so they add
+				// no width; scrollWidth is the chip row itself.
+				expect(filter.scrollWidth).toBeLessThanOrEqual(filter.clientWidth);
+				expect(filter.scrollWidth).toBeLessThanOrEqual(WIDE_CATEGORY_BUDGET_PX);
 				column.replaceWith(filter);
 				unmount();
 			}

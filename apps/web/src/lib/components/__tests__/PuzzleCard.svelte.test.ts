@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
+import '../../../routes/layout.css';
 import PuzzleCard from '../PuzzleCard.svelte';
 import { getFamilyThumbnailUrl } from '$lib/services/api';
 import type { PuzzleFamilySummary } from '@perseus/types';
@@ -290,17 +291,17 @@ describe('PuzzleCard', () => {
 
 		const title = page.getByTestId('puzzle-card-title');
 		await expect.element(title).toBeVisible();
-		// Tailwind utilities don't load in this harness, so assert the
-		// classes; the geometry they produce is covered by the viewport
-		// rect checks below and by E2E.
-		await expect.element(title).toHaveClass('line-clamp-2');
-		await expect.element(title).not.toHaveClass('truncate');
 		const titleEl = (await title.element()) as HTMLElement;
+		const titleStyle = getComputedStyle(titleEl);
+		// layout.css is imported above, so these are the production styles:
+		// two-line clamp, no fixed height, bottom-aligned absolute row.
+		expect(titleStyle.getPropertyValue('-webkit-line-clamp')).toBe('2');
 		expect(titleEl.className).not.toMatch(/min-h|h-\[/);
 
 		const row = titleEl.parentElement as HTMLElement;
-		expect(row.className).toContain('items-end');
-		expect(row.className).not.toContain('items-center');
+		const rowStyle = getComputedStyle(row);
+		expect(rowStyle.position).toBe('absolute');
+		expect(rowStyle.alignItems).toMatch(/^(flex|flow)-end$/);
 	});
 
 	it('keeps the status stack clear of the title row and category badge at 390x844', async () => {
@@ -340,11 +341,49 @@ describe('PuzzleCard', () => {
 		}
 	});
 
-	it('keeps title, bookmark and overlay usable on a 640px three-column card', async () => {
+	it('keeps title, bookmark and actions usable on 640px three-column cards (ready and processing)', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
+		const intersects = (a: DOMRect, b: DOMRect) =>
+			a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+		const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
 		try {
 			await page.viewport(640, 800);
+
+			// Ready card: real difficulty links plus clear/progress badges.
+			const ready = await render(PuzzleCard, {
+				family: {
+					...mockFamily,
+					category: 'Abstract',
+					name: 'An Exceptionally Long Puzzle Family Name That Wraps To Two Lines'
+				},
+				highestClearedDifficulty: 'normal',
+				progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]),
+				onBookmarkToggle: () => {}
+			});
+			// Three-column grid at 640px lands cards at ~180px squares.
+			const readyCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+			readyCard.style.width = '180px';
+
+			const art = rectOf('puzzle-card-art');
+			const title = rectOf('puzzle-card-title');
+			const bookmark = rectOf('card-bookmark');
+			const stack = rectOf('card-status-stack');
+
+			expect(intersects(title, bookmark)).toBe(false);
+			expect(intersects(stack, title)).toBe(false);
+			expect(intersects(stack, bookmark)).toBe(false);
+			expect(intersects(stack, rectOf('card-category-status'))).toBe(false);
+			expect(title.bottom).toBeLessThanOrEqual(art.bottom);
+			expect(bookmark.bottom).toBeLessThanOrEqual(art.bottom);
+			await expect.element(page.getByRole('button', { name: /Add bookmark:/ })).toBeVisible();
+			await expect
+				.element(page.getByRole('link', { name: /Hard difficulty/ }))
+				.toHaveAttribute('href', '/puzzle/var-h');
+			ready.unmount();
+
+			// Processing card: centered overlay text must not collide with the
+			// title row, and actions are unavailable groups, not links.
 			render(PuzzleCard, {
 				family: {
 					...mockFamily,
@@ -359,27 +398,25 @@ describe('PuzzleCard', () => {
 				},
 				onBookmarkToggle: () => {}
 			});
+			const processingCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+			processingCard.style.width = '180px';
 
-			// Three-column grid at 640px lands cards at ~180px; pin the card to
-			// that footprint so the overlay/title/bookmark geometry is measured
-			// at the real column width.
-			const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
-			card.style.width = '180px';
-
-			const intersects = (a: DOMRect, b: DOMRect) =>
-				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
-			const art = rectOf('puzzle-card-art');
-			const title = rectOf('puzzle-card-title');
-			const bookmark = rectOf('card-bookmark');
+			const pArt = rectOf('puzzle-card-art');
+			const pTitle = rectOf('puzzle-card-title');
+			const pBookmark = rectOf('card-bookmark');
+			const overlay = await page.getByTestId('card-status-overlay').element();
+			const overlayText = (overlay.querySelector('span') as HTMLElement).getBoundingClientRect();
 
 			await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
-			expect(intersects(title, bookmark)).toBe(false);
-			expect(title.bottom).toBeLessThanOrEqual(art.bottom);
-			expect(bookmark.bottom).toBeLessThanOrEqual(art.bottom);
-			expect(title.width).toBeGreaterThan(0);
-			await expect.element(page.getByRole('button', { name: /Add bookmark:/ })).toBeVisible();
-			await expect.element(page.getByTestId('difficulty-action').nth(2)).toBeVisible();
+			expect(intersects(overlayText, pTitle)).toBe(false);
+			expect(intersects(overlayText, pBookmark)).toBe(false);
+			expect(intersects(pTitle, pBookmark)).toBe(false);
+			expect(pTitle.bottom).toBeLessThanOrEqual(pArt.bottom);
+			expect(pBookmark.bottom).toBeLessThanOrEqual(pArt.bottom);
+			expect(page.getByRole('link', { name: /difficulty/ }).query()).toBeNull();
+			const unavailable = page.getByTestId('difficulty-action').nth(2);
+			await expect.element(unavailable).toBeVisible();
+			expect((await unavailable.element()).tagName).toBe('DIV');
 		} finally {
 			await page.viewport(originalWidth, originalHeight);
 		}

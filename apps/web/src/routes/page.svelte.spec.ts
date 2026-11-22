@@ -2,6 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { mockPage } from '$lib/testing/app-state-mock.svelte';
+import './layout.css';
 import Page from './+page.svelte';
 import { fetchPuzzles } from '$lib/services/api';
 import type { PuzzleFamilyListResponse, PuzzleFamilySummary } from '$lib/types/puzzle';

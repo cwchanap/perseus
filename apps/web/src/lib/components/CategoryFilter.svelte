@@ -46,7 +46,7 @@
 					chosen = cat;
 					onSelect(cat);
 				}}
-				class="sr-only"
+				class="category-input"
 			/>
 			{#if cat === CATEGORY_ALL}
 				<span class="category-chip category-chip-all">
@@ -92,6 +92,18 @@
 		position: relative;
 		display: flex;
 		flex: 0 0 auto;
+	}
+
+	/* The radio is the real hit target: it invisibly covers the whole chip,
+	   so pointer input (mouse, touch, synthetic clicks) reaches the input
+	   itself and the checked/focus styling below keeps working via the
+	   sibling selector. Keyboard focus and the accessible name (from the
+	   label text) are unchanged. */
+	.category-input {
+		position: absolute;
+		inset: 0;
+		margin: 0;
+		opacity: 0;
 		cursor: pointer;
 	}
 
@@ -105,11 +117,6 @@
 		border-radius: 1.25rem;
 		background: var(--bg-2);
 		color: var(--text-2);
-		/* The chip is a visual proxy for the label-wrapped radio: hit-testing
-		   its subtree (including the badge's clipped sr-only span) is what
-		   intercepted synthetic clicks aimed at the input. Clicks fall
-		   through to the <label>, which activates the radio. */
-		pointer-events: none;
 		transition:
 			border-color 0.15s ease,
 			background 0.15s ease,
@@ -161,23 +168,6 @@
 
 	.category-icon-chip :global([data-testid='category-badge']) {
 		color: var(--category-accent);
-	}
-
-	/* Clip the chip's sr-only text locally. In the app Tailwind's .sr-only
-	   does this; doing it filter-locally keeps the chip's geometry (and its
-	   hit targets) identical where utilities aren't loaded. The text stays
-	   in the accessibility tree, so each radio keeps its accessible name. */
-	.category-chip-all .sr-only,
-	.category-icon-chip :global([data-testid='category-badge'] .sr-only) {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		white-space: nowrap;
-		border: 0;
 	}
 
 	.category-chip :global(svg) {
