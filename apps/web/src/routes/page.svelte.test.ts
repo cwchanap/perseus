@@ -1569,6 +1569,194 @@ describe('Gallery Page', () => {
 		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsBeforeReIntersect);
 	});
 
+	it.each(['success', 'error', 'aborted by a committed filter switch'] as const)(
+		'leaves no spinner behind once the current request settles (%s)',
+		async (outcome) => {
+			let resolvePage2: ((value: FetchPuzzlesResult) => void) | undefined;
+			let rejectPage2: ((reason: unknown) => void) | undefined;
+			let resolveFresh: ((value: FetchPuzzlesResult) => void) | undefined;
+
+			mockedFetchPuzzles.mockImplementation(async (params) => {
+				const { category, cursor } = params ?? {};
+				if (cursor === 'cursor-page2') {
+					return new Promise<FetchPuzzlesResult>((resolve, reject) => {
+						resolvePage2 = resolve;
+						rejectPage2 = reject;
+						params?.signal?.addEventListener(
+							'abort',
+							() => reject(new DOMException('Aborted', 'AbortError')),
+							{ once: true }
+						);
+					});
+				}
+				if (category === 'Nature') {
+					return new Promise<FetchPuzzlesResult>((resolve) => {
+						resolveFresh = resolve;
+					});
+				}
+				return {
+					families: [makeFamily('p1', { name: 'First Page' })],
+					total: 21,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
+			});
+
+			render(GalleryPage);
+			await expect.element(page.getByText('First Page')).toBeVisible();
+			expect(intersectionCallback).not.toBeNull();
+
+			intersectionCallback?.(
+				[{ isIntersecting: true } as IntersectionObserverEntry],
+				{} as IntersectionObserver
+			);
+			await vi.waitFor(() => {
+				expect(fetchPuzzles).toHaveBeenCalledWith(
+					expect.objectContaining({ cursor: 'cursor-page2' })
+				);
+			});
+
+			// The spinner is retained while the request is genuinely pending.
+			// Presence, not toBeVisible: the spinner is a text-less div whose
+			// box comes entirely from Tailwind, which this harness does not
+			// load — it measures 0x0 while still rendered (E2E covers pixels).
+			await expect.element(page.getByTestId('load-more-spinner')).toBeInTheDocument();
+
+			if (outcome === 'success') {
+				resolvePage2?.({
+					families: [makeFamily('p2', { name: 'Second Page' })],
+					total: 21,
+					offset: 20,
+					limit: 20
+				});
+				await expect.element(page.getByText('Second Page')).toBeVisible();
+			} else if (outcome === 'error') {
+				rejectPage2?.(new ApiError(500, 'internal_error', 'Server error'));
+				await expect.element(page.getByTestId('load-more-error')).toBeVisible();
+			} else {
+				// Committing a category switch aborts the pending next-page
+				// request; the replacement first-page fetch is held so the
+				// fresh pending state is observable before it settles.
+				await page.getByRole('radio', { name: 'Nature' }).click();
+				await vi.waitFor(() => {
+					expect(fetchPuzzles).toHaveBeenCalledWith(
+						expect.objectContaining({ category: 'Nature', offset: 0 })
+					);
+				});
+				await expect.element(page.getByTestId('loading-state')).toBeVisible();
+				expect(page.getByTestId('load-more-spinner').query()).toBeNull();
+				resolveFresh?.({
+					families: [makeFamily('fresh-1', { name: 'Filtered Fresh' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				});
+				await expect.element(page.getByText('Filtered Fresh')).toBeVisible();
+			}
+
+			await expect.poll(() => page.getByTestId('load-more-spinner').query()).toBeNull();
+			await expect.poll(() => page.getByTestId('loading-state').query()).toBeNull();
+		}
+	);
+
+	it('ignores a superseded first-page response that settles after the current filter request', async () => {
+		let resolveInitial: ((value: FetchPuzzlesResult) => void) | undefined;
+		let rejectSuperseded: ((reason: unknown) => void) | undefined;
+		let resolveLatest: ((value: FetchPuzzlesResult) => void) | undefined;
+
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q, category } = params ?? {};
+			if (!q && !category) {
+				return new Promise<FetchPuzzlesResult>((resolve) => {
+					resolveInitial = resolve;
+				});
+			}
+			if (category === 'Nature') {
+				return {
+					families: [makeFamily('fresh-1', { name: 'Nature Result' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+			if (category === 'Art') {
+				return new Promise<FetchPuzzlesResult>((_, reject) => {
+					rejectSuperseded = reject;
+				});
+			}
+			if (category === 'Food') {
+				return new Promise<FetchPuzzlesResult>((resolve) => {
+					resolveLatest = resolve;
+				});
+			}
+			return { families: [], total: 0, offset: 0, limit: 20 };
+		});
+
+		render(GalleryPage);
+		// The initial first-page request is still in flight.
+		await expect.element(page.getByTestId('loading-state')).toBeVisible();
+
+		// A committed URL filter change supersedes it before it resolves.
+		mockPage.set({ url: new URL('http://localhost/?category=Nature') });
+		await expect.element(page.getByText('Nature Result')).toBeVisible();
+
+		// The older request lands late: none of its payload may be applied.
+		resolveInitial?.({
+			families: [makeFamily('stale-1', { name: 'Stale Result' })],
+			total: 99,
+			offset: 0,
+			limit: 20,
+			nextCursor: 'stale-cursor'
+		});
+		await Promise.resolve();
+
+		await expect.element(page.getByText('Nature Result')).toBeVisible();
+		expect(page.getByText('Stale Result').query()).toBeNull();
+		await expect.element(page.getByTestId('availability-badge')).toMatchTextContent('1 AVAILABLE');
+
+		// The stale cursor must not re-arm infinite scroll: intersection is a
+		// no-op while the current result reports hasMore = false.
+		const callsBeforeStaleIntersect = mockedFetchPuzzles.mock.calls.length;
+		expect(intersectionCallback).not.toBeNull();
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await Promise.resolve();
+		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsBeforeStaleIntersect);
+
+		// A superseded request that rejects late cannot raise an error or a
+		// spinner either: the Art request is superseded by Food, then rejects.
+		mockPage.set({ url: new URL('http://localhost/?category=Art') });
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ category: 'Art', offset: 0 })
+			);
+		});
+		mockPage.set({ url: new URL('http://localhost/?category=Food') });
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ category: 'Food', offset: 0 })
+			);
+		});
+		resolveLatest?.({
+			families: [makeFamily('late-1', { name: 'Food Result' })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+		await expect.element(page.getByText('Food Result')).toBeVisible();
+
+		rejectSuperseded?.(new ApiError(500, 'internal_error', 'Superseded failure'));
+		await Promise.resolve();
+
+		await expect.element(page.getByText('Food Result')).toBeVisible();
+		expect(page.getByTestId('error-state').query()).toBeNull();
+		await expect.poll(() => page.getByTestId('loading-state').query()).toBeNull();
+		await expect.poll(() => page.getByTestId('load-more-spinner').query()).toBeNull();
+	});
+
 	it('treats whitespace-only search as no filter after a real search term', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
 			families: [makeFamily('p1')],

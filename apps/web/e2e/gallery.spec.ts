@@ -727,6 +727,9 @@ test.describe('Main Gallery Page', () => {
 
 		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
 		await expect.poll(() => callCount).toBe(2);
+		// Once the next-page request has settled, neither request spinner persists.
+		await expect(page.getByTestId('load-more-spinner')).toBeHidden();
+		await expect(page.getByTestId('loading-state')).toBeHidden();
 	});
 });
 
