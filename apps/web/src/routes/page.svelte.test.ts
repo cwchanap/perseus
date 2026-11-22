@@ -1620,7 +1620,9 @@ describe('Gallery Page', () => {
 			// The spinner is retained while the request is genuinely pending.
 			// Presence, not toBeVisible: the spinner is a text-less div whose
 			// box comes entirely from Tailwind, which this harness does not
-			// load — it measures 0x0 while still rendered (E2E covers pixels).
+			// load — it measures 0x0 while still rendered. No suite covers a
+			// *visible* pending spinner: the gallery E2E proves only settled
+			// absence (both spinners hidden once page 2 lands).
 			await expect.element(page.getByTestId('load-more-spinner')).toBeInTheDocument();
 
 			if (outcome === 'success') {

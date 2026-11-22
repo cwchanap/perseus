@@ -526,10 +526,15 @@ describe('PuzzleInventoryPanel', () => {
 		// The tray contains that envelope inside each slot: the image bounds
 		// may spill past the piece's own content box, but must not cross the
 		// slot border by more than half the grid gap — the shared breathing
-		// room between adjacent slots.
-		const gapHalf = () =>
-			parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--inventory-gap')) /
-				2 || 0;
+		// room between adjacent slots. Read the resolved gap from the
+		// rendered .pieces-grid (gap: var(--inventory-gap)): the custom
+		// property itself is declared in rem, so parsing it directly would
+		// read ~0.4px instead of the resolved 6px.
+		const gapHalf = () => {
+			const grid = document.querySelector<HTMLElement>('.pieces-grid');
+			if (!grid) return 0;
+			return parseFloat(getComputedStyle(grid).columnGap) / 2 || 0;
+		};
 
 		function envelopeRect(pieceId: number): DOMRect {
 			const slot = document.querySelector<HTMLElement>(`[data-testid="piece-slot-${pieceId}"]`);
