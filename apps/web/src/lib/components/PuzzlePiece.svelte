@@ -186,6 +186,14 @@
 		cursor: grabbing;
 	}
 
+	/* The selected preview already fills its expanded 2x2 slot: at large
+	   slot sizes the extra hover:scale-105 would push the 140% jigsaw
+	   envelope past the slot's half-gap allowance. The unselected slot has
+	   enough clearance, so only the selected preview drops the zoom. */
+	.puzzle-piece[data-selected='true']:hover {
+		scale: none;
+	}
+
 	/* Pending: a small pulsing dot in the otherwise dark slot. Error: a small
 	   hot marker so the slot is not mistaken for an empty one. */
 	.piece-image-status {
