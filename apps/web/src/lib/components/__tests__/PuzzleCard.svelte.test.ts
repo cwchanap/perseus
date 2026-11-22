@@ -388,6 +388,90 @@ describe('PuzzleCard', () => {
 		}
 	});
 
+	it.each([
+		['1:1', 'ready'],
+		['4:3', 'processing']
+	] as const)(
+		'keeps the two-line title clear of the category badge at the 171px Bookmarks/Profile footprint (%s, %s)',
+		async (aspectRatio, status) => {
+			const originalWidth = window.innerWidth;
+			const originalHeight = window.innerHeight;
+			const intersects = (a: DOMRect, b: DOMRect) =>
+				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+			const containedBy = (inner: DOMRect, outer: DOMRect) =>
+				inner.left >= outer.left &&
+				inner.right <= outer.right &&
+				inner.top >= outer.top &&
+				inner.bottom <= outer.bottom;
+			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
+			try {
+				// /bookmarks and /profile both use grid-cols-2 gap-4 at 390px:
+				// (390 - 2*18 padding - 16 gap) / 2 = 171px cards.
+				await page.viewport(390, 844);
+
+				const onBookmarkToggle = vi.fn();
+				render(PuzzleCard, {
+					family: {
+						...mockFamily,
+						category: 'Nature',
+						aspectRatio,
+						status,
+						name: 'An Exceptionally Long Puzzle Family Name That Wraps To Two Lines',
+						variants:
+							status === 'processing'
+								? {
+										easy: { ...mockFamily.variants.easy, status: 'processing' },
+										normal: { ...mockFamily.variants.normal, status: 'processing' },
+										hard: { ...mockFamily.variants.hard, status: 'processing' }
+									}
+								: mockFamily.variants
+					},
+					highestClearedDifficulty: status === 'ready' ? 'hard' : undefined,
+					progressByVariantId:
+						status === 'ready'
+							? new Map([['var-e', { placedCount: 7, pieceCount: 16 }]])
+							: undefined,
+					onBookmarkToggle
+				});
+				const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+				card.style.width = '171px';
+
+				const art = rectOf('puzzle-card-art');
+				const title = rectOf('puzzle-card-title');
+				const bookmark = rectOf('card-bookmark');
+				const category = rectOf('card-category-status');
+
+				// The two-line title must clear the top-left category badge and
+				// stay inside the art alongside the bookmark.
+				expect(intersects(title, category)).toBe(false);
+				expect(intersects(title, bookmark)).toBe(false);
+				expect(containedBy(title, art)).toBe(true);
+				expect(containedBy(bookmark, art)).toBe(true);
+				expect(containedBy(category, art)).toBe(true);
+
+				if (status === 'ready') {
+					const stack = rectOf('card-status-stack');
+					expect(intersects(stack, title)).toBe(false);
+					expect(intersects(stack, bookmark)).toBe(false);
+					expect(containedBy(stack, art)).toBe(true);
+				}
+
+				// Activation, not just visibility: physical clicks must reach the
+				// bookmark button (and, when ready, the difficulty links).
+				await page.getByRole('button', { name: /Add bookmark:/ }).click();
+				expect(onBookmarkToggle).toHaveBeenCalledOnce();
+				if (status === 'ready') {
+					const easyLink = (await page
+						.getByRole('link', { name: /Easy difficulty/ })
+						.element()) as HTMLAnchorElement;
+					expect(easyLink.getAttribute('href')).toBe('/puzzle/var-e');
+				}
+			} finally {
+				await page.viewport(originalWidth, originalHeight);
+			}
+		}
+	);
+
 	it('keeps title, bookmark and actions usable on 640px three-column cards (ready and processing)', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
