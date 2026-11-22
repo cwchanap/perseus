@@ -59,6 +59,11 @@
 			{:else}
 				<span class="category-chip category-icon-chip">
 					<CategoryBadge category={cat} compact />
+					<!-- Filter-local label: revealed only at the wide-header
+					     breakpoint below. The badge keeps its own sr-only text, so
+					     this stays aria-hidden and never changes the radio's
+					     accessible name. -->
+					<span class="category-chip-label" aria-hidden="true">{cat}</span>
 				</span>
 			{/if}
 		</label>
@@ -87,6 +92,7 @@
 		position: relative;
 		display: flex;
 		flex: 0 0 auto;
+		cursor: pointer;
 	}
 
 	.category-chip {
@@ -99,7 +105,11 @@
 		border-radius: 1.25rem;
 		background: var(--bg-2);
 		color: var(--text-2);
-		cursor: pointer;
+		/* The chip is a visual proxy for the label-wrapped radio: hit-testing
+		   its subtree (including the badge's clipped sr-only span) is what
+		   intercepted synthetic clicks aimed at the input. Clicks fall
+		   through to the <label>, which activates the radio. */
+		pointer-events: none;
 		transition:
 			border-color 0.15s ease,
 			background 0.15s ease,
@@ -124,8 +134,50 @@
 		width: 2.75rem;
 	}
 
+	.category-chip-label {
+		display: none;
+		font-family: var(--font-mono, monospace);
+		font-size: 0.62rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+
+	/* Wide header: past the 64.01–75rem collapsed-search band the grid hands
+	   the categories column ~50rem at the 80rem cap, enough for labeled
+	   chips beside the always-open search. Below this breakpoint chips
+	   stay icon-only. */
+	@media (min-width: 75.0625rem) {
+		.category-icon-chip {
+			width: auto;
+			gap: 0.35rem;
+			padding-inline: 0.55rem;
+		}
+
+		.category-chip-label {
+			display: inline;
+		}
+	}
+
 	.category-icon-chip :global([data-testid='category-badge']) {
 		color: var(--category-accent);
+	}
+
+	/* Clip the chip's sr-only text locally. In the app Tailwind's .sr-only
+	   does this; doing it filter-locally keeps the chip's geometry (and its
+	   hit targets) identical where utilities aren't loaded. The text stays
+	   in the accessibility tree, so each radio keeps its accessible name. */
+	.category-chip-all .sr-only,
+	.category-icon-chip :global([data-testid='category-badge'] .sr-only) {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.category-chip :global(svg) {

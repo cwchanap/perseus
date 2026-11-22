@@ -156,9 +156,9 @@
 			</div>
 		{/if}
 
-		<div class="absolute right-3 bottom-3 left-3 flex min-w-0 items-center gap-2">
+		<div class="absolute right-3 bottom-3 left-3 flex min-w-0 items-end gap-2">
 			<h3
-				class="min-w-0 flex-1 truncate text-[1.05rem] font-(--font-display) font-black tracking-[0.03em]
+				class="line-clamp-2 min-w-0 flex-1 text-[1.05rem] font-(--font-display) font-black tracking-[0.03em]
 				text-(--text-0) [text-shadow:0_2px_10px_rgba(0,0,0,0.7)]"
 				title={family.name}
 				data-testid="puzzle-card-title"
