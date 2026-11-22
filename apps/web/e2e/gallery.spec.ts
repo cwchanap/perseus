@@ -784,12 +784,28 @@ test.describe('Main Gallery Page', () => {
 		}
 
 		// Below the compact band the chips collapse to icons while the
-		// radios keep their accessible names.
+		// radios keep their accessible names. The row is allowed to scroll
+		// internally (overflow-x: auto is the design), but the fieldset box
+		// itself must stay inside the viewport — min-width: 0 on the fieldset
+		// defeats the UA min-content floor that otherwise shoves the row past
+		// the right edge and produces document-level overflow.
 		await page.setViewportSize({ width: 390, height: 844 });
 		await expect(filter.locator('.category-chip-label').first()).toBeHidden();
 		for (const name of ['Animals', 'Architecture', 'Travel']) {
 			await expect(page.getByRole('radio', { name })).toBeVisible();
 		}
+		const narrowFit = await filter.evaluate((el) => {
+			const box = el.getBoundingClientRect();
+			return { right: box.right, left: box.left };
+		});
+		expect(
+			narrowFit.right,
+			`category filter overflows viewport at 390px: right ${narrowFit.right}`
+		).toBeLessThanOrEqual(390 + 0.5);
+		const narrowDocOverflow = await page.evaluate(
+			() => document.documentElement.scrollWidth - window.innerWidth
+		);
+		expect(narrowDocOverflow, 'document horizontal overflow at 390px').toBeLessThanOrEqual(0);
 	});
 });
 
