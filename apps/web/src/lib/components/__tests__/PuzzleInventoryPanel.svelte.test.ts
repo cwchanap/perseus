@@ -3,6 +3,11 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleInventoryPanel from '../PuzzleInventoryPanel.svelte';
 import type { Puzzle } from '$lib/types/puzzle';
+// Isolated component renders do not load the route's layout.css, so Tailwind
+// utilities (relative, h-full, aspect-square, ...) would be missing and every
+// measured box below would collapse to auto sizes. Import the real stylesheet
+// so the envelope-geometry assertions exercise the real cascade.
+import '../../../routes/layout.css';
 
 const image = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 let drawerDisplayAtScroll = '';
@@ -512,6 +517,92 @@ describe('PuzzleInventoryPanel', () => {
 				.toHaveAttribute('data-sheet-state', 'peek');
 			const body = document.querySelector<HTMLElement>('#puzzle-inventory-body')!;
 			await expect.poll(() => getComputedStyle(body).display).toBe('none');
+		});
+	});
+
+	describe('piece image envelope containment', () => {
+		// The pre-masked jigsaw image is rendered at 140% of the piece content
+		// box (EXPANSION_FACTOR) with a -20% offset so opaque tab tips line up.
+		// The tray contains that envelope inside each slot: the image bounds
+		// may spill past the piece's own content box, but must not cross the
+		// slot border by more than half the grid gap — the shared breathing
+		// room between adjacent slots.
+		const gapHalf = () =>
+			parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--inventory-gap')) /
+				2 || 0;
+
+		function envelopeRect(pieceId: number): DOMRect {
+			const slot = document.querySelector<HTMLElement>(`[data-testid="piece-slot-${pieceId}"]`);
+			const img = slot?.querySelector('img');
+			expect(img).not.toBeNull();
+			return img!.getBoundingClientRect();
+		}
+
+		function slotRect(pieceId: number): DOMRect {
+			const slot = document.querySelector<HTMLElement>(`[data-testid="piece-slot-${pieceId}"]`);
+			expect(slot).not.toBeNull();
+			return slot!.getBoundingClientRect();
+		}
+
+		function expectEnvelopeInsideSlot(pieceId: number, allowance = gapHalf()): void {
+			const envelope = envelopeRect(pieceId);
+			const slot = slotRect(pieceId);
+			expect(envelope.left).toBeGreaterThanOrEqual(slot.left - allowance);
+			expect(envelope.top).toBeGreaterThanOrEqual(slot.top - allowance);
+			expect(envelope.right).toBeLessThanOrEqual(slot.right + allowance);
+			expect(envelope.bottom).toBeLessThanOrEqual(slot.bottom + allowance);
+		}
+
+		it('contains the 140% jigsaw envelope inside each 1x1 slot', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			await expect.element(page.getByTestId('piece-slot-0')).toBeVisible();
+			expectEnvelopeInsideSlot(0);
+			expectEnvelopeInsideSlot(1);
+		});
+
+		it('contains the envelope for a 90-degree rotated piece', async () => {
+			// baseProps stores rotation 90 for piece 1; the rotated visual keeps
+			// an axis-aligned square envelope, so the same containment holds.
+			render(PuzzleInventoryPanel, baseProps());
+			const slot = await page.getByTestId('piece-slot-1').element();
+			const visual = slot.querySelector('[data-testid="puzzle-piece-visual"]');
+			expect(visual?.getAttribute('style') ?? '').toContain('rotate(90deg)');
+			expectEnvelopeInsideSlot(1);
+		});
+
+		it('contains the envelope inside the expanded 2x2 selected slot', async () => {
+			render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+			const slot = await page.getByTestId('piece-slot-1').element();
+			expect(getComputedStyle(slot).gridColumnStart).toBe('span 2');
+			expectEnvelopeInsideSlot(1);
+		});
+
+		it('keeps the hovered envelope within the slot plus half the grid gap', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const piece = page.getByLabelText('Puzzle piece 1, rotated 90 degrees');
+			await piece.hover();
+			// hover:scale-105 enlarges the piece; the slot's own padding plus
+			// half the gap must still cover the overflow.
+			expectEnvelopeInsideSlot(1);
+		});
+
+		it('does not clip first-row tabs at the scrolled grid edge', async () => {
+			render(PuzzleInventoryPanel, {
+				...baseProps(),
+				puzzle: filterPuzzle,
+				trayOrder: filterPuzzle.pieces.map((piece) => piece.id)
+			});
+			const grid = document.querySelector<HTMLElement>('.pieces-grid')!;
+			grid.scrollTop = 0;
+			const gridRect = grid.getBoundingClientRect();
+			// Every first-row envelope stays inside the scroll port: a tab tip
+			// reaching above the grid's top edge would be clipped by
+			// overflow-y:auto and reads as a cut-off piece.
+			for (const pieceId of [0, 1, 2]) {
+				const envelope = envelopeRect(pieceId);
+				expect(envelope.top).toBeGreaterThanOrEqual(gridRect.top);
+				expect(envelope.left).toBeGreaterThanOrEqual(gridRect.left);
+			}
 		});
 	});
 

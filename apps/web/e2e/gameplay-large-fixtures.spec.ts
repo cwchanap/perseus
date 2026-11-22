@@ -264,5 +264,80 @@ test.describe('gameplay workspace polish smoke', () => {
 		});
 		expect(scale).not.toBeNull();
 		expect(scale!).toBeGreaterThanOrEqual(1);
+
+		// A manual separator resize is a session-only override: reloading the
+		// route discards it and the tray returns to the responsive default
+		// recorded before the drag.
+		await page.reload();
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+		await expect
+			.poll(async () =>
+				layout.evaluate((element) =>
+					parseFloat(getComputedStyle(element).getPropertyValue('--tray-width').trim())
+				)
+			)
+			.toBeCloseTo(trayWidthBefore, 0);
+	});
+
+	test('untouched tray follows the responsive default across resize and matches reload geometry @smoke', async ({
+		gameplayPage,
+		page
+	}, testInfo) => {
+		test.skip(testInfo.project.name !== 'chromium-desktop', 'desktop-only split layout');
+
+		// An untouched tray derives its default width from the live viewport.
+		// Resizing the window (without touching the separator) must update
+		// --tray-width, and the resulting geometry must be identical to a
+		// fresh load at the same viewport — no stale load-time default.
+		await page.setViewportSize({ width: 1100, height: 800 });
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e2b000-0000-4000-8000-000000000012',
+			seedPreferences: IMMEDIATE_START
+		});
+
+		const measure = () =>
+			page.evaluate(() => {
+				const layout = document.querySelector<HTMLElement>('.game-layout');
+				const viewport = document.querySelector<HTMLElement>('.board-viewport');
+				const slot = document.querySelector<HTMLElement>('[data-testid^="piece-slot-"]');
+				return {
+					trayWidth: parseFloat(getComputedStyle(layout!).getPropertyValue('--tray-width').trim()),
+					boardViewportWidth: viewport!.clientWidth,
+					boardViewportHeight: viewport!.clientHeight,
+					slotSize: slot!.getBoundingClientRect().width
+				};
+			});
+
+		await page.evaluate(() => document.fonts.ready);
+		const at1100 = await measure();
+
+		// Widen the viewport WITHOUT any separator interaction.
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.evaluate(() => document.fonts.ready);
+		// Let the ResizeObserver/layout settle at the new viewport.
+		await expect
+			.poll(async () => (await measure()).trayWidth, { timeout: 5000 })
+			.not.toBe(at1100.trayWidth);
+		const at1440 = await measure();
+
+		await page.reload();
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+		await page.evaluate(() => document.fonts.ready);
+		await expect
+			.poll(async () => (await measure()).trayWidth, { timeout: 5000 })
+			.toBeGreaterThan(0);
+		const reloaded = await measure();
+
+		// The untouched resize must land on the same geometry a fresh load at
+		// 1440x900 produces — within 2px for sub-pixel/board rounding.
+		expect(Math.abs(reloaded.trayWidth - at1440.trayWidth)).toBeLessThanOrEqual(2);
+		expect(Math.abs(reloaded.boardViewportWidth - at1440.boardViewportWidth)).toBeLessThanOrEqual(
+			2
+		);
+		expect(Math.abs(reloaded.boardViewportHeight - at1440.boardViewportHeight)).toBeLessThanOrEqual(
+			2
+		);
+		expect(Math.abs(reloaded.slotSize - at1440.slotSize)).toBeLessThanOrEqual(2);
 	});
 });

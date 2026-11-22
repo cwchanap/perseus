@@ -169,6 +169,16 @@
 
 <style>
 	.puzzle-piece {
+		/* Proportional inset: shrinking the content box to ~71% makes the
+		   140% pre-masked jigsaw wrapper (EXPANSION_FACTOR, offset -20%)
+		   land at ~99.4% of the piece footprint, so unhovered tab tips stay
+		   inside the slot. border-box keeps the full-size hit target —
+		   the padding is dead space inside the same button bounds, not a
+		   smaller button. 14.5%, not 16%: the extra shrink would only
+		   budget hover, and the slot's own padding plus half the grid gap
+		   already covers the retained scale-105. */
+		box-sizing: border-box;
+		padding: 14.5%;
 		overflow: visible;
 	}
 

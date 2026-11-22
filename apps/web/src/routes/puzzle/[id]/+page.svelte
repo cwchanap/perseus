@@ -110,7 +110,21 @@
 	let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
 	let gameLayoutElement = $state<HTMLElement | null>(null);
 	let gameLayoutWidth = $state(0);
-	let requestedTrayWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
+	// Deliberate tray resize override, session-only and never serialized.
+	// null = untouched: the requested width tracks the responsive default
+	// as the viewport changes. A number = the user's separator/keyboard
+	// choice, which survives ordinary layout clamping until the next
+	// puzzle load resets it.
+	let manualTrayWidth = $state<number | null>(null);
+	const requestedTrayWidth = $derived(
+		manualTrayWidth ??
+			(puzzle
+				? getDefaultPuzzleTrayWidth(puzzle, {
+						width: viewportWidth,
+						height: viewportHeight
+					})
+				: DESKTOP_TRAY_BASE_WIDTH)
+	);
 	let trayResizePointerId = $state<number | null>(null);
 	let trayResizeStartX = $state(0);
 	let trayResizeStartWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
@@ -408,9 +422,11 @@
 		if (gameLayoutElement) gameLayoutWidth = gameLayoutElement.clientWidth;
 	}
 
-	function setRequestedTrayWidth(width: number): void {
+	// Only the tray resizer calls this (pointer drag + Arrow/Home/End on the
+	// separator), so every write is a deliberate manual override.
+	function setManualTrayWidth(width: number): void {
 		if (gameLayoutWidth <= 0) return;
-		requestedTrayWidth = clampTrayWidth(gameLayoutWidth, width, gameplayRailWidth);
+		manualTrayWidth = clampTrayWidth(gameLayoutWidth, width, gameplayRailWidth);
 	}
 
 	function currentMaxTrayWidth(): number {
@@ -762,10 +778,10 @@
 			const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 
 			puzzle = loadedPuzzle;
-			requestedTrayWidth = getDefaultPuzzleTrayWidth(loadedPuzzle, {
-				width: viewportWidth,
-				height: viewportHeight
-			});
+			// A new puzzle load (first entry, direct [id] navigation, or
+			// reload) discards any manual tray override so the tray returns
+			// to its responsive default for the new puzzle and viewport.
+			manualTrayWidth = null;
 			// Restore the celebration modal for a previously completed session
 			// so the user retains access to Play Again and retry controls.
 			// Fresh sessions start without the modal. (The
@@ -1078,7 +1094,7 @@
 			return;
 		}
 		const deltaX = event.clientX - trayResizeStartX;
-		setRequestedTrayWidth(trayResizeStartWidth - deltaX);
+		setManualTrayWidth(trayResizeStartWidth - deltaX);
 	}
 
 	function handleTrayResizePointerDown(event: PointerEvent): void {
@@ -1095,19 +1111,19 @@
 		switch (event.key) {
 			case 'ArrowLeft':
 				event.preventDefault();
-				setRequestedTrayWidth(appliedTrayWidth + 16);
+				setManualTrayWidth(appliedTrayWidth + 16);
 				break;
 			case 'ArrowRight':
 				event.preventDefault();
-				setRequestedTrayWidth(appliedTrayWidth - 16);
+				setManualTrayWidth(appliedTrayWidth - 16);
 				break;
 			case 'Home':
 				event.preventDefault();
-				setRequestedTrayWidth(DESKTOP_TRAY_MIN_WIDTH);
+				setManualTrayWidth(DESKTOP_TRAY_MIN_WIDTH);
 				break;
 			case 'End':
 				event.preventDefault();
-				setRequestedTrayWidth(currentMaxTrayWidth());
+				setManualTrayWidth(currentMaxTrayWidth());
 				break;
 		}
 	}
