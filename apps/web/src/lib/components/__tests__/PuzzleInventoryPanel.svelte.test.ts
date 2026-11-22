@@ -586,6 +586,32 @@ describe('PuzzleInventoryPanel', () => {
 			expectEnvelopeInsideSlot(1);
 		});
 
+		it('keeps the combined selected, rotated and hovered envelope inside the 2x2 slot', async () => {
+			// Exercise a large supported slot size: at a 218px slot (e.g. a
+			// 3x4 portrait puzzle at 1920x1200 with a 1536px layout) the
+			// expanded slot is 442px and a hovered 140% envelope would reach
+			// ~451px — past the half-gap allowance — unless hover scaling is
+			// limited locally for the selected preview. The viewport must be
+			// desktop-width or the compact media query overrides
+			// --piece-slot-size on the panel itself.
+			const originalWidth = window.innerWidth;
+			const originalHeight = window.innerHeight;
+			await page.viewport(1920, 1200);
+			document.documentElement.style.setProperty('--piece-slot-size', '13.625rem');
+			try {
+				render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+				const piece = page.getByLabelText('Puzzle piece 1, rotated 90 degrees');
+				await piece.hover();
+				// transition-transform animates the scale; wait for the settled
+				// end-state envelope before measuring.
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expectEnvelopeInsideSlot(1);
+			} finally {
+				document.documentElement.style.setProperty('--piece-slot-size', '4rem');
+				await page.viewport(originalWidth, originalHeight);
+			}
+		});
+
 		it('does not clip first-row tabs at the scrolled grid edge', async () => {
 			render(PuzzleInventoryPanel, {
 				...baseProps(),
