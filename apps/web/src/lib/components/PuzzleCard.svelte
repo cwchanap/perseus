@@ -289,6 +289,10 @@
 		box-shadow: 0 4px 0 #00707f;
 	}
 
+	.puzzle-card {
+		container-type: inline-size;
+	}
+
 	.puzzle-card :global([data-testid='puzzle-card-title']) {
 		font-family: var(--font-display);
 		font-size: 1.2rem;
@@ -299,6 +303,17 @@
 	@media (max-width: 39.999rem) {
 		.puzzle-card [data-testid='puzzle-card-art'] {
 			aspect-ratio: 343 / 215;
+		}
+	}
+
+	/* Compact cards (the two-column /bookmarks and /profile grids) keep the
+	   square art instead of the wide mobile ratio: at ~106px-tall art a
+	   two-line title climbs into the category badge and status stack. Must
+	   follow the media query above to win on equal specificity; the 354px
+	   Gallery card keeps the wide ratio and full-size title. */
+	@container (max-width: 239.99px) {
+		.puzzle-card [data-testid='puzzle-card-art'] {
+			aspect-ratio: 1 / 1;
 		}
 	}
 
