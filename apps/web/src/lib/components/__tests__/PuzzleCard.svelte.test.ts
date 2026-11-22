@@ -279,13 +279,41 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByTestId('difficulty-action')).toHaveLength(3);
 	});
 
+	it('clamps the title to two lines and bottom-aligns it with the bookmark', async () => {
+		render(PuzzleCard, {
+			family: {
+				...mockFamily,
+				name: 'An Exceptionally Long Puzzle Family Name That Wraps Beyond One Line'
+			},
+			onBookmarkToggle: () => {}
+		});
+
+		const title = page.getByTestId('puzzle-card-title');
+		await expect.element(title).toBeVisible();
+		// Tailwind utilities don't load in this harness, so assert the
+		// classes; the geometry they produce is covered by the viewport
+		// rect checks below and by E2E.
+		await expect.element(title).toHaveClass('line-clamp-2');
+		await expect.element(title).not.toHaveClass('truncate');
+		const titleEl = (await title.element()) as HTMLElement;
+		expect(titleEl.className).not.toMatch(/min-h|h-\[/);
+
+		const row = titleEl.parentElement as HTMLElement;
+		expect(row.className).toContain('items-end');
+		expect(row.className).not.toContain('items-center');
+	});
+
 	it('keeps the status stack clear of the title row and category badge at 390x844', async () => {
 		const originalWidth = window.innerWidth;
 		const originalHeight = window.innerHeight;
 		try {
 			await page.viewport(390, 844);
 			render(PuzzleCard, {
-				family: { ...mockFamily, category: 'Nature' },
+				family: {
+					...mockFamily,
+					category: 'Nature',
+					name: 'An Exceptionally Long Puzzle Family Name That Wraps To Two Lines'
+				},
 				highestClearedDifficulty: 'hard',
 				progressByVariantId: new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]),
 				onBookmarkToggle: () => {}
@@ -295,10 +323,63 @@ describe('PuzzleCard', () => {
 				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
 			const stack = rectOf('card-status-stack');
+			const art = rectOf('puzzle-card-art');
+			const title = rectOf('puzzle-card-title');
+			const bookmark = rectOf('card-bookmark');
 
-			expect(intersects(stack, rectOf('puzzle-card-title'))).toBe(false);
-			expect(intersects(stack, rectOf('card-bookmark'))).toBe(false);
+			expect(intersects(stack, title)).toBe(false);
+			expect(intersects(stack, bookmark)).toBe(false);
 			expect(intersects(stack, rectOf('card-category-status'))).toBe(false);
+			// Two-line clamp grows upward from the bottom row: the title and
+			// bookmark stay inside the art area and never collide.
+			expect(intersects(title, bookmark)).toBe(false);
+			expect(title.bottom).toBeLessThanOrEqual(art.bottom);
+			expect(bookmark.bottom).toBeLessThanOrEqual(art.bottom);
+		} finally {
+			await page.viewport(originalWidth, originalHeight);
+		}
+	});
+
+	it('keeps title, bookmark and overlay usable on a 640px three-column card', async () => {
+		const originalWidth = window.innerWidth;
+		const originalHeight = window.innerHeight;
+		try {
+			await page.viewport(640, 800);
+			render(PuzzleCard, {
+				family: {
+					...mockFamily,
+					category: 'Abstract',
+					status: 'processing',
+					name: 'An Exceptionally Long Puzzle Family Name That Wraps To Two Lines',
+					variants: {
+						easy: { ...mockFamily.variants.easy, status: 'processing' },
+						normal: { ...mockFamily.variants.normal, status: 'processing' },
+						hard: { ...mockFamily.variants.hard, status: 'processing' }
+					}
+				},
+				onBookmarkToggle: () => {}
+			});
+
+			// Three-column grid at 640px lands cards at ~180px; pin the card to
+			// that footprint so the overlay/title/bookmark geometry is measured
+			// at the real column width.
+			const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+			card.style.width = '180px';
+
+			const intersects = (a: DOMRect, b: DOMRect) =>
+				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
+			const art = rectOf('puzzle-card-art');
+			const title = rectOf('puzzle-card-title');
+			const bookmark = rectOf('card-bookmark');
+
+			await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+			expect(intersects(title, bookmark)).toBe(false);
+			expect(title.bottom).toBeLessThanOrEqual(art.bottom);
+			expect(bookmark.bottom).toBeLessThanOrEqual(art.bottom);
+			expect(title.width).toBeGreaterThan(0);
+			await expect.element(page.getByRole('button', { name: /Add bookmark:/ })).toBeVisible();
+			await expect.element(page.getByTestId('difficulty-action').nth(2)).toBeVisible();
 		} finally {
 			await page.viewport(originalWidth, originalHeight);
 		}
