@@ -40,7 +40,12 @@ interface StubRoute {
 function stubRoute(
 	url: string,
 	method = 'GET',
-	options?: { throwOnFulfill?: Error; throwOnAbort?: Error }
+	options?: {
+		throwOnFulfill?: Error;
+		throwOnAbort?: Error;
+		/** Simulate a request the page already aborted (Request.failure()). */
+		failure?: { errorText: string };
+	}
 ): StubRoute {
 	const stub: StubRoute = {
 		fulfilled: [],
@@ -50,7 +55,8 @@ function stubRoute(
 			request: () =>
 				({
 					url: () => url,
-					method: () => method
+					method: () => method,
+					failure: () => options?.failure ?? null
 				}) as unknown as Request,
 			fulfill: async (init: FulfillCall) => {
 				if (options?.throwOnFulfill) throw options.throwOnFulfill;
@@ -107,7 +113,11 @@ async function dispatch(
 	stub: StubPage,
 	url: string,
 	method = 'GET',
-	options?: { throwOnFulfill?: Error; throwOnAbort?: Error }
+	options?: {
+		throwOnFulfill?: Error;
+		throwOnAbort?: Error;
+		failure?: { errorText: string };
+	}
 ): Promise<StubRoute> {
 	const route = stubRoute(url, method, options);
 	for (const entry of [...stub.handlers].reverse()) {
@@ -341,6 +351,30 @@ describe('image-hold controller', () => {
 		await handle.release();
 
 		expect(stale.fulfilled).toHaveLength(0);
+		expect(live.fulfilled).toHaveLength(1);
+		expect(handle.pendingCount).toBe(0);
+		expect(() => images.assertClean()).not.toThrow();
+	});
+
+	it('release names a request the page already aborted and still drains the rest', async () => {
+		const stub = stubPage();
+		const images = createImageHoldController();
+		const handle = await images.installFixtureImages(stub.page, KNOWN_ID, [
+			{ endpoint: { kind: 'thumbnail' }, outcome: 'hold' }
+		]);
+
+		const aborted = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/thumbnail`), 'GET', {
+			failure: { errorText: 'net::ERR_ABORTED' }
+		});
+		const live = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/thumbnail`));
+		expect(handle.pendingCount).toBe(2);
+
+		// A settle barrier must fail fast naming the dead request, not wait out
+		// its timeout on a terminal event that can no longer fire.
+		await expect(handle.release()).rejects.toThrow(
+			/GET https:\/\/perseus\.test\/api\/puzzles\/.+\/thumbnail \(net::ERR_ABORTED\)/
+		);
+		expect(aborted.fulfilled).toHaveLength(0);
 		expect(live.fulfilled).toHaveLength(1);
 		expect(handle.pendingCount).toBe(0);
 		expect(() => images.assertClean()).not.toThrow();

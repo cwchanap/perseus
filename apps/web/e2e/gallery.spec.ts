@@ -908,7 +908,8 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 	 * `handle.release()` resolves when `route.fulfill()` returns — BEFORE
 	 * the page has finished the released request. Settle the released
 	 * request's terminal event so a following reload cannot abort it
-	 * mid-flight.
+	 * mid-flight. Releasing a request the page already aborted rejects
+	 * immediately, naming the URL, instead of stalling the barrier.
 	 */
 	function releaseAndSettle(page: Page, handle: ImageHoldHandle, familyId: string): Promise<void> {
 		return settleRequestAround(page, { url: thumbnailPattern(familyId), method: 'GET' }, () =>

@@ -30,7 +30,9 @@
 // Teardown: `assertClean()` throws (with the held URLs) while any request is
 // still held, so a forgotten `release()`/`cancel()` fails the test instead of
 // hanging it. `gameplayPage.assertSettled()` calls it for gameplay fixture
-// holds; Gallery specs call it directly.
+// holds; Gallery specs call it directly. A `release()` that finds a request
+// the page already aborted names it and rejects: fulfilling it can no longer
+// produce a terminal event, so a settle barrier would just time out.
 import type { Page, Route } from '@playwright/test';
 import type { DeclaredImageFailure } from '../support/diagnostics';
 import { getFixture, type GameplayFixture, type GameplayFixtureId } from './catalog';
@@ -204,10 +206,22 @@ export function createImageHoldController(): ImageHoldController {
 		await options.page.route(options.pattern, handler);
 		installed.push({ page: options.page, pattern: options.pattern, handler });
 
-		async function drain(answer: (entry: HeldRoute) => Promise<void>): Promise<void> {
+		async function drain(
+			answer: (entry: HeldRoute) => Promise<void>,
+			options?: { reportAborted?: boolean }
+		): Promise<void> {
 			const done = pending.splice(0);
+			const aborted: string[] = [];
 			for (const entry of done) {
 				try {
+					// A page-driven abort (a reload that cancelled the request)
+					// already produced its terminal event before this drain
+					// started, so fulfilling it cannot produce another one.
+					const failure = options?.reportAborted ? entry.route.request().failure() : null;
+					if (failure) {
+						aborted.push(`${entry.method} ${entry.url} (${failure.errorText})`);
+						continue;
+					}
 					await answer(entry);
 				} catch {
 					// A route may already be closed/cancelled (e.g. by a page reload);
@@ -217,6 +231,12 @@ export function createImageHoldController(): ImageHoldController {
 					if (at !== -1) held.splice(at, 1);
 				}
 			}
+			if (aborted.length > 0) {
+				throw new Error(
+					`ImageHold release: ${aborted.length} held request(s) were already aborted before release — no terminal event will follow:\n` +
+						aborted.map((line) => `  - ${line}`).join('\n')
+				);
+			}
 		}
 
 		return {
@@ -224,7 +244,7 @@ export function createImageHoldController(): ImageHoldController {
 				return pending.length;
 			},
 			release() {
-				return drain((entry) => entry.respond());
+				return drain((entry) => entry.respond(), { reportAborted: true });
 			},
 			cancel() {
 				return drain((entry) => entry.route.abort('failed'));
