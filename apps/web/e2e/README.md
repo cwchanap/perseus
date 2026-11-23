@@ -242,8 +242,9 @@ atomic init script and a strict lifecycle order:
 3. **Cookie reset** — `context.clearCookies()`.
 4. **Optional clock** — `page.clock.install({ time })` + `pauseAt` **before**
    navigation, so navigation does not advance `performance.now()`.
-5. **ONE atomic init script** — clears storage → seeds session/stats → freezes
-   the config global. Synchronous, before any app script runs.
+5. **ONE atomic init script** — on the tab's first entry only, clears storage →
+   seeds session/stats; on every entry it freezes the config global.
+   Synchronous, before any app script runs.
 6. **Navigation** — `page.goto('/puzzle/<id>')`.
 7. **Ready state** — waits for `puzzle-board` to be visible and the expected
    tray piece count to render. No fixed delays; only Playwright auto-waiting
@@ -252,7 +253,11 @@ atomic init script and a strict lifecycle order:
 The init script is singular on purpose: separate storage and config init scripts
 have an unspecified evaluation order, so seeding the session after the app read
 it (or vice versa) would be non-deterministic. One script does
-clear → seed → freeze-config, synchronously, before any app script runs.
+clear → seed → freeze-config, synchronously, before any app script runs. The
+clear/seed half is gated on a `sessionStorage` once-flag, so a later full
+navigation (a reload or `page.goto()`) keeps progress the app itself persisted
+instead of wiping it; only the config global is re-installed, because every
+document is a fresh realm.
 
 A test rarely calls `gotoFixture()` with raw options — it passes a
 `CompletionScenario`, a `seedSession`, a `persona`, or a `clock`, and the page
@@ -307,8 +312,10 @@ The persisted-state helpers (`e2e/gameplay-fixtures/persisted-state.ts`) provide
 
 A seeded snapshot is validated by the **production codec** before it is planted,
 so a test can never silently plant a state the app would ignore. Fresh Playwright
-contexts already isolate storage per test; `gotoFixture()` always clears both
-stores in its init script before seeding.
+contexts already isolate storage per test; `gotoFixture()` clears both stores in
+its init script before seeding on the tab's first entry, and the sessionStorage
+once-flag keeps a later reload from wiping progress the app persisted (so
+reload-resume tests exercise the real restore path).
 
 ---
 
