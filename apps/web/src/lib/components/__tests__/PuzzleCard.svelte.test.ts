@@ -3,6 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import '../../../routes/layout.css';
+// Mirror +layout.svelte so geometry assertions measure the production
+// fonts (Orbitron title/status, Share Tech Mono badges), not fallbacks.
+import '@fontsource/orbitron/600.css';
+import '@fontsource/orbitron/700.css';
+import '@fontsource/orbitron/900.css';
+import '@fontsource/rajdhani/400.css';
+import '@fontsource/rajdhani/500.css';
+import '@fontsource/rajdhani/600.css';
+import '@fontsource/rajdhani/700.css';
+import '@fontsource/share-tech-mono/400.css';
 import PuzzleCard from '../PuzzleCard.svelte';
 import { getFamilyThumbnailUrl } from '$lib/services/api';
 import type { PuzzleFamilySummary } from '@perseus/types';
@@ -21,8 +31,11 @@ describe('PuzzleCard', () => {
 		}
 	};
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
+		// Font swaps change glyph metrics: geometry assertions must wait for
+		// the production faces to finish loading before measuring.
+		await document.fonts.ready;
 	});
 
 	it('should render puzzle name', async () => {
@@ -466,6 +479,64 @@ describe('PuzzleCard', () => {
 						.element()) as HTMLAnchorElement;
 					expect(easyLink.getAttribute('href')).toBe('/puzzle/var-e');
 				}
+			} finally {
+				await page.viewport(originalWidth, originalHeight);
+			}
+		}
+	);
+
+	it.each(['processing', 'failed'] as const)(
+		'keeps the %s status label clear of the two-line title at the 320px profile footprint',
+		async (status) => {
+			const originalWidth = window.innerWidth;
+			const originalHeight = window.innerHeight;
+			const intersects = (a: DOMRect, b: DOMRect) =>
+				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+			const containedBy = (inner: DOMRect, outer: DOMRect) =>
+				inner.left >= outer.left &&
+				inner.right <= outer.right &&
+				inner.top >= outer.top &&
+				inner.bottom <= outer.bottom;
+			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
+			try {
+				// /profile My Puzzles stays grid-cols-2 below sm: at 320px the
+				// section's px-4 leaves (320 - 2*16 - 16) / 2 = 136px cards.
+				await page.viewport(320, 568);
+
+				render(PuzzleCard, {
+					family: {
+						...mockFamily,
+						category: 'Nature',
+						status,
+						name: 'An Exceptionally Long Puzzle Family Name That Wraps To Two Lines',
+						variants: {
+							easy: { ...mockFamily.variants.easy, status },
+							normal: { ...mockFamily.variants.normal, status },
+							hard: { ...mockFamily.variants.hard, status }
+						}
+					},
+					onBookmarkToggle: () => {}
+				});
+				const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+				card.style.width = '136px';
+
+				const art = rectOf('puzzle-card-art');
+				const title = rectOf('puzzle-card-title');
+				const bookmark = rectOf('card-bookmark');
+				const category = rectOf('card-category-status');
+				const overlay = await page.getByTestId('card-status-overlay').element();
+				const overlayText = (overlay.querySelector('span') as HTMLElement).getBoundingClientRect();
+
+				await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+				// The status label (not the full overlay, which intentionally
+				// covers the art) must clear the title row, bookmark and badge.
+				expect(intersects(overlayText, title)).toBe(false);
+				expect(intersects(overlayText, bookmark)).toBe(false);
+				expect(intersects(overlayText, category)).toBe(false);
+				expect(containedBy(overlayText, art)).toBe(true);
+				expect(intersects(title, bookmark)).toBe(false);
+				expect(containedBy(title, art)).toBe(true);
+				expect(containedBy(bookmark, art)).toBe(true);
 			} finally {
 				await page.viewport(originalWidth, originalHeight);
 			}

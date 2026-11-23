@@ -315,6 +315,28 @@
 		.puzzle-card [data-testid='puzzle-card-art'] {
 			aspect-ratio: 1 / 1;
 		}
+
+		/* Orbitron's 1.5em line box makes a two-line title ~58px tall; on
+		   ~134px art a centered PROCESSING/FAILED label lands on it.
+		   Tighten the compact title and pin a smaller label in the band
+		   between the top badges and the title. */
+		.puzzle-card :global([data-testid='puzzle-card-title']) {
+			line-height: 1.25;
+		}
+
+		.puzzle-card [data-testid='card-status-overlay'] {
+			align-items: flex-start;
+			justify-content: center;
+			padding-top: 3.125rem;
+		}
+
+		.puzzle-card [data-testid='card-status-overlay'] > span {
+			padding: 0.2rem 0.45rem;
+			font-size: 0.5rem;
+			line-height: 1.3;
+			letter-spacing: 0.14em;
+			white-space: nowrap;
+		}
 	}
 
 	.card-difficulty-picker :global([data-testid='difficulty-gems']) {
