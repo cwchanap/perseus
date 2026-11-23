@@ -13,12 +13,13 @@
 // request that terminates before the action resolves is still captured, and
 // they are always removed again — on settle, on timeout, or on an action()
 // rejection (which propagates to the caller). The timeout races the
-// COMBINED action+terminal promise from the start, so an action() that
-// stalls still rejects promptly at `timeoutMs` instead of leaving the
-// timeout unobserved with listeners armed. A request that fails still
-// unblocks the caller — the failure stays fatal via the diagnostics
-// listener; a request that never terminates fails the test with a labeled
-// timeout instead of hanging.
+// COMBINED action+terminal promise from the start and stays armed until
+// that combined operation exits — a terminal event alone must not disarm
+// it, because `Promise.all` may still be awaiting `action()` and the
+// deadline is what bounds that wait. A request that fails still unblocks
+// the caller — the failure stays fatal via the diagnostics listener; a
+// request that never terminates fails the test with a labeled timeout
+// instead of hanging.
 import type { Page, Request } from '@playwright/test';
 
 /** The request this barrier waits on: exact URL regex + HTTP method. */
@@ -39,20 +40,21 @@ export async function settleRequestAround(
 	const terminal = new Promise<void>((resolve) => {
 		resolveTerminal = resolve;
 	});
-	function finish(): void {
-		if (timer !== undefined) {
-			clearTimeout(timer);
-			timer = undefined;
-		}
+	// A terminal event detaches the listeners and resolves `terminal` —
+	// but does NOT disarm the deadline: `Promise.all` may still be
+	// awaiting `action()`, and the timer is the only bound on that wait.
+	// The timer is cleared exclusively in `finally`, once the combined
+	// operation has exited.
+	function settle(): void {
 		page.off('requestfinished', onFinished);
 		page.off('requestfailed', onFailed);
 		resolveTerminal();
 	}
 	const onFinished = (req: Request) => {
-		if (matches(req)) finish();
+		if (matches(req)) settle();
 	};
 	const onFailed = (req: Request) => {
-		if (matches(req)) finish();
+		if (matches(req)) settle();
 	};
 	page.on('requestfinished', onFinished);
 	page.on('requestfailed', onFailed);
@@ -76,9 +78,11 @@ export async function settleRequestAround(
 		// synchronous action() throw propagates through this try.
 		await Promise.race([Promise.all([action(), terminal]), timeout]);
 	} finally {
-		// Always disarm the timer and detach the listeners. `terminal`
-		// never rejects and `timeout` is disarmed before it can fire, so no
+		// The combined operation has exited — only now disarm the timer
+		// and make sure the listeners are detached. `terminal` never
+		// rejects and `timeout` can no longer fire once cleared, so no
 		// losing branch can produce an unhandled rejection — now or later.
-		finish();
+		if (timer !== undefined) clearTimeout(timer);
+		settle();
 	}
 }

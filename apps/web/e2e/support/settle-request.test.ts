@@ -88,13 +88,17 @@ describe('settleRequestAround', () => {
 
 	it('ignores non-matching requests and settles on the matching one', async () => {
 		const { page, emit } = stub();
-		const done = settleRequestAround(
-			page,
-			AUTH_GET,
-			() => new Promise((resolve) => setTimeout(resolve, 40)),
-			5_000
-		);
-		emit('requestfinished', stubRequest(OTHER_URL));
+		let resolveAction!: () => void;
+		const action = new Promise<void>((resolve) => {
+			resolveAction = resolve;
+		});
+		const done = settleRequestAround(page, AUTH_GET, () => action, 5_000);
+		// Complete the action FIRST so any later 'pending' can only mean
+		// the terminal events did not match — not that the action is still
+		// running.
+		resolveAction();
+		emit('requestfinished', stubRequest(OTHER_URL)); // URL mismatch
+		emit('requestfinished', stubRequest(AUTH_URL, 'POST')); // method mismatch
 		const probe = await Promise.race([
 			done.then(() => 'settled' as const),
 			new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20))
@@ -124,6 +128,35 @@ describe('settleRequestAround', () => {
 		expect(listenerCount('requestfinished')).toBe(0);
 		expect(listenerCount('requestfailed')).toBe(0);
 	});
+
+	it('keeps the deadline armed when the request settles while the action stays pending', async () => {
+		const { page, emit, listenerCount } = stub();
+		const started = Date.now();
+		const err = await catchError(
+			settleRequestAround(
+				page,
+				AUTH_GET,
+				// The terminal event fires (listeners are already
+				// registered) but the action never resolves — e.g. auth
+				// finished while goto() is still blocked elsewhere. The
+				// 50ms deadline must still reject; the terminal event
+				// must not disarm it.
+				() =>
+					new Promise(() => {
+						emit('requestfinished', stubRequest(AUTH_URL));
+					}),
+				50
+			)
+		);
+		const elapsed = Date.now() - started;
+		expect(err).toBeInstanceOf(Error);
+		expect((err as Error).message).toContain('timed out after 50ms');
+		// Rejected via the still-armed 50ms deadline, not by the
+		// action and not by this test's own timeout.
+		expect(elapsed).toBeLessThan(2_000);
+		expect(listenerCount('requestfinished')).toBe(0);
+		expect(listenerCount('requestfailed')).toBe(0);
+	}, 3_000);
 
 	it('propagates a synchronous action() throw and still detaches listeners', async () => {
 		const { page, listenerCount } = stub();
