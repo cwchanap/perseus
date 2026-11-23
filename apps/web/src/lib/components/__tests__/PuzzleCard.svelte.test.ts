@@ -528,9 +528,49 @@ describe('PuzzleCard', () => {
 		}
 	);
 
-	it.each(['processing', 'failed'] as const)(
-		'keeps the %s status label clear of the two-line title at the 320px profile footprint',
-		async (status) => {
+	it.each([171, 116])(
+		'wraps a single long word instead of clipping it mid-letter at the %ipx compact footprint',
+		async (cardWidth) => {
+			const originalWidth = window.innerWidth;
+			const originalHeight = window.innerHeight;
+			const containedBy = (inner: DOMRect, outer: DOMRect) =>
+				inner.left >= outer.left &&
+				inner.right <= outer.right &&
+				inner.top >= outer.top &&
+				inner.bottom <= outer.bottom;
+			try {
+				await page.viewport(390, 844);
+				render(PuzzleCard, {
+					family: { ...mockFamily, name: 'Neuschwanstein' },
+					onBookmarkToggle: () => {}
+				});
+				const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
+				card.style.width = `${cardWidth}px`;
+				await loadProductionFonts();
+
+				const title = (await page.getByTestId('puzzle-card-title').element()) as HTMLElement;
+				const art = page.getByTestId('puzzle-card-art').element().getBoundingClientRect();
+				// overflow-wrap:anywhere breaks the word across the clamp: no
+				// horizontal overflow, so no line is cut off mid-letter.
+				expect(title.scrollWidth).toBeLessThanOrEqual(title.clientWidth);
+				expect(containedBy(title.getBoundingClientRect(), art)).toBe(true);
+			} finally {
+				await page.viewport(originalWidth, originalHeight);
+			}
+		}
+	);
+
+	it.each([
+		{ status: 'processing' as const, viewport: 320, cardWidth: 136, labelFontSize: '11.2px' },
+		{ status: 'failed' as const, viewport: 320, cardWidth: 136, labelFontSize: '11.2px' },
+		// A 280px phone's two-column grids land cards at 116px: the smallest
+		// supported footprint, where the ultra-narrow rule clamps the title to
+		// one line and shrinks the label so both still fit the art.
+		{ status: 'processing' as const, viewport: 280, cardWidth: 116, labelFontSize: '9.92px' },
+		{ status: 'failed' as const, viewport: 280, cardWidth: 116, labelFontSize: '9.92px' }
+	])(
+		'keeps the $status status label clear of the title on a $cardWidthpx card',
+		async ({ status, viewport, cardWidth, labelFontSize }) => {
 			const originalWidth = window.innerWidth;
 			const originalHeight = window.innerHeight;
 			const intersects = (a: DOMRect, b: DOMRect) =>
@@ -543,8 +583,9 @@ describe('PuzzleCard', () => {
 			const rectOf = (testId: string) => page.getByTestId(testId).element().getBoundingClientRect();
 			try {
 				// /profile My Puzzles stays grid-cols-2 below sm: at 320px the
-				// section's px-4 leaves (320 - 2*16 - 16) / 2 = 136px cards.
-				await page.viewport(320, 568);
+				// section's px-4 leaves (320 - 2*16 - 16) / 2 = 136px cards, and
+				// at 280px (280 - 2*16 - 16) / 2 = 116px.
+				await page.viewport(viewport, 568);
 
 				render(PuzzleCard, {
 					family: {
@@ -561,11 +602,12 @@ describe('PuzzleCard', () => {
 					onBookmarkToggle: () => {}
 				});
 				const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
-				card.style.width = '136px';
+				card.style.width = `${cardWidth}px`;
 				await loadProductionFonts();
 
 				const art = rectOf('puzzle-card-art');
-				const title = rectOf('puzzle-card-title');
+				const titleEl = (await page.getByTestId('puzzle-card-title').element()) as HTMLElement;
+				const title = titleEl.getBoundingClientRect();
 				const bookmark = rectOf('card-bookmark');
 				const category = rectOf('card-category-status');
 				const overlay = (await page.getByTestId('card-status-overlay').element()) as HTMLElement;
@@ -573,12 +615,16 @@ describe('PuzzleCard', () => {
 				const overlayText = label.getBoundingClientRect();
 
 				await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
-				// Cramped (<~164px) cards pin the label into the top band but
-				// keep the original 0.7rem face.
+				// Cramped (<~164px) cards pin the label into the top band. Below
+				// 136px the title drops to one clamped line so the band fits.
 				expect(getComputedStyle(overlay).alignItems).toMatch(/flex-start|flow-start/);
-				expect(getComputedStyle(label).fontSize).toBe('11.2px');
+				expect(getComputedStyle(label).fontSize).toBe(labelFontSize);
+				expect(getComputedStyle(titleEl).getPropertyValue('-webkit-line-clamp')).toBe(
+					cardWidth < 136 ? '1' : '2'
+				);
 				// The status label (not the full overlay, which intentionally
-				// covers the art) must clear the title row, bookmark and badge.
+				// covers the art) must clear the title row, bookmark and badge,
+				// and stay fully inside the art instead of clipping at its edges.
 				expect(intersects(overlayText, title)).toBe(false);
 				expect(intersects(overlayText, bookmark)).toBe(false);
 				expect(intersects(overlayText, category)).toBe(false);
@@ -586,6 +632,9 @@ describe('PuzzleCard', () => {
 				expect(intersects(title, bookmark)).toBe(false);
 				expect(containedBy(title, art)).toBe(true);
 				expect(containedBy(bookmark, art)).toBe(true);
+				// No horizontal title overflow: a long unbreakable word wraps or
+				// ellipsizes instead of being cut off mid-letter.
+				expect(titleEl.scrollWidth).toBeLessThanOrEqual(titleEl.clientWidth);
 			} finally {
 				await page.viewport(originalWidth, originalHeight);
 			}
