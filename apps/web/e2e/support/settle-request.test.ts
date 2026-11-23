@@ -1,15 +1,17 @@
-// settleRequestAround invariants (HPA-1032).
+// settleRequestAround / settleNetworkQuiet invariants (HPA-1032).
 //
 // The request-terminal barrier must reject TIMELY and detach its page
 // listeners even while the wrapped action is still pending — the round-1
 // regression: the timeout raced nothing until `await action()` returned,
 // so a stalled action left the timeout rejection unobserved and the
-// listeners armed. These tests run under bun:test with a structural stub
-// of the Playwright Page event surface (the same stubbing pattern as
-// diagnostics.test.ts / fixture-router.test.ts).
+// listeners armed. settleNetworkQuiet must hold for requests it observed
+// and let their terminal events push the quiet window out — a stale
+// 'networkidle' reuse is exactly what it replaces. These tests run under
+// bun:test with a structural stub of the Playwright Page event surface
+// (the same stubbing pattern as diagnostics.test.ts / fixture-router.test.ts).
 import { describe, expect, it } from 'bun:test';
 import type { Page, Request } from '@playwright/test';
-import { settleRequestAround } from './settle-request';
+import { settleNetworkQuiet, settleRequestAround } from './settle-request';
 
 const AUTH_URL = 'https://perseus.test/api/auth/session';
 const OTHER_URL = 'https://perseus.test/api/puzzle-families';
@@ -24,7 +26,7 @@ function stubRequest(url: string, method = 'GET'): Request {
 
 interface Stub {
 	page: Page;
-	emit(event: 'requestfinished' | 'requestfailed', req: Request): void;
+	emit(event: 'request' | 'requestfinished' | 'requestfailed', req: Request): void;
 	listenerCount(event: string): number;
 }
 
@@ -59,6 +61,16 @@ async function catchError(promise: Promise<unknown>): Promise<unknown> {
 	} catch (err) {
 		return err;
 	}
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** 'settled' once `done` resolves, else 'pending' after `ms`. */
+async function probe(done: Promise<unknown>, ms = 20): Promise<'settled' | 'pending'> {
+	return Promise.race([
+		done.then(() => 'settled' as const),
+		sleep(ms).then(() => 'pending' as const)
+	]);
 }
 
 describe('settleRequestAround', () => {
@@ -172,6 +184,64 @@ describe('settleRequestAround', () => {
 			)
 		);
 		expect(err).toBe(boom);
+		expect(listenerCount('requestfinished')).toBe(0);
+		expect(listenerCount('requestfailed')).toBe(0);
+	});
+});
+
+describe('settleNetworkQuiet', () => {
+	it('holds while an observed request is in flight and lets its terminal restart the quiet window', async () => {
+		const { page, emit, listenerCount } = stub();
+		const started = Date.now();
+		const done = settleNetworkQuiet(page, 100, 5_000);
+		const req = stubRequest(AUTH_URL);
+		emit('request', req);
+
+		// Past the quiet window with the request still in flight: the
+		// barrier must not resolve — unlike a stale 'networkidle'.
+		await sleep(150);
+		expect(await probe(done)).toBe('pending');
+
+		// The terminal restarts the window: still pending immediately
+		// after it, resolving only once another full window passes.
+		emit('requestfinished', req);
+		expect(await probe(done)).toBe('pending');
+		await done;
+		expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+		expect(listenerCount('request')).toBe(0);
+		expect(listenerCount('requestfinished')).toBe(0);
+		expect(listenerCount('requestfailed')).toBe(0);
+	}, 10_000);
+
+	it('lets a terminal event for a request it never saw start push the quiet window out', async () => {
+		const { page, emit } = stub();
+		const done = settleNetworkQuiet(page, 400, 5_000);
+		// A request in flight before this call is invisible until it
+		// terminates — its terminal event must still bump the window so
+		// the drain does not end ahead of a just-finished late request.
+		// Emit inside the first window (~150ms): without the bump the
+		// barrier resolves near 400ms; with it, not before ~550ms.
+		const lateEmit = sleep(150).then(() => emit('requestfinished', stubRequest(AUTH_URL)));
+		await sleep(450);
+		expect(await probe(done)).toBe('pending');
+		await done;
+		await lateEmit;
+	}, 10_000);
+
+	it('rejects timely and detaches listeners while a request never terminates', async () => {
+		const { page, emit, listenerCount } = stub();
+		const started = Date.now();
+		const err = await catchError(
+			(async () => {
+				const done = settleNetworkQuiet(page, 100, 80);
+				emit('request', stubRequest(AUTH_URL));
+				await done;
+			})()
+		);
+		expect(err).toBeInstanceOf(Error);
+		expect((err as Error).message).toContain('timed out after 80ms');
+		expect(Date.now() - started).toBeLessThan(2_000);
+		expect(listenerCount('request')).toBe(0);
 		expect(listenerCount('requestfinished')).toBe(0);
 		expect(listenerCount('requestfailed')).toBe(0);
 	});
