@@ -113,9 +113,9 @@ describe('CategoryFilter', () => {
 			for (const cat of PUZZLE_CATEGORIES) {
 				await expect.element(page.getByRole('radio', { name: cat })).toBeInTheDocument();
 			}
-			// Card badge chips stay icon-only: the fixed width is only relaxed
-			// on .category-icon-chip, and only inside this component.
-			expect(getComputedStyle(chip).width).not.toBe('44px');
+			// The compact fixed width is relaxed only for this chip at the wide
+			// breakpoint, so the label and padding grow it past 44px.
+			expect(chip.getBoundingClientRect().width).toBeGreaterThan(44);
 		} finally {
 			await page.viewport(originalWidth, originalHeight);
 		}
@@ -137,14 +137,20 @@ describe('CategoryFilter', () => {
 				// assertion tracks the real wide-header budget, not the viewport.
 				const column = document.createElement('div');
 				column.style.width = `${WIDE_CATEGORY_BUDGET_PX}px`;
-				filter.parentElement!.insertBefore(column, filter);
-				column.appendChild(filter);
-				// The radios are absolutely positioned overlays, so they add
-				// no width; scrollWidth is the chip row itself.
-				expect(filter.scrollWidth).toBeLessThanOrEqual(filter.clientWidth);
-				expect(filter.scrollWidth).toBeLessThanOrEqual(WIDE_CATEGORY_BUDGET_PX);
-				column.replaceWith(filter);
-				unmount();
+				try {
+					filter.parentElement!.insertBefore(column, filter);
+					column.appendChild(filter);
+					// The radios are absolutely positioned overlays, so they add
+					// no width; scrollWidth is the chip row itself.
+					expect(filter.scrollWidth).toBeLessThanOrEqual(filter.clientWidth);
+					expect(filter.scrollWidth).toBeLessThanOrEqual(WIDE_CATEGORY_BUDGET_PX);
+				} finally {
+					// Restore before unmounting: a failed assertion must not
+					// leave the fieldset in the temporary wrapper, where a
+					// later duplicate-match lookup would find it twice.
+					column.replaceWith(filter);
+					unmount();
+				}
 			}
 		} finally {
 			await page.viewport(originalWidth, originalHeight);
