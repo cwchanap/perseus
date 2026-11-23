@@ -4,7 +4,8 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import '../../../routes/layout.css';
 // Mirror +layout.svelte so geometry assertions measure the production
-// fonts (Orbitron title/status, Share Tech Mono badges), not fallbacks.
+// fonts (Orbitron title/gems, Rajdhani status/progress labels, Share Tech
+// Mono badges), not fallbacks.
 import '@fontsource/orbitron/600.css';
 import '@fontsource/orbitron/700.css';
 import '@fontsource/orbitron/900.css';
@@ -39,15 +40,30 @@ describe('PuzzleCard', () => {
 	// Font faces are requested lazily when rendered text uses them, so load
 	// AFTER render — document.fonts.ready in beforeEach resolves while only
 	// fallback glyphs are in use. Assert the faces actually arrived.
+	// The card's measured faces (verified by computed style in headless
+	// chromium): Orbitron 900 for the title and difficulty gems, Rajdhani
+	// 700 for the status label and Rajdhani 400 for the progress badge —
+	// the font-(--font-*) utilities resolve to font-weight, so those spans
+	// inherit body's Rajdhani — and Share Tech Mono 400 for the art
+	// placeholder and difficulty rows.
 	async function loadProductionFonts() {
-		await Promise.all([
-			document.fonts.load('900 1.2rem Orbitron'),
-			document.fonts.load('700 0.7rem Orbitron'),
-			document.fonts.load('400 0.62rem "Share Tech Mono"')
-		]);
-		expect(document.fonts.check('900 1.2rem Orbitron')).toBe(true);
-		expect(document.fonts.check('700 0.7rem Orbitron')).toBe(true);
-		expect(document.fonts.check('400 0.62rem "Share Tech Mono"')).toBe(true);
+		const specs = [
+			'900 1.2rem Orbitron',
+			'700 0.7rem Rajdhani',
+			'400 0.62rem Rajdhani',
+			'400 0.62rem "Share Tech Mono"'
+		];
+		const loaded = await Promise.all(specs.map((spec) => document.fonts.load(spec)));
+		// fonts.check() is true even when no face matches the spec at all, so
+		// it cannot catch a missing/renamed family — assert each load()
+		// returned a successfully loaded face, then cross-check check().
+		loaded.forEach((faces, i) => {
+			expect(
+				faces.some((face) => face.status === 'loaded'),
+				`document.fonts.load('${specs[i]}') returned no loaded face`
+			).toBe(true);
+			expect(document.fonts.check(specs[i])).toBe(true);
+		});
 	}
 
 	it('should render puzzle name', async () => {
