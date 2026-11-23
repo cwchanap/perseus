@@ -1,4 +1,4 @@
-import type { Page, Request, Response } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/test';
@@ -20,6 +20,7 @@ import {
 	type ImageHoldHandle
 } from './gameplay-fixtures/image-hold';
 import { createPageDiagnostics, type PageDiagnostics } from './support/diagnostics';
+import { settleRequestAround } from './support/settle-request';
 import {
 	buildMinimalSeed,
 	createPersistedStateController,
@@ -883,75 +884,6 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 	}
 
 	const AUTH_SESSION_PATH = /\/api\/auth\/session(?:\?.*)?$/;
-
-	/**
-	 * Run `action` and resolve once the next request matching `request`
-	 * reaches a terminal state — `requestfinished` or `requestfailed`,
-	 * whichever comes first.
-	 *
-	 * Listeners are registered BEFORE the action so a request that reaches a
-	 * terminal state before the action resolves is still captured, and they
-	 * are always removed again — on settle, on timeout, and on an `action()`
-	 * rejection (which propagates to the caller). `requestfinished` is the
-	 * browser-side terminal barrier: a route resolves at `route.fulfill()`,
-	 * before the page has finished the request, so `release()` on an image
-	 * hold alone does NOT prove a later `page.reload()` cannot abort it —
-	 * the terminal event does. A request that fails still unblocks the
-	 * caller (the failure stays fatal via diagnostics' own listener); a
-	 * request that never terminates fails the test after `timeoutMs`
-	 * instead of hanging.
-	 */
-	async function settleRequestAround(
-		page: Page,
-		request: { url: RegExp; method: string },
-		action: () => Promise<unknown>,
-		timeoutMs = 15_000
-	): Promise<void> {
-		const matches = (req: Request) =>
-			request.url.test(req.url()) && req.method() === request.method;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let resolveTerminal: () => void = () => undefined;
-		const terminal = new Promise<void>((resolve) => {
-			resolveTerminal = resolve;
-		});
-		function finish(): void {
-			if (timer !== undefined) {
-				clearTimeout(timer);
-				timer = undefined;
-			}
-			page.off('requestfinished', onFinished);
-			page.off('requestfailed', onFailed);
-			resolveTerminal();
-		}
-		const onFinished = (req: Request) => {
-			if (matches(req)) finish();
-		};
-		const onFailed = (req: Request) => {
-			if (matches(req)) finish();
-		};
-		page.on('requestfinished', onFinished);
-		page.on('requestfailed', onFailed);
-		const timeout = new Promise<never>((_resolve, reject) => {
-			timer = setTimeout(
-				() =>
-					reject(
-						new Error(
-							`settleRequestAround: ${request.method} ${request.url} reached no terminal state within ${timeoutMs}ms`
-						)
-					),
-				timeoutMs
-			);
-		});
-		try {
-			await action();
-			await Promise.race([terminal, timeout]);
-		} finally {
-			// Always disarm the timer and detach the listeners. `terminal`
-			// never rejects and `timeout` is disarmed before it can fire, so
-			// no losing branch can produce an unhandled rejection.
-			finish();
-		}
-	}
 
 	/**
 	 * `page.goto` that does not return until the initial `GET
