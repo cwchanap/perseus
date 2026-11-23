@@ -110,6 +110,10 @@
 		margin: 0;
 		opacity: 0;
 		cursor: pointer;
+		/* The UA gives radios a 50% radius, which would round the invisible
+		   hit target into an ellipse and leave the pill's corners on the
+		   default cursor. Square it (inherited from the label) instead. */
+		border-radius: inherit;
 	}
 
 	.category-chip {
