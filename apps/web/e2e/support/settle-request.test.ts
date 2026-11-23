@@ -70,6 +70,46 @@ const flushMicrotasks = async (n = 10): Promise<void> => {
 	for (let i = 0; i < n; i++) await Promise.resolve();
 };
 
+/**
+ * Deterministic clock for quiet-window assertions. jest.useFakeTimers is
+ * not portable across the bun versions this repo runs: 1.3.x fires the
+ * timers but snaps Date.now back to real time on advance, so a fake-time
+ * deadline met a real-time now. Spying on Date.now + setTimeout keeps
+ * the two coherent on every version and removes the scheduler entirely.
+ */
+function spyClock(): { advance(ms: number): Promise<void>; restore(): void } {
+	let now = 1_000;
+	const pending: Array<{ at: number; fire: () => void }> = [];
+	const spyNow = jest.spyOn(Date, 'now').mockImplementation(() => now);
+	const spyTimeout = jest.spyOn(globalThis, 'setTimeout').mockImplementation(((
+		fn: () => void,
+		ms = 0
+	) => {
+		pending.push({ at: now + ms, fire: fn });
+		return 0;
+	}) as never);
+	return {
+		advance: async (ms) => {
+			const until = now + ms;
+			for (;;) {
+				pending.sort((a, b) => a.at - b.at);
+				const next = pending[0];
+				if (!next || next.at > until) break;
+				pending.shift();
+				now = next.at;
+				next.fire();
+				await flushMicrotasks();
+			}
+			now = until;
+			await flushMicrotasks();
+		},
+		restore: () => {
+			spyNow.mockRestore();
+			spyTimeout.mockRestore();
+		}
+	};
+}
+
 /** 'settled' once `done` resolves, else 'pending' after `ms`. */
 async function probe(done: Promise<unknown>, ms = 20): Promise<'settled' | 'pending'> {
 	return Promise.race([
@@ -219,9 +259,8 @@ describe('settleNetworkQuiet', () => {
 	}, 10_000);
 
 	it('lets a terminal event for a request it never saw start push the quiet window out', async () => {
-		jest.useFakeTimers();
+		const clock = spyClock();
 		try {
-			jest.setSystemTime(1_000);
 			const { page, emit } = stub();
 			const done = settleNetworkQuiet(page, 600, 5_000);
 			let settled = false;
@@ -232,21 +271,19 @@ describe('settleNetworkQuiet', () => {
 			// terminates — its terminal event must still bump the window so
 			// the drain does not end ahead of a just-finished late request.
 			// Emit 150ms into the window (t=1150): an unbumped barrier would
-			// exit at t=1600, the bump pushes expiry to t=1750. The fake
-			// clock removes the scheduler — no event-loop stall can delay
-			// the emit past the window edge or a poll past the assertion,
-			// so a missed bump cannot be masked and a correct drain cannot
-			// be flunked.
-			jest.advanceTimersByTime(150);
+			// exit at t=1600, the bump pushes expiry to t=1750. The clock is
+			// exact — no scheduler stall can delay the emit past the window
+			// edge or a poll past an assertion, so a missed bump cannot be
+			// masked and a correct drain cannot be flunked.
+			await clock.advance(150);
 			emit('requestfinished', stubRequest(AUTH_URL));
-			jest.advanceTimersByTime(475); // t=1625: past the unbumped expiry
-			await flushMicrotasks();
+			await clock.advance(475); // t=1625: past the unbumped expiry
 			expect(settled).toBe(false);
-			jest.advanceTimersByTime(200); // t=1825: past the bumped expiry
+			await clock.advance(200); // t=1825: past the bumped expiry
 			await done;
 			expect(settled).toBe(true);
 		} finally {
-			jest.useRealTimers();
+			clock.restore();
 		}
 	}, 10_000);
 
