@@ -1718,7 +1718,10 @@ describe('Gallery Page', () => {
 			limit: 20,
 			nextCursor: 'stale-cursor'
 		});
-		await Promise.resolve();
+		// Let the late response and any Svelte flush it would trigger settle
+		// before asserting it was ignored: one microtask does not guarantee
+		// the page's async continuation has run.
+		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		await expect.element(page.getByText('Nature Result')).toBeVisible();
 		expect(page.getByText('Stale Result').query()).toBeNull();
@@ -1758,7 +1761,7 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('Food Result')).toBeVisible();
 
 		rejectSuperseded?.(new ApiError(500, 'internal_error', 'Superseded failure'));
-		await Promise.resolve();
+		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		await expect.element(page.getByText('Food Result')).toBeVisible();
 		expect(page.getByTestId('error-state').query()).toBeNull();
