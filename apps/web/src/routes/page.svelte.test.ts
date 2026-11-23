@@ -1575,10 +1575,12 @@ describe('Gallery Page', () => {
 			let resolvePage2: ((value: FetchPuzzlesResult) => void) | undefined;
 			let rejectPage2: ((reason: unknown) => void) | undefined;
 			let resolveFresh: ((value: FetchPuzzlesResult) => void) | undefined;
+			let page2Signal: AbortSignal | undefined;
 
 			mockedFetchPuzzles.mockImplementation(async (params) => {
 				const { category, cursor } = params ?? {};
 				if (cursor === 'cursor-page2') {
+					page2Signal = params?.signal;
 					return new Promise<FetchPuzzlesResult>((resolve, reject) => {
 						resolvePage2 = resolve;
 						rejectPage2 = reject;
@@ -1646,6 +1648,11 @@ describe('Gallery Page', () => {
 						expect.objectContaining({ category: 'Nature', offset: 0 })
 					);
 				});
+				// The committed switch must abort the pending page request — the
+				// spinner reset alone does not prove the old request is dead:
+				// the effect clears loadingMore and clears loadMoreController
+				// whether or not controller.abort() actually ran.
+				expect(page2Signal?.aborted).toBe(true);
 				await expect.element(page.getByTestId('loading-state')).toBeVisible();
 				expect(page.getByTestId('load-more-spinner').query()).toBeNull();
 				resolveFresh?.({
