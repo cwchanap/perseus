@@ -159,7 +159,7 @@
 		<div class="absolute right-3 bottom-3 left-3 flex min-w-0 items-end gap-2">
 			<h3
 				class="line-clamp-2 min-w-0 flex-1 text-[1.05rem] font-(--font-display) font-black tracking-[0.03em]
-				text-(--text-0) [text-shadow:0_2px_10px_rgba(0,0,0,0.7)]"
+				[overflow-wrap:anywhere] text-(--text-0) [text-shadow:0_2px_10px_rgba(0,0,0,0.7)]"
 				title={family.name}
 				data-testid="puzzle-card-title"
 			>
@@ -338,6 +338,29 @@
 		.puzzle-card [data-testid='card-status-overlay'] > span {
 			padding: 0.25rem 0.5rem;
 			white-space: nowrap;
+		}
+	}
+
+	/* Below the 136px card the two-line title and the fixed 34px badges
+	   together leave no band for the status label (a 280px phone's 2-column
+	   grids land cards at ~116px). One clamped line keeps the order badges →
+	   label → title and ellipsizes instead of clipping; the full name stays
+	   in the title attribute. The label shrinks too so PROCESSING… keeps a
+	   margin inside the narrow art. */
+	@container (max-width: 133px) {
+		.puzzle-card :global([data-testid='puzzle-card-title']) {
+			-webkit-line-clamp: 1;
+			line-clamp: 1;
+		}
+
+		.puzzle-card [data-testid='card-status-overlay'] > span {
+			font-size: 0.62rem;
+			letter-spacing: 0.15em;
+			/* The bookmark occupies the bottom row from ~69px on a 114px
+			   art; a tighter line box and vertical padding keep the pinned
+			   label above it. */
+			line-height: 1.2;
+			padding-block: 0.125rem;
 		}
 	}
 
