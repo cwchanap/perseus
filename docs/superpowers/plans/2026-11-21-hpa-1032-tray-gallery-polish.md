@@ -24,7 +24,7 @@ Files:
 - [ ] Apply **one ~14.5% proportional `padding` rule directly to `.puzzle-piece`** with `box-sizing: border-box`; keep its full-size wrapper/button area and the 100%-slot image-status decoration. This contains the unhovered 140% mask while existing `.piece-slot` 0.2rem padding plus border/gap provide clearance for the retained `hover:scale-105` on 48–104px slots. **Do not use 16%** merely to budget hover: it unnecessarily shrinks mobile imagery. Assert envelope containment against the actual slot rect (up to half the 6px gap) with hover; if it fails, limit/remove hover scaling locally rather than reducing all previews. Keep 2×2 selected inspection, jigsaw tabs and generators unchanged.
 - [ ] In the browser-mode component test, verify wrapper/visual `getBoundingClientRect()` fits each actual 1×1/2×2 slot to within half the existing grid gap; test an unselected upright piece, one 90° rotated piece, and selected/hovered state. At a normal scroll position, check the first row's tabs are not clipped by the scroll edge; re-run selection, hint scroll, roving focus, filter counts and large-tray scroll.
 - [ ] Replace one-time `requestedTrayWidth` load assignment with route-local `manualTrayWidth: number | null`, derive default `requestedTrayWidth = manualTrayWidth ?? getDefaultPuzzleTrayWidth(puzzle, viewport)`, and keep `appliedTrayWidth` clamping based on measured `.game-layout`. Set manual override only on pointer/keyboard tray resize; reset it on new-puzzle load/reload. Do **not** add persistence or change session model. Board metrics continue using `getResponsivePuzzleBoardMetrics` without new state owners.
-- [ ] Extend existing `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` tray-resize tests (near the current restore-on-shrink case) with **one focused route-level regression** for untouched desktop viewport change 1100→1440 updating `--tray-width`, and for a different `loadPuzzle` via same mounted route clearing the manual override. Assert the deliberate override still survives ordinary layout shrink/re-widen *until* new puzzle load or reload. Use existing component mocks; do not build new test infrastructure.
+- [ ] Extend existing `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` tray-resize tests (near the current restore-on-shrink case) with **one focused route-level regression** for untouched desktop viewport change 1100→1440 updating `--tray-width`, and for a different `loadPuzzle` via same mounted route clearing the manual override. Assert the deliberate override still survives ordinary layout shrink/re-widen _until_ new puzzle load or reload. Use existing component mocks; do not build new test infrastructure.
 - [ ] Add one focused **MCP Playwright** desktop E2E alongside `gameplay-large-fixtures.spec.ts`'s widened-tray test: visit 1100×800 → resize to 1440×900 (without touching separator) → wait for fonts/ResizeObserver settle → record `--tray-width`, board-viewport dimensions and slot size → reload at **1440×900** → assert values equal within ≤2px. Check that a manually resized tray resets to its responsive default on reload using the existing resize test (not a new journey). Do not add a redundant 390px reload geometry case because the compact sheet uses CSS `clamp(3rem,16vw,4.5rem)` independent of tray width.
 
 ## 2. Prove Gallery spinner state and fix only a failing transition
@@ -93,4 +93,64 @@ No attached Linear mockup as of 2026-11-21. Compare to the current Galaxy Arcade
 - Add one route-unit regression for viewport-derived tray width and the manual override reset on new-puzzle load, alongside the single existing-suite MCP resize/reload E2E.
 - Reduce final MCP screenshot count to **four** (Gallery desktop/narrow, tray desktop/narrow); include resize/reload measurements with the desktop tray screenshot, no extra before/after image. No human acceptance and no new test framework.
 
-**Only planning docs changed.** Code, tests, CI and MCP visual acceptance remain pending on PR #185.
+**Only planning docs changed.** Code, tests, CI and MCP visual acceptance remain pending on PR #185. _(Historical planning status — superseded by Implementation Results, 2026-11-23, below.)_
+
+## Implementation Results (2026-11-23)
+
+Implementation head: `323da25ddc489edb3aa4de4b1c35080b34c81958` (PR #185 branch). This section records actual verified results and supersedes the planning-only status above. **Required PR CI is pending until push; no CI pass and no merge is claimed.**
+
+### Final gates at `323da25d`
+
+- `bun run check` — **pass** (5/5 turbo tasks; Svelte 0 errors, 0 warnings).
+- `bun run lint` — **pass** (3/3 turbo tasks).
+- `bun run --cwd apps/web test:unit` — **pass, 71 files / 1355 tests** on the isolated final rerun.
+
+**Disclosed, not claimed clean:** an earlier concurrent full-unit run failed the **unchanged** `imageStatus.test.ts:119` (load-event timing race — asserts status immediately after `img.complete`; same flake seen during task 2, passes in isolation, identical to baseline). Two **pre-existing** `e2e/gallery.spec.ts` chromium-mobile tests still time out on paths this PR did not touch: `gallery bookmark round-trip` clicks `sidebar-bookmarks-link`, hidden below 1440px because `.arcade-sidebar` is `display:flex` only at `min-width:1440px`; `should show no-results state` fills a search input that is `display:none` inside the closed disclosure. Full mobile Gallery pass is **not** claimed.
+
+### Evidence attachments (GitHub user-attachment links; no PNGs committed to git)
+
+| #   | View                                    | Link                                                                            |
+| --- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | Gallery desktop 1440×900                | https://github.com/user-attachments/assets/ee0b13cb-2e8d-44b1-99cc-7f2aa07fb365 |
+| 2   | Gallery narrow 390×844                  | https://github.com/user-attachments/assets/9fe18518-af9e-4499-9f57-58243acbc155 |
+| 3   | Tray desktop 1440×900 (real jigsaw art) | https://github.com/user-attachments/assets/19e45e01-9eda-4d7d-b138-a7841ab43b9f |
+| 4   | Tray narrow 390×844 (real jigsaw art)   | https://github.com/user-attachments/assets/31821f2f-2e03-460c-9317-cf21887acfd0 |
+
+Captured via chrome-devtools MCP against the Playwright-driven headless Chromium (CDP :9333) and revalidated visually identical at `323da25d` — the compact-card container query does not fire on the ~354px gallery card. PNGs exist only in the git-ignored plan `scratch/` dir and as GitHub attachments.
+
+### Deterministic geometry vs. real-art fixture
+
+The resize/reload numbers below are the **gated contract**, measured on the deterministic 12-piece landscape fixture (fully mocked routes; fonts awaited, two-consecutive-stable-sample settle):
+
+| Measure            | 1100×800 | 1440×900 before reload | 1440×900 after reload |
+| ------------------ | -------- | ---------------------- | --------------------- |
+| `--tray-width`     | 402      | 682                    | **682**               |
+| board viewport W×H | 570×395  | 622×434                | **622×434**           |
+| piece-slot size    | 147.9375 | 144.5                  | **144.5**             |
+
+Post-reload values are bit-identical (well inside the ≤2px gate). The two tray screenshots use a separate **real-art fixture**: replayed read-only production GETs for variant `8d8bb6f6` ("Shojo Crystal Waltz" easy, 16 pieces) served through local Playwright routes — deterministic fixtures ship square SVGs and cannot show jigsaw shape. In shot 3, selected piece 0 fills the 2×2 inspection slot (`grid-column-start: span 2`) **visibly rotated 90°**: its tab moved right→bottom and its blank bottom→left; computed `transform: matrix(0,1,-1,0,0,0)`. Top row unclipped (min +14px inset). These real-art shots provide visual shape evidence only; the geometry contract above stays on the deterministic fixture.
+
+### MCP Gallery states + stale response (head `323da25d`)
+
+Exercised live in the shared headless Chromium (Playwright fixture driver + chrome-devtools MCP `evaluate_script`; every `/api/*` fulfilled by local mocks):
+
+- **success:** 6 cards rendered, first title "The Luminous Tidepools Of Aetherfall Cove At First Light"; `loading:0 error:0 empty:0 docOverflow:0`.
+- **empty:** `empty-state` visible ("NO MISSIONS AVAILABLE … ADMIN PORTAL"), `cards:0`.
+- **error:** `error-state` visible ("SYS_ERR Internal Server Error") with a working RETRY SCAN button, `cards:0`.
+- **superseded-abort:** a held `?q=neon` request superseded by `?q=koi` was client-aborted (`net::ERR_ABORTED` via effect-cleanup `controller.abort()`); after the stale response was released the DOM stayed on "Koi Pond" and "neon metropolis" appears nowhere in `innerText` — the `queryVersion` guard is the second layer. Matches the controlled unit stale-response coverage in `page.svelte.test.ts` (an older first-page response cannot restore outdated cards, total, errors or spinner).
+
+### Compact card (whole-branch review fix)
+
+The shared two-line `PuzzleCard` title collided with badges at the ~171px Bookmarks/Profile footprint. Fix: `container-type: inline-size` + `@container (max-width: 239.99px)` restoring square art (commits `5e6b2562`, `323da25d`), plus a unit test at the real 171px footprint asserting zero title↔badge/stack/bookmark intersection. Gallery cards are unaffected (~354px at 390px; 180px at 640px where artwork was already square).
+
+### Targeted Chromium E2E evidence
+
+All under `apps/web` with `PLAYWRIGHT_BROWSERS_PATH=<plan>/browsers`:
+
+- `gallery.spec.ts` real-header chip-fit test — pass on **chromium-desktop and chromium-mobile**; file total 40/42 (the two pre-existing mobile timeouts above).
+- `gameplay-large-fixtures.spec.ts` — untouched-tray resize→reload pass (chromium-desktop); 100-piece + 225-piece slot counts and representative 100-piece placement **3/3 pass** (chromium-desktop).
+- `gameplay-session-controls.spec.ts` — **8/8 pass** (chromium-desktop) including the new reload-resume journey: real piece-0 placement, app-persisted session bytes, `page.reload()`, Resume Mission, placed piece back on board and exactly 3 tray slots; session trio **3/3 pass** (chromium-mobile).
+- `gameplay-mobile-tap.spec.ts` smokes **3/3** (chromium-mobile); large-fixture tray drag/hint + wide-desktop **2/2** and session-controls resume/exit **2/2** (chromium-desktop).
+- Compact-card checks: 72/72 browser-mode unit tests (PuzzleCard + bookmarks + profile), mobile card-display + header-fit, desktop bookmark round-trip — all pass.
+
+This PR stayed web-only: no API, `PuzzleSession`, game rules, persistence schema, NativeScript, compatibility shims, generated art or SFX changed.
