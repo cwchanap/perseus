@@ -9,7 +9,7 @@
 // 'networkidle' reuse is exactly what it replaces. These tests run under
 // bun:test with a structural stub of the Playwright Page event surface
 // (the same stubbing pattern as diagnostics.test.ts / fixture-router.test.ts).
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, jest } from 'bun:test';
 import type { Page, Request } from '@playwright/test';
 import { settleNetworkQuiet, settleRequestAround } from './settle-request';
 
@@ -64,6 +64,11 @@ async function catchError(promise: Promise<unknown>): Promise<unknown> {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Yield the microtask queue so fake-clock timer continuations run. */
+const flushMicrotasks = async (n = 10): Promise<void> => {
+	for (let i = 0; i < n; i++) await Promise.resolve();
+};
 
 /** 'settled' once `done` resolves, else 'pending' after `ms`. */
 async function probe(done: Promise<unknown>, ms = 20): Promise<'settled' | 'pending'> {
@@ -214,22 +219,35 @@ describe('settleNetworkQuiet', () => {
 	}, 10_000);
 
 	it('lets a terminal event for a request it never saw start push the quiet window out', async () => {
-		const { page, emit } = stub();
-		const done = settleNetworkQuiet(page, 600, 5_000);
-		// A request in flight before this call is invisible until it
-		// terminates — its terminal event must still bump the window so
-		// the drain does not end ahead of a just-finished late request.
-		// Emit inside the first window (~150ms): without the bump the
-		// barrier resolves ~600ms after start — ~450ms after this emit;
-		// with the bump it cannot resolve before ~600ms AFTER the emit.
-		// Asserting elapsed-from-emit keeps the check off the scheduler:
-		// a delayed resume shifts both endpoints together instead of
-		// racing a fixed sleep checkpoint against the window edge.
-		await sleep(150);
-		const emittedAt = Date.now();
-		emit('requestfinished', stubRequest(AUTH_URL));
-		await done;
-		expect(Date.now() - emittedAt).toBeGreaterThanOrEqual(550);
+		jest.useFakeTimers();
+		try {
+			jest.setSystemTime(1_000);
+			const { page, emit } = stub();
+			const done = settleNetworkQuiet(page, 600, 5_000);
+			let settled = false;
+			void done.then(() => {
+				settled = true;
+			});
+			// A request in flight before this call is invisible until it
+			// terminates — its terminal event must still bump the window so
+			// the drain does not end ahead of a just-finished late request.
+			// Emit 150ms into the window (t=1150): an unbumped barrier would
+			// exit at t=1600, the bump pushes expiry to t=1750. The fake
+			// clock removes the scheduler — no event-loop stall can delay
+			// the emit past the window edge or a poll past the assertion,
+			// so a missed bump cannot be masked and a correct drain cannot
+			// be flunked.
+			jest.advanceTimersByTime(150);
+			emit('requestfinished', stubRequest(AUTH_URL));
+			jest.advanceTimersByTime(475); // t=1625: past the unbumped expiry
+			await flushMicrotasks();
+			expect(settled).toBe(false);
+			jest.advanceTimersByTime(200); // t=1825: past the bumped expiry
+			await done;
+			expect(settled).toBe(true);
+		} finally {
+			jest.useRealTimers();
+		}
 	}, 10_000);
 
 	it('rejects timely and detaches listeners while a request never terminates', async () => {
