@@ -914,6 +914,107 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('shrinks a user-resized tray 16px per ArrowRight and keeps the override across a viewport resize', async () => {
+		const originalRealWidth = window.innerWidth;
+		const originalRealHeight = window.innerHeight;
+		const restoreViewport = setDesktopViewport();
+		try {
+			await renderPuzzlePage();
+			// The default browser viewport sits below the 1024px desktop
+			// breakpoint, so the tray column only exists in real layout after
+			// resizing the actual viewport — the JS innerWidth stubs above drive
+			// the route state, this drives the media query.
+			await page.viewport(1280, 900);
+			const layout = document.querySelector<HTMLElement>('.game-layout')!;
+			const separator = await page.getByTestId('tray-resizer').element();
+			const trayVarWidth = () => layout.style.getPropertyValue('--tray-width').trim();
+			// The desktop grid's last column is var(--tray-width); reading the
+			// resolved track back through getComputedStyle is the width the user
+			// actually sees (the panel itself may overflow a narrow track by its
+			// min-content, so the track — not the panel box — is the truth).
+			const renderedTrayWidth = () => {
+				const columns = getComputedStyle(layout).gridTemplateColumns.trim().split(' ');
+				return Math.round(Number.parseFloat(columns.at(-1)!));
+			};
+			const pressKey = (key: string) =>
+				separator.dispatchEvent(
+					new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+				);
+
+			// 1280 viewport → rail 88; layout 1000 clamps the tray max to 412 and
+			// the separator exposes that clamped range to assistive tech.
+			let layoutWidth = 1000;
+			Object.defineProperty(layout, 'clientWidth', {
+				configurable: true,
+				get: () => layoutWidth
+			});
+			window.dispatchEvent(new Event('resize'));
+			await expect.poll(trayVarWidth).toBe('412px');
+			expect(separator.getAttribute('role')).toBe('separator');
+			expect(separator.getAttribute('aria-orientation')).toBe('vertical');
+			expect(separator.getAttribute('aria-valuemin')).toBe('300');
+			await expect
+				.element(page.getByTestId('tray-resizer'))
+				.toHaveAttribute('aria-valuemax', '412');
+			await expect
+				.element(page.getByTestId('tray-resizer'))
+				.toHaveAttribute('aria-valuenow', '412');
+
+			// A deliberate resize (End → manual max) followed by ArrowRight steps
+			// the override down exactly 16px — in the var and the rendered panel.
+			pressKey('End');
+			await expect.poll(trayVarWidth).toBe('412px');
+			pressKey('ArrowRight');
+			await expect.poll(trayVarWidth).toBe('396px');
+			await expect.poll(renderedTrayWidth).toBe(396);
+			await expect
+				.element(page.getByTestId('tray-resizer'))
+				.toHaveAttribute('aria-valuenow', '396');
+
+			// Repeated presses stop at the 300px floor instead of shrinking the
+			// tray into the board's reserved width.
+			for (let i = 0; i < 7; i++) pressKey('ArrowRight');
+			await expect.poll(trayVarWidth).toBe('300px');
+			await expect.poll(renderedTrayWidth).toBe(300);
+
+			// A viewport resize across the 1440 tier boundary (rail 88→96) only
+			// re-derives the clamp range — the stored override survives, so the
+			// tray stays at 300px where a cleared override would snap to the
+			// 804px clamped default. Pressing ArrowRight at the floor is a no-op.
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1500 });
+			layoutWidth = 1400;
+			window.dispatchEvent(new Event('resize'));
+			// aria-valuemax transitions 412→804, proving the resize was applied
+			// before asserting the unchanged 300px width.
+			await expect
+				.element(page.getByTestId('tray-resizer'))
+				.toHaveAttribute('aria-valuemax', '804');
+			await expect.poll(trayVarWidth).toBe('300px');
+			pressKey('ArrowRight');
+			await expect.poll(trayVarWidth).toBe('300px');
+
+			// An override wider than a shrunken range clamps at read time:
+			// re-max to 804, shrink to layout 1100 (rail 88 → max 512), and the
+			// visible width becomes 512 — ArrowRight then steps from that
+			// visible width, not from the stored 804.
+			pressKey('End');
+			await expect.poll(trayVarWidth).toBe('804px');
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+			layoutWidth = 1100;
+			window.dispatchEvent(new Event('resize'));
+			await expect.poll(trayVarWidth).toBe('512px');
+			pressKey('ArrowRight');
+			await expect.poll(trayVarWidth).toBe('496px');
+			await expect.poll(renderedTrayWidth).toBe(496);
+			await expect
+				.element(page.getByTestId('tray-resizer'))
+				.toHaveAttribute('aria-valuenow', '496');
+		} finally {
+			await page.viewport(originalRealWidth, originalRealHeight);
+			restoreViewport();
+		}
+	});
+
 	it('resizes the tray from its matching pointer and releases on cancel and blur', async () => {
 		const restoreViewport = setDesktopViewport();
 		try {
