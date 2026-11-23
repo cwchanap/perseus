@@ -316,25 +316,27 @@
 			aspect-ratio: 1 / 1;
 		}
 
-		/* Orbitron's 1.5em line box makes a two-line title ~58px tall; on
-		   ~134px art a centered PROCESSING/FAILED label lands on it.
-		   Tighten the compact title and pin a smaller label in the band
-		   between the top badges and the title. */
+		/* Orbitron's 1.5em line box makes a two-line title ~58px tall;
+		   tightening it frees the band the status label needs below. */
 		.puzzle-card :global([data-testid='puzzle-card-title']) {
 			line-height: 1.25;
 		}
+	}
 
+	/* Only genuinely cramped cards (~<=164px content, e.g. the 136px cards
+	   /profile produces at 320px) need the label moved: at 171px+ the
+	   centered 0.7rem label already clears the tightened two-line title.
+	   Pin the same-size label into the band between the top badges
+	   (bottom ~47px) and the title (top ~75px on 134px art). */
+	@container (max-width: 164px) {
 		.puzzle-card [data-testid='card-status-overlay'] {
 			align-items: flex-start;
 			justify-content: center;
-			padding-top: 3.125rem;
+			padding-top: 3rem;
 		}
 
 		.puzzle-card [data-testid='card-status-overlay'] > span {
-			padding: 0.2rem 0.45rem;
-			font-size: 0.5rem;
-			line-height: 1.3;
-			letter-spacing: 0.14em;
+			padding: 0.25rem 0.5rem;
 			white-space: nowrap;
 		}
 	}
