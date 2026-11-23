@@ -4,6 +4,7 @@
 import { test, expect } from './support/test';
 import { AUTHENTICATED_PLAYER } from './gameplay-fixtures/auth-persona';
 import { getFixture } from './gameplay-fixtures/catalog';
+import { settleNetworkQuiet } from './support/settle-request';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
@@ -166,6 +167,13 @@ test.describe('Progression and leaderboards @smoke', () => {
 		await expect(page.getByTestId('leaderboard-entries')).toContainText('Rival Player');
 		await expect(page.getByTestId('leaderboard-me')).toContainText('#5');
 
+		// The family-leaderboard modal can paint faces the puzzle page had not
+		// used yet — a font fetch still in flight is invisible to a
+		// request-start drain (FontFaceSet covers it whatever its start time),
+		// and page.goto tearing the document down would abort it into a
+		// spurious net::ERR_ABORTED diagnostics failure.
+		await settleNetworkQuiet(page);
+		await page.evaluate(() => document.fonts.ready);
 		await page.goto('/leaderboard');
 		if ((page.viewportSize()?.width ?? 0) < 1024) {
 			await page.getByTestId('arcade-mobile-menu-toggle').click();
@@ -176,6 +184,10 @@ test.describe('Progression and leaderboards @smoke', () => {
 		await expect(page.getByTestId('overall-leaderboard-table')).toContainText('Top Scorer');
 		await expect(page.getByTestId('overall-leaderboard-me')).toContainText('142');
 
+		// Same pre-navigation drain: fonts still loading on the leaderboard
+		// page would abort when page.goto tears the document down.
+		await settleNetworkQuiet(page);
+		await page.evaluate(() => document.fonts.ready);
 		await page.goto('/profile');
 		await expect(page.getByTestId('profile-progression-score')).toHaveText('142');
 		await expect(page.getByTestId('profile-progression-rank')).toHaveText('3');
