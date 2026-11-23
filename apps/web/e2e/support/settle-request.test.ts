@@ -215,17 +215,21 @@ describe('settleNetworkQuiet', () => {
 
 	it('lets a terminal event for a request it never saw start push the quiet window out', async () => {
 		const { page, emit } = stub();
-		const done = settleNetworkQuiet(page, 400, 5_000);
+		const done = settleNetworkQuiet(page, 600, 5_000);
 		// A request in flight before this call is invisible until it
 		// terminates — its terminal event must still bump the window so
 		// the drain does not end ahead of a just-finished late request.
 		// Emit inside the first window (~150ms): without the bump the
-		// barrier resolves near 400ms; with it, not before ~550ms.
-		const lateEmit = sleep(150).then(() => emit('requestfinished', stubRequest(AUTH_URL)));
-		await sleep(450);
-		expect(await probe(done)).toBe('pending');
+		// barrier resolves ~600ms after start — ~450ms after this emit;
+		// with the bump it cannot resolve before ~600ms AFTER the emit.
+		// Asserting elapsed-from-emit keeps the check off the scheduler:
+		// a delayed resume shifts both endpoints together instead of
+		// racing a fixed sleep checkpoint against the window edge.
+		await sleep(150);
+		const emittedAt = Date.now();
+		emit('requestfinished', stubRequest(AUTH_URL));
 		await done;
-		await lateEmit;
+		expect(Date.now() - emittedAt).toBeGreaterThanOrEqual(550);
 	}, 10_000);
 
 	it('rejects timely and detaches listeners while a request never terminates', async () => {

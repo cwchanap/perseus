@@ -1161,6 +1161,12 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			// these requests even started. Auth and held thumbnails are
 			// separately awaited to terminal events above.
 			await settleNetworkQuiet(page);
+			// The quiet drain only counts requests that START while it
+			// listens — a font fetch already in flight is invisible until
+			// its terminal event, and a slow one can still be pending when
+			// the window closes. FontFaceSet tracks it regardless of when
+			// it started, so wait it out before the reload can abort it.
+			await page.evaluate(() => document.fonts.ready);
 			// DOM content only: the reload re-issues the continue-art request
 			// into the hold, and an eager <img> in flight before 'load' would
 			// stall the reload past the timeout before release can run.
@@ -1270,6 +1276,11 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			// this covers any late request they did not (a font fetch was
 			// observed aborting at reload in scratch).
 			await settleNetworkQuiet(page);
+			// Same font barrier as the sibling test: a font still in flight
+			// is invisible to the drain — it counts only requests that
+			// start while it listens — while FontFaceSet covers the font
+			// whatever its start time.
+			await page.evaluate(() => document.fonts.ready);
 			await page.reload({ waitUntil: 'domcontentloaded' });
 
 			const panel = page.getByTestId('continue-on-device');
