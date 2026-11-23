@@ -230,27 +230,15 @@ test.describe('gameplay smoke @smoke', () => {
 		// arcade offers a path back except reopening the same puzzle.
 		await expect(page.getByTestId('continue-on-device')).toHaveCount(0);
 
-		// Capture the persisted sealed session. The harness init script clears
-		// storage on every full navigation, so a bare page.goto would wipe it.
+		// Capture the persisted sealed session. The harness clears storage only
+		// on the tab's first entry (a sessionStorage once-flag), so the seal
+		// survives the plain page.goto() below.
 		const persisted = await page.evaluate((k) => localStorage.getItem(k), progressKey(FIXTURE_ID));
 		expect(persisted).not.toBeNull();
 
 		// Sign in: the later persona route wins for every subsequent
 		// /api/auth/session request.
 		await createAuthPersona('authenticated').install(page);
-
-		// Replant the seal inside the served document, not via a second init
-		// script: the evaluation order of multiple init scripts is undefined,
-		// so a later-registered restore could run BEFORE the harness clear and
-		// lose the seal. An inline document script is deterministic — it always
-		// runs after every init script (post-clear) and before the app's module
-		// scripts (pre-read).
-		const plantSeal = `<script>try{localStorage.setItem(${JSON.stringify(progressKey(FIXTURE_ID))},${JSON.stringify(persisted!).replace(/<\//g, '<\\/')})}catch{}</script>`;
-		await page.route(`**/puzzle/${FIXTURE_ID}`, async (route) => {
-			const response = await route.fetch();
-			const body = (await response.text()).replace(/<head[^>]*>/, `$&${plantSeal}`);
-			await route.fulfill({ response, body });
-		});
 
 		// Reopen the same puzzle. On a fresh document the retry lands through
 		// whichever path resolves first: the hydration retry
