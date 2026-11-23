@@ -881,6 +881,41 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 		);
 	}
 
+	const AUTH_SESSION_PATH = /\/api\/auth\/session(?:\?.*)?$/;
+
+	/**
+	 * `page.goto` that does not return until the initial `GET
+	 * /api/auth/session` of the loaded document is fully over — response
+	 * finished or request failed. The root layout fires `playerAuth.refresh()`
+	 * fire-and-forget on mount, so neither 'load' nor 'domcontentloaded'
+	 * waits for it: a later `page.reload()` can tear the document down while
+	 * the real-backend fetch is still in flight, and diagnostics records its
+	 * `net::ERR_ABORTED` as an unexpected request failure.
+	 * The waiters are registered BEFORE `goto` so the request is captured
+	 * even when it completes before `goto` resolves. `response.finished()`
+	 * (headers alone do not prove the body — and therefore the request — is
+	 * done) is raced with `requestfailed` so a session request that fails
+	 * before any response still unblocks the reload instead of timing out:
+	 * that failure stays fatal via diagnostics' own listener.
+	 */
+	async function gotoAndSettleAuthSession(
+		page: Page,
+		url: string,
+		options?: Parameters<Page['goto']>[1]
+	): Promise<void> {
+		const isAuthGet = (u: string, method: string) => AUTH_SESSION_PATH.test(u) && method === 'GET';
+		const finished = page
+			.waitForResponse((response) => isAuthGet(response.url(), response.request().method()))
+			.then((response) => response.finished());
+		const failed = page
+			.waitForEvent('requestfailed', {
+				predicate: (request) => isAuthGet(request.url(), request.method())
+			})
+			.then(() => null);
+		await page.goto(url, options);
+		await Promise.race([finished, failed]);
+	}
+
 	test('held card thumbnail shows Loading…, then loads decoded after release', async ({ page }) => {
 		const diagnostics = attachDiagnostics(page);
 		const family = makeFamily(FAMILY_A, { name: 'Hold Thumbnail' });
@@ -1100,7 +1135,11 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 		try {
 			const handle = await images.installImageUrl(page, thumbnailPattern(CONTINUE_FAMILY));
 
-			await page.goto('/');
+			// Settle the initial auth session before the reload below: the
+			// layout's fire-and-forget refresh is NOT covered by 'load', so
+			// without this the reload can abort it and diagnostics records a
+			// spurious net::ERR_ABORTED failure.
+			await gotoAndSettleAuthSession(page, '/');
 			// Seeded progress surfaces the continue panel; the reload re-runs the
 			// load against the same mocks (routes live on the page across reloads).
 			await seedApiVariantProgress(page, CONTINUE_EASY_VARIANT, '1:1', 16);
@@ -1195,7 +1234,9 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			declareThumbnailFailure(diagnostics, CONTINUE_FAMILY);
 			const handleB = await images.installImageUrl(page, thumbnailPattern(CONTINUE_B_FAMILY));
 
-			await page.goto('/', { waitUntil: 'domcontentloaded' });
+			// Same initial-auth settle as the sibling continue-art test: the
+			// reload below must not abort a still-in-flight session fetch.
+			await gotoAndSettleAuthSession(page, '/', { waitUntil: 'domcontentloaded' });
 			// Two saved sessions: family A is newest (its thumbnail 404s), family
 			// B is the next-newest whose held thumbnail proves update() resets
 			// the mounted img back to pending before loading.
@@ -1205,6 +1246,13 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			await seedApiVariantProgress(page, CONTINUE_B_EASY_VARIANT, '1:1', 16, {
 				lastUpdated: 2_000
 			});
+			// The first load's family-B card already requests this same
+			// thumbnail URL into the hold. Drain it deterministically — wait
+			// for the capture, release it — so the reload neither aborts the
+			// held request (net::ERR_ABORTED in diagnostics) nor leaves a
+			// stale entry inflating the post-reload count.
+			await expect.poll(() => handleB.pendingCount).toBe(1);
+			await handleB.release();
 			await page.reload({ waitUntil: 'domcontentloaded' });
 
 			const panel = page.getByTestId('continue-on-device');
