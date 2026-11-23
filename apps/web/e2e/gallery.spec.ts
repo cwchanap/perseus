@@ -20,7 +20,7 @@ import {
 	type ImageHoldHandle
 } from './gameplay-fixtures/image-hold';
 import { createPageDiagnostics, type PageDiagnostics } from './support/diagnostics';
-import { settleRequestAround } from './support/settle-request';
+import { settleNetworkQuiet, settleRequestAround } from './support/settle-request';
 import {
 	buildMinimalSeed,
 	createPersistedStateController,
@@ -1156,11 +1156,11 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			await releaseAndSettle(page, handle, CONTINUE_FAMILY);
 			// The settled auth refresh re-rendered the shell, which can fire
 			// late requests (a font fetch was observed aborting at reload in
-			// scratch). This wait is best-effort: it can reuse an earlier
-			// idle event and resolve while newer requests are in flight.
-			// Auth and held thumbnails are separately awaited to terminal
-			// events above.
-			await page.waitForLoadState('networkidle');
+			// scratch). Drain from a fresh observation: 'networkidle' is
+			// sticky per navigation and can reuse an idle reached before
+			// these requests even started. Auth and held thumbnails are
+			// separately awaited to terminal events above.
+			await settleNetworkQuiet(page);
 			// DOM content only: the reload re-issues the continue-art request
 			// into the hold, and an eager <img> in flight before 'load' would
 			// stall the reload past the timeout before release can run.
@@ -1265,11 +1265,11 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			// inflating the post-reload count.
 			await expect.poll(() => handleB.pendingCount).toBe(1);
 			await releaseAndSettle(page, handleB, CONTINUE_B_FAMILY);
-			// Same best-effort quiet as the sibling test: the wait can
-			// reuse an earlier idle event while late requests are still in
-			// flight; auth and the held thumbnail are already awaited to
-			// terminal events.
-			await page.waitForLoadState('networkidle');
+			// Same fresh-observation drain as the sibling test: auth and
+			// the held thumbnail are already awaited to terminal events;
+			// this covers any late request they did not (a font fetch was
+			// observed aborting at reload in scratch).
+			await settleNetworkQuiet(page);
 			await page.reload({ waitUntil: 'domcontentloaded' });
 
 			const panel = page.getByTestId('continue-on-device');

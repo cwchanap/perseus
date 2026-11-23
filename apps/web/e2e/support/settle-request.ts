@@ -86,3 +86,59 @@ export async function settleRequestAround(
 		settle();
 	}
 }
+
+/**
+ * Fresh-observation network quiet barrier for pre-navigation drains.
+ * `page.waitForLoadState('networkidle')` cannot serve here: the idle
+ * lifecycle bit is sticky per navigation, so a document that already
+ * reached idle resolves it immediately while newer requests are still in
+ * flight — a following reload then aborts them and diagnostics records
+ * `net::ERR_ABORTED`.
+ *
+ * This barrier counts requests from the moment it is called and resolves
+ * only after `quietMs` with no request in flight AND no request event at
+ * all — so a request observed mid-wait (start or terminal) pushes the
+ * window out, and a request still in flight blocks it outright. A request
+ * that started before this call is invisible until its terminal event —
+ * its finish/fail still bumps the window — and one still running with no
+ * events for `quietMs` is unobservable, same as any event-based drain.
+ * Known in-flight requests should be awaited individually with
+ * `settleRequestAround` first; this is the catch-all for the rest.
+ */
+export async function settleNetworkQuiet(
+	page: Page,
+	quietMs = 500,
+	timeoutMs = 15_000
+): Promise<void> {
+	const inFlight = new Set<Request>();
+	let lastEventAt = Date.now();
+	const bump = () => {
+		lastEventAt = Date.now();
+	};
+	const onRequest = (req: Request) => {
+		inFlight.add(req);
+		bump();
+	};
+	const onDone = (req: Request) => {
+		inFlight.delete(req);
+		bump();
+	};
+	page.on('request', onRequest);
+	page.on('requestfinished', onDone);
+	page.on('requestfailed', onDone);
+	const deadline = Date.now() + timeoutMs;
+	try {
+		while (inFlight.size > 0 || Date.now() - lastEventAt < quietMs) {
+			if (Date.now() >= deadline) {
+				throw new Error(
+					`settleNetworkQuiet: timed out after ${timeoutMs}ms waiting for network quiet (${inFlight.size} request(s) still in flight, quiet window ${quietMs}ms)`
+				);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+	} finally {
+		page.off('request', onRequest);
+		page.off('requestfinished', onDone);
+		page.off('requestfailed', onDone);
+	}
+}
