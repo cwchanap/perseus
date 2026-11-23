@@ -1,4 +1,4 @@
-import type { Page, Response } from '@playwright/test';
+import type { Page, Request, Response } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/test';
@@ -16,7 +16,8 @@ import {
 } from './gameplay-fixtures/fixture-router';
 import {
 	createImageHoldController,
-	type ImageHoldController
+	type ImageHoldController,
+	type ImageHoldHandle
 } from './gameplay-fixtures/image-hold';
 import { createPageDiagnostics, type PageDiagnostics } from './support/diagnostics';
 import {
@@ -884,36 +885,103 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 	const AUTH_SESSION_PATH = /\/api\/auth\/session(?:\?.*)?$/;
 
 	/**
+	 * Run `action` and resolve once the next request matching `request`
+	 * reaches a terminal state — `requestfinished` or `requestfailed`,
+	 * whichever comes first.
+	 *
+	 * Listeners are registered BEFORE the action so a request that reaches a
+	 * terminal state before the action resolves is still captured, and they
+	 * are always removed again — on settle, on timeout, and on an `action()`
+	 * rejection (which propagates to the caller). `requestfinished` is the
+	 * browser-side terminal barrier: a route resolves at `route.fulfill()`,
+	 * before the page has finished the request, so `release()` on an image
+	 * hold alone does NOT prove a later `page.reload()` cannot abort it —
+	 * the terminal event does. A request that fails still unblocks the
+	 * caller (the failure stays fatal via diagnostics' own listener); a
+	 * request that never terminates fails the test after `timeoutMs`
+	 * instead of hanging.
+	 */
+	async function settleRequestAround(
+		page: Page,
+		request: { url: RegExp; method: string },
+		action: () => Promise<unknown>,
+		timeoutMs = 15_000
+	): Promise<void> {
+		const matches = (req: Request) =>
+			request.url.test(req.url()) && req.method() === request.method;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let resolveTerminal: () => void = () => undefined;
+		const terminal = new Promise<void>((resolve) => {
+			resolveTerminal = resolve;
+		});
+		function finish(): void {
+			if (timer !== undefined) {
+				clearTimeout(timer);
+				timer = undefined;
+			}
+			page.off('requestfinished', onFinished);
+			page.off('requestfailed', onFailed);
+			resolveTerminal();
+		}
+		const onFinished = (req: Request) => {
+			if (matches(req)) finish();
+		};
+		const onFailed = (req: Request) => {
+			if (matches(req)) finish();
+		};
+		page.on('requestfinished', onFinished);
+		page.on('requestfailed', onFailed);
+		const timeout = new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(
+				() =>
+					reject(
+						new Error(
+							`settleRequestAround: ${request.method} ${request.url} reached no terminal state within ${timeoutMs}ms`
+						)
+					),
+				timeoutMs
+			);
+		});
+		try {
+			await action();
+			await Promise.race([terminal, timeout]);
+		} finally {
+			// Always disarm the timer and detach the listeners. `terminal`
+			// never rejects and `timeout` is disarmed before it can fire, so
+			// no losing branch can produce an unhandled rejection.
+			finish();
+		}
+	}
+
+	/**
 	 * `page.goto` that does not return until the initial `GET
-	 * /api/auth/session` of the loaded document is fully over — response
-	 * finished or request failed. The root layout fires `playerAuth.refresh()`
-	 * fire-and-forget on mount, so neither 'load' nor 'domcontentloaded'
-	 * waits for it: a later `page.reload()` can tear the document down while
-	 * the real-backend fetch is still in flight, and diagnostics records its
+	 * /api/auth/session` of the loaded document is fully over — finished or
+	 * failed. The root layout fires `playerAuth.refresh()` fire-and-forget
+	 * on mount, so neither 'load' nor 'domcontentloaded' waits for it: a
+	 * later `page.reload()` can tear the document down while the
+	 * real-backend fetch is still in flight, and diagnostics records its
 	 * `net::ERR_ABORTED` as an unexpected request failure.
-	 * The waiters are registered BEFORE `goto` so the request is captured
-	 * even when it completes before `goto` resolves. `response.finished()`
-	 * (headers alone do not prove the body — and therefore the request — is
-	 * done) is raced with `requestfailed` so a session request that fails
-	 * before any response still unblocks the reload instead of timing out:
-	 * that failure stays fatal via diagnostics' own listener.
 	 */
 	async function gotoAndSettleAuthSession(
 		page: Page,
 		url: string,
 		options?: Parameters<Page['goto']>[1]
 	): Promise<void> {
-		const isAuthGet = (u: string, method: string) => AUTH_SESSION_PATH.test(u) && method === 'GET';
-		const finished = page
-			.waitForResponse((response) => isAuthGet(response.url(), response.request().method()))
-			.then((response) => response.finished());
-		const failed = page
-			.waitForEvent('requestfailed', {
-				predicate: (request) => isAuthGet(request.url(), request.method())
-			})
-			.then(() => null);
-		await page.goto(url, options);
-		await Promise.race([finished, failed]);
+		await settleRequestAround(page, { url: AUTH_SESSION_PATH, method: 'GET' }, () =>
+			page.goto(url, options)
+		);
+	}
+
+	/**
+	 * `handle.release()` resolves when `route.fulfill()` returns — BEFORE
+	 * the page has finished the released request. Settle the released
+	 * request's terminal event so a following reload cannot abort it
+	 * mid-flight.
+	 */
+	function releaseAndSettle(page: Page, handle: ImageHoldHandle, familyId: string): Promise<void> {
+		return settleRequestAround(page, { url: thumbnailPattern(familyId), method: 'GET' }, () =>
+			handle.release()
+		);
 	}
 
 	test('held card thumbnail shows Loading…, then loads decoded after release', async ({ page }) => {
@@ -1150,7 +1218,15 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			// load deterministically — wait for the card's capture, release it —
 			// so the count below is exactly the post-reload request on every run.
 			await expect.poll(() => handle.pendingCount).toBe(1);
-			await handle.release();
+			// release() resolves at route fulfillment — BEFORE the page has
+			// finished the request — so a reload could still abort it.
+			// Settle the released request's terminal event first.
+			await releaseAndSettle(page, handle, CONTINUE_FAMILY);
+			// The settled auth refresh re-rendered the shell, which can fire
+			// late requests (a font fetch was observed aborting at reload in
+			// scratch). Quiet the document fully — a barrier, not elapsed
+			// time — so nothing is left in flight to abort.
+			await page.waitForLoadState('networkidle');
 			// DOM content only: the reload re-issues the continue-art request
 			// into the hold, and an eager <img> in flight before 'load' would
 			// stall the reload past the timeout before release can run.
@@ -1248,11 +1324,16 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			});
 			// The first load's family-B card already requests this same
 			// thumbnail URL into the hold. Drain it deterministically — wait
-			// for the capture, release it — so the reload neither aborts the
-			// held request (net::ERR_ABORTED in diagnostics) nor leaves a
-			// stale entry inflating the post-reload count.
+			// for the capture, then release it through the same completion
+			// barrier as the sibling drain (route fulfillment ≠ page-side
+			// requestfinished) — so the reload neither aborts the request
+			// (net::ERR_ABORTED in diagnostics) nor leaves a stale entry
+			// inflating the post-reload count.
 			await expect.poll(() => handleB.pendingCount).toBe(1);
-			await handleB.release();
+			await releaseAndSettle(page, handleB, CONTINUE_B_FAMILY);
+			// Same document-quiet barrier as the sibling test: the settled
+			// auth refresh can fire late requests that a reload would abort.
+			await page.waitForLoadState('networkidle');
 			await page.reload({ waitUntil: 'domcontentloaded' });
 
 			const panel = page.getByTestId('continue-on-device');
