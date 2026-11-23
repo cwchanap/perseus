@@ -1156,8 +1156,10 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			await releaseAndSettle(page, handle, CONTINUE_FAMILY);
 			// The settled auth refresh re-rendered the shell, which can fire
 			// late requests (a font fetch was observed aborting at reload in
-			// scratch). Quiet the document fully — a barrier, not elapsed
-			// time — so nothing is left in flight to abort.
+			// scratch). This wait is best-effort: it can reuse an earlier
+			// idle event and resolve while newer requests are in flight.
+			// Auth and held thumbnails are separately awaited to terminal
+			// events above.
 			await page.waitForLoadState('networkidle');
 			// DOM content only: the reload re-issues the continue-art request
 			// into the hold, and an eager <img> in flight before 'load' would
@@ -1263,8 +1265,10 @@ test.describe('Gallery artwork status (HPA-1029) @smoke', () => {
 			// inflating the post-reload count.
 			await expect.poll(() => handleB.pendingCount).toBe(1);
 			await releaseAndSettle(page, handleB, CONTINUE_B_FAMILY);
-			// Same document-quiet barrier as the sibling test: the settled
-			// auth refresh can fire late requests that a reload would abort.
+			// Same best-effort quiet as the sibling test: the wait can
+			// reuse an earlier idle event while late requests are still in
+			// flight; auth and the held thumbnail are already awaited to
+			// terminal events.
 			await page.waitForLoadState('networkidle');
 			await page.reload({ waitUntil: 'domcontentloaded' });
 
