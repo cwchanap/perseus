@@ -31,12 +31,24 @@ describe('PuzzleCard', () => {
 		}
 	};
 
-	beforeEach(async () => {
+	beforeEach(() => {
 		vi.clearAllMocks();
-		// Font swaps change glyph metrics: geometry assertions must wait for
-		// the production faces to finish loading before measuring.
-		await document.fonts.ready;
 	});
+
+	// Geometry assertions must measure the production faces, not fallbacks.
+	// Font faces are requested lazily when rendered text uses them, so load
+	// AFTER render — document.fonts.ready in beforeEach resolves while only
+	// fallback glyphs are in use. Assert the faces actually arrived.
+	async function loadProductionFonts() {
+		await Promise.all([
+			document.fonts.load('900 1.2rem Orbitron'),
+			document.fonts.load('700 0.7rem Orbitron'),
+			document.fonts.load('400 0.62rem "Share Tech Mono"')
+		]);
+		expect(document.fonts.check('900 1.2rem Orbitron')).toBe(true);
+		expect(document.fonts.check('700 0.7rem Orbitron')).toBe(true);
+		expect(document.fonts.check('400 0.62rem "Share Tech Mono"')).toBe(true);
+	}
 
 	it('should render puzzle name', async () => {
 		render(PuzzleCard, { family: mockFamily });
@@ -346,6 +358,7 @@ describe('PuzzleCard', () => {
 			});
 			const readyCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 			readyCard.style.width = `${GALLERY_CARD_390}px`;
+			await loadProductionFonts();
 
 			const stack = rectOf('card-status-stack');
 			const art = rectOf('puzzle-card-art');
@@ -383,6 +396,7 @@ describe('PuzzleCard', () => {
 			});
 			const processingCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 			processingCard.style.width = `${GALLERY_CARD_390}px`;
+			await loadProductionFonts();
 
 			const pArt = rectOf('puzzle-card-art');
 			const pTitle = rectOf('puzzle-card-title');
@@ -448,6 +462,7 @@ describe('PuzzleCard', () => {
 				});
 				const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 				card.style.width = '171px';
+				await loadProductionFonts();
 
 				const art = rectOf('puzzle-card-art');
 				const title = rectOf('puzzle-card-title');
@@ -467,6 +482,18 @@ describe('PuzzleCard', () => {
 					expect(intersects(stack, title)).toBe(false);
 					expect(intersects(stack, bookmark)).toBe(false);
 					expect(containedBy(stack, art)).toBe(true);
+				} else {
+					// 171px is above the ~164px cramped threshold: the overlay
+					// keeps the original centered 0.7rem label, which still
+					// clears the tightened two-line title.
+					const overlay = (await page.getByTestId('card-status-overlay').element()) as HTMLElement;
+					const overlayStyle = getComputedStyle(overlay);
+					const label = overlay.querySelector('span') as HTMLElement;
+					expect(overlayStyle.alignItems).toBe('center');
+					expect(getComputedStyle(label).fontSize).toBe('11.2px');
+					const overlayText = label.getBoundingClientRect();
+					expect(intersects(overlayText, title)).toBe(false);
+					expect(containedBy(overlayText, art)).toBe(true);
 				}
 
 				// Activation, not just visibility: physical clicks must reach the
@@ -519,15 +546,21 @@ describe('PuzzleCard', () => {
 				});
 				const card = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 				card.style.width = '136px';
+				await loadProductionFonts();
 
 				const art = rectOf('puzzle-card-art');
 				const title = rectOf('puzzle-card-title');
 				const bookmark = rectOf('card-bookmark');
 				const category = rectOf('card-category-status');
-				const overlay = await page.getByTestId('card-status-overlay').element();
-				const overlayText = (overlay.querySelector('span') as HTMLElement).getBoundingClientRect();
+				const overlay = (await page.getByTestId('card-status-overlay').element()) as HTMLElement;
+				const label = overlay.querySelector('span') as HTMLElement;
+				const overlayText = label.getBoundingClientRect();
 
 				await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+				// Cramped (<~164px) cards pin the label into the top band but
+				// keep the original 0.7rem face.
+				expect(getComputedStyle(overlay).alignItems).toMatch(/flex-start|flow-start/);
+				expect(getComputedStyle(label).fontSize).toBe('11.2px');
 				// The status label (not the full overlay, which intentionally
 				// covers the art) must clear the title row, bookmark and badge.
 				expect(intersects(overlayText, title)).toBe(false);
@@ -572,6 +605,7 @@ describe('PuzzleCard', () => {
 			// Three-column grid at 640px lands cards at ~180px squares.
 			const readyCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 			readyCard.style.width = '180px';
+			await loadProductionFonts();
 
 			const art = rectOf('puzzle-card-art');
 			const title = rectOf('puzzle-card-title');
@@ -623,14 +657,19 @@ describe('PuzzleCard', () => {
 			});
 			const processingCard = (await page.getByTestId('puzzle-card').element()) as HTMLElement;
 			processingCard.style.width = '180px';
+			await loadProductionFonts();
 
 			const pArt = rectOf('puzzle-card-art');
 			const pTitle = rectOf('puzzle-card-title');
 			const pBookmark = rectOf('card-bookmark');
-			const overlay = await page.getByTestId('card-status-overlay').element();
-			const overlayText = (overlay.querySelector('span') as HTMLElement).getBoundingClientRect();
+			const overlay = (await page.getByTestId('card-status-overlay').element()) as HTMLElement;
+			const label = overlay.querySelector('span') as HTMLElement;
+			const overlayText = label.getBoundingClientRect();
 
 			await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+			// 180px is above the cramped threshold: centered 0.7rem label.
+			expect(getComputedStyle(overlay).alignItems).toBe('center');
+			expect(getComputedStyle(label).fontSize).toBe('11.2px');
 			expect(intersects(overlayText, pTitle)).toBe(false);
 			expect(intersects(overlayText, pBookmark)).toBe(false);
 			expect(intersects(pTitle, pBookmark)).toBe(false);
