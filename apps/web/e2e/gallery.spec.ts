@@ -704,16 +704,13 @@ test.describe('Main Gallery Page', () => {
 		const cursorValue = 'cursor-page-2';
 
 		let callCount = 0;
+		let releasePage2!: () => void;
+		const page2Held = new Promise<void>((resolve) => (releasePage2 = resolve));
 		await page.route(/\/api\/puzzle-families(?:\?.*)?$/, async (route) => {
 			callCount++;
 			const url = route.request().url();
 			if (url.includes(`cursor=${cursorValue}`)) {
-				// Hold page 2 until the pending spinner is really visible — the
-				// component harness loads no stylesheet, so only this E2E can
-				// prove presentation — then release it to the settled checks.
-				const spinner = page.getByTestId('load-more-spinner');
-				await expect(spinner).toBeVisible();
-				await expect(spinner.locator('div')).toBeVisible();
+				await page2Held;
 				await route.fulfill({
 					json: pagedFamilyResponse(secondPage, { total: 21, offset: 20 })
 				});
@@ -733,8 +730,18 @@ test.describe('Main Gallery Page', () => {
 
 		await page.getByTestId('scroll-sentinel').scrollIntoViewIfNeeded();
 
-		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
+		// Hold page 2 until the pending spinner is really visible — the
+		// component harness loads no stylesheet, so only this E2E can prove
+		// presentation — then release it to the settled checks. Asserting here
+		// (not inside the route handler) keeps a missing spinner from being
+		// masked by the card-count timeout below.
 		await expect.poll(() => callCount).toBe(2);
+		const spinner = page.getByTestId('load-more-spinner');
+		await expect(spinner).toBeVisible();
+		await expect(spinner.locator('div')).toBeVisible();
+		releasePage2();
+
+		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
 		// Once the next-page request has settled, neither request spinner persists.
 		await expect(page.getByTestId('load-more-spinner')).toBeHidden();
 		await expect(page.getByTestId('loading-state')).toBeHidden();
