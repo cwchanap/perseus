@@ -1,0 +1,48 @@
+# HPA-1028 — E2E server ownership and deterministic clock initialization
+
+- Linear: [HPA-1028](https://linear.app/cwchanap/issue/HPA-1028/e2e-harden-server-reuse-and-fake-clock-initialization)
+- Base reviewed: `dd0fe6da7e3e7b6afccf4d9a6a51e8f271bfe81e` (main, after HPA-1032)
+- Status: proposed; implementation and acceptance pending. One PR for design, implementation, tests and evidence.
+- Provenance: HPA-1027 was consolidated into this ticket; HPA-825's remaining production QA is separate.
+
+## Problem and evidence
+
+1. `apps/web/playwright.config.ts` enables `reuseExistingServer: !process.env.CI` for both the Wrangler API (3999, readiness URL /api) and Vite preview (4173, TCP readiness). Any process listening on the preview port can be reused. HPA-1028 records ten invalid runs against Gliese, not ten Perseus product failures. API reuse is also unchecked: an HTTP-ready response is not service identity.
+2. `apps/web/e2e/support/gameplay-page.ts:251-270` installs the fake clock at the requested startAt and then asks Playwright to pause at that same instant. Time runs between the two awaited calls, so an already-past target can throw "Cannot fast-forward to the past". Historical Playwright 1.64.1 harness-shaped reproduction: 3/3 failures with a 150 ms delay; 10 serial isolated actual completion runs passed. This establishes a race, not the precise cause of historical contention. Main now declares @playwright/test ^1.65.1; reproduce against the actual lockfile before changing the helper.
+3. Existing `e2e/playwright-clock-contract.spec.ts` installs, navigates, then pauses at +5 seconds; it only asserts a relative performance.now delta and does not cover the production harness's two-call sequence. `e2e/gameplay-session-controls.spec.ts` already checks 3 s active + 5 s paused + 2 s resumed => exactly 5 s active.
+
+## Decision A — exclusive ownership of the existing E2E ports
+
+Default to a fresh, runner-owned API and E2E build for each invocation (local and CI), rather than guessing whether an arbitrary pre-existing listener is the correct checkout. Set reuseExistingServer: false for both entries; name them Perseus API and Perseus E2E preview. Keep 3999/4173, explicit baseURL, existing Wrangler migration/test auth/CORS setup and Vite --strictPort. Treat occupied fixed ports as a supported, actionable failure; concurrent Playwright workers within one invocation still share its owned services. No process killing, auto port hopping, PID files, dynamic port plumbing, persistent daemon, or new endpoint.
+
+For both entries, use TCP occupancy (existing Playwright port mechanism) so a listener returning 404/500 or non-HTTP cannot be mistaken for a free port. TCP readiness alone is insufficient: add one small E2E-only global setup check after webServer startup and before browser tests, using existing HTTP responses, bounded requests, and a finite startup deadline. GET http://localhost:3999/api must succeed with JSON message "Perseus API" (existing worker.ts); GET http://localhost:4173/ must succeed with the existing Perseus-specific HTML description from src/app.html ("Perseus Jigsaw Puzzles - Create and solve beautiful jigsaw puzzles online"). Do not follow redirects or accept a generic 2xx. Allow a bounded retry for connection/not-yet-ready errors, never treat mismatched identity as success; a stable mismatch fails with the expected service, URL/port, and instruction to free the port using the owning workspace. Preserve the existing API HTTP readiness guarantee and startup allowance (180 s); do not sleep a fixed interval instead of probing. Confirm Playwright's config ordering and TCP detection behavior on the locked version (port is documented, though deprecated; no new custom orchestrator). The existing strict preview build command and real fixture/clock smoke prove a harness-enabled build, rather than pretending the HTML identity alone proves harness mode. Do not add a production identity marker.
+
+Use a local API base for this local harness; check existing override callers before deciding whether to remove the PUBLIC_API_BASE override or reject a nonlocal value clearly. Never silently target production/another app while validating the local API. Retain current local host/origin semantics. Document intentional loss of local reuse (same-project listeners can also be stale/normal production-mode builds or other worktrees; a safe same-checkout reuse protocol is not worth maintaining for this hobby project). No changes to unrelated dev commands or production deployment.
+
+If the installed runner's port check cannot reliably detect occupied loopback ports, add only a bounded startup port guard in the affected launch path, preserving HTTP readiness and never touching another process. Do not add this speculatively. Validate occupied ports returning both ready HTTP and non-ready responses. Playwright owns teardown of its own children even if setup fails.
+
+## Decision B — pause from an earlier virtual time, before app navigation
+
+Keep the existing clock option and lifecycle: route handlers, cookies, optional reduced motion and clock, atomic storage/config init script, navigation, ready state. Never pause at the exact instant an already-running clock was installed. Use the public Playwright API with a named, generous virtual lead (e.g. one hour, much greater than the test's allowed init duration):
+```ts
+const PAUSE_LEAD_MS = 60 * 60 * 1000;
+await clock.install({ time: new Date(startAt.getTime() - PAUSE_LEAD_MS) });
+await clock.pauseAt(startAt);
+```
+Execute on the fresh blank page before app scripts/timers exist. This advances virtual time, not real time; no real wait, retries, or private Playwright API. Factor the two calls into a tiny support/paused-clock.ts helper typed against Pick<Page['clock'], 'install' | 'pauseAt'> so the existing contract spec can exercise the actual implementation with a real host-side delay injected by delegating install/pauseAt. Do not expose a delay option on GameplayPage or product code. A deadline greater than the test timeout ensures any successful init is within the headroom; a genuinely exceeded timeout fails as a test failure rather than moving the requested epoch.
+
+Contract: Date.now() equals startAt at navigation and remains frozen until explicit advancement; performance.now() is a frozen monotonic baseline (not guaranteed to be numerically zero after a forward jump). Audit existing clock consumers/assertions and comments; only deltas matter to createDefaultClock/PuzzleSession. Verify the pinned browser clock across navigation and reload; if the actual contract fails, fix the harness with public APIs and prove equivalence before proceeding, not the product timer or expected elapsed result. Preserve explicit page.clock.runFor(), interval/rAF behavior, reduced-motion first-seal handling and real-clock behavior for omitted/false options. Do not replace with setFixedTime, which does not control performance.now or scheduled timers.
+
+References: [Playwright Clock API](https://playwright.dev/docs/api/class-clock) (pauseAt advances forward; install before page timers); [webServer configuration](https://playwright.dev/docs/test-webserver) (reuseExistingServer, port vs URL readiness).
+
+## Scope boundaries
+
+Only web E2E configuration, support, tests and operator docs. No product UI, session engine, persistence codec, native app, API routes, production timing, new artwork/SFX, dependency upgrades, new service or CI architecture. Do not close HPA-825 or repeat HPA-1029/HPA-1032 work. No compatibility mode.
+
+## Acceptance contract (implementation pending)
+
+- With an unrelated listener already bound to 4173 (HTTP 200 and 404 cases), and independently to 3999 (including /api 404), actual Playwright entrypoint exits nonzero before executing browser test bodies, identifies port/service, leaves sentinel listener alive, and does not silently use another port. Own children are cleaned up. Repeat for local default (CI unset); CI also remains fail-closed.
+- Clean start on free ports succeeds via current API migration + harness build; identity probes pass, browser loads real Perseus Gallery and solves the deterministic four-piece puzzle, no fixture leaks or unexpected console/page errors. After run both owned processes exit normally. Identity mismatch is tested separately; no wrong app may count as a pass.
+- Real clock regression uses actual shared initializer with 150 ms host delay between install and pause; compare old sequence vs fixed against pinned dependency, run >=10 fixed iterations with retries=0 and a multi-worker run. Assert exact Date.now at startAt, frozen wall and monotonic clocks across navigation and a real host wait, exact +2000 ms deltas under runFor, and no unintended advance. Preserve real-clock case and inspect reload behavior. Existing timed 3+5+2 case seals 5 seconds and relaxed completion remains clockless; no weakened assertions.
+- MCP-driven desktop Chromium browser acceptance on the actual branch: inspect Gallery and puzzle, exercise setup/place/pause/resume/finish, capture board and completion screenshots, compare with the current main screenshots/baseline (no ticket UI mockup or UI changes), confirm no visual regression. One desktop platform suffices; normal existing smoke CI remains intact. No manual human approval or native platform acceptance.
+- Relevant web check/lint, focused Bun invariant/port and Playwright regression commands, default desktop suite, smoke lane and production-bundle assertion pass. Record command, pinned version, SHA, ports, expected failure logs, stress counts and screenshots. Draft/docs-only CI being skipped is not evidence of success. All work remains in this PR.
