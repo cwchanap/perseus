@@ -734,12 +734,16 @@ test.describe('Main Gallery Page', () => {
 		// component harness loads no stylesheet, so only this E2E can prove
 		// presentation — then release it to the settled checks. Asserting here
 		// (not inside the route handler) keeps a missing spinner from being
-		// masked by the card-count timeout below.
-		await expect.poll(() => callCount).toBe(2);
-		const spinner = page.getByTestId('load-more-spinner');
-		await expect(spinner).toBeVisible();
-		await expect(spinner.locator('div')).toBeVisible();
-		releasePage2();
+		// masked by the card-count timeout below. Release in finally so a
+		// failed spinner check cannot leave the held route parked.
+		try {
+			await expect.poll(() => callCount).toBe(2);
+			const spinner = page.getByTestId('load-more-spinner');
+			await expect(spinner).toBeVisible();
+			await expect(spinner.locator('div')).toBeVisible();
+		} finally {
+			releasePage2();
+		}
 
 		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
 		// Once the next-page request has settled, neither request spinner persists.
