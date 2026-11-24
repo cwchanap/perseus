@@ -380,6 +380,29 @@ describe('image-hold controller', () => {
 		expect(() => images.assertClean()).not.toThrow();
 	});
 
+	it('release still drains later specs when an earlier spec reports an aborted request', async () => {
+		const stub = stubPage();
+		const images = createImageHoldController();
+		const handle = await images.installFixtureImages(stub.page, KNOWN_ID, [
+			{ endpoint: { kind: 'thumbnail' }, outcome: 'hold' },
+			{ endpoint: { kind: 'reference' }, outcome: 'hold' }
+		]);
+
+		const aborted = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/thumbnail`), 'GET', {
+			failure: { errorText: 'net::ERR_ABORTED' }
+		});
+		const live = await dispatch(stub, api(`/api/puzzles/${KNOWN_ID}/reference`));
+		expect(handle.pendingCount).toBe(2);
+
+		// The aborted thumbnail must not starve the reference hold: the
+		// aggregate release still drains every spec before propagating.
+		await expect(handle.release()).rejects.toThrow(/thumbnail \(net::ERR_ABORTED\)/);
+		expect(aborted.fulfilled).toHaveLength(0);
+		expect(live.fulfilled).toHaveLength(1);
+		expect(handle.pendingCount).toBe(0);
+		expect(() => images.assertClean()).not.toThrow();
+	});
+
 	it('cancel continues aborting remaining held routes if one abort throws', async () => {
 		const stub = stubPage();
 		const images = createImageHoldController();

@@ -289,16 +289,30 @@ export function createImageHoldController(): ImageHoldController {
 			}
 
 			// One aggregate handle: pendingCount spans the specs; release/cancel
-			// fan out to every held route across them.
+			// fan out to every held route across them. A spec that rejects (a
+			// page-aborted request) must not starve the later specs — drain all,
+			// then propagate, matching drain()'s own keep-draining rule.
+			async function drainAll(action: (handle: ImageHoldHandle) => Promise<void>): Promise<void> {
+				const failures: string[] = [];
+				for (const handle of handles) {
+					try {
+						await action(handle);
+					} catch (error) {
+						failures.push(error instanceof Error ? error.message : String(error));
+					}
+				}
+				if (failures.length > 0) throw new Error(failures.join('\n'));
+			}
+
 			return {
 				get pendingCount() {
 					return handles.reduce((sum, handle) => sum + handle.pendingCount, 0);
 				},
-				async release() {
-					for (const handle of handles) await handle.release();
+				release() {
+					return drainAll((handle) => handle.release());
 				},
-				async cancel() {
-					for (const handle of handles) await handle.cancel();
+				cancel() {
+					return drainAll((handle) => handle.cancel());
 				}
 			};
 		},
