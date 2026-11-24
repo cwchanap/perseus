@@ -708,6 +708,12 @@ test.describe('Main Gallery Page', () => {
 			callCount++;
 			const url = route.request().url();
 			if (url.includes(`cursor=${cursorValue}`)) {
+				// Hold page 2 until the pending spinner is really visible — the
+				// component harness loads no stylesheet, so only this E2E can
+				// prove presentation — then release it to the settled checks.
+				const spinner = page.getByTestId('load-more-spinner');
+				await expect(spinner).toBeVisible();
+				await expect(spinner.locator('div')).toBeVisible();
 				await route.fulfill({
 					json: pagedFamilyResponse(secondPage, { total: 21, offset: 20 })
 				});
