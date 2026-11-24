@@ -21,6 +21,7 @@ import type { GameplayPage } from './support/gameplay-page';
 import { getFixture } from './gameplay-fixtures/catalog';
 import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
 import { createAuthPersona } from './gameplay-fixtures/auth-persona';
+import { settleNetworkQuiet } from './support/settle-request';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
@@ -245,6 +246,11 @@ test.describe('gameplay smoke @smoke', () => {
 		// (includeUnauthorized when auth is already settled) or the
 		// authenticated-transition dispatch once refresh() resolves — both end
 		// at the same sealed resubmission.
+		// A font fetch still in flight is invisible to a request-start drain
+		// (FontFaceSet covers it whatever its start time) — page.goto tearing
+		// the document down would abort it into a spurious net::ERR_ABORTED.
+		await settleNetworkQuiet(page);
+		await page.evaluate(() => document.fonts.ready);
 		await page.goto(`/puzzle/${FIXTURE_ID}`);
 
 		// The restored seal retries the unauthorized submission with the SAME
