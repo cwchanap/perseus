@@ -29,7 +29,7 @@ import {
 import { buildMinimalSeed, createPersistedStateController, progressKey } from './persisted-state';
 import { createPageDiagnostics, type PageDiagnostics } from '../support/diagnostics';
 
-const API_ORIGIN = 'http://localhost:3999';
+const API_ORIGIN = 'http://127.0.0.1:3999';
 const FIXTURE_ID = 'e2e2a000-0000-4000-8000-000000000004' as const;
 
 /**

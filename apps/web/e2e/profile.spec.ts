@@ -211,7 +211,7 @@ test('avatar upload refetches the profile only — puzzles list is not re-reques
 
 	await expect(page.locator('img[alt="Test Player"]')).toHaveAttribute(
 		'src',
-		/http:\/\/localhost:3999\/api\/player\/p1\/avatar\?v=\d+$/
+		/http:\/\/127\.0\.0\.1:3999\/api\/player\/p1\/avatar\?v=\d+$/
 	);
 	expect(familiesCallCount).toBe(1);
 	await expect(page.getByText('First Puzzle')).toBeVisible();

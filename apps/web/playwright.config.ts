@@ -2,24 +2,25 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
 	use: {
-		baseURL: 'http://localhost:4173'
+		baseURL: 'http://127.0.0.1:4173'
 	},
 	webServer: [
 		{
 			command: 'bun run dev:e2e',
-			url: 'http://localhost:3999/api',
+			url: 'http://127.0.0.1:3999/api',
 			cwd: '../api',
 			reuseExistingServer: false,
 			timeout: 180_000
 		},
 		{
-			command: 'bun run build:e2e && bun run preview -- --port 4173 --strictPort',
+			command: 'bun run build:e2e && bun run preview -- --host 127.0.0.1 --port 4173 --strictPort',
 			port: 4173,
 			cwd: '.',
 			reuseExistingServer: false,
+			timeout: 180_000,
 			env: {
 				...process.env,
-				PUBLIC_API_BASE: 'http://localhost:3999'
+				PUBLIC_API_BASE: 'http://127.0.0.1:3999'
 			}
 		}
 	],
