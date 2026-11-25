@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 import { assertPortFree } from '../../scripts/assert-port-free';
 
-if (!process.env.TEST_WORKER_INDEX) {
+// `--list` starts no servers, so an occupied port is not a problem there.
+if (!process.env.TEST_WORKER_INDEX && !process.argv.includes('--list')) {
 	await assertPortFree('127.0.0.1', 3999);
 }
 

@@ -80,9 +80,10 @@ test.describe('gotoFixture lifecycle @smoke', () => {
 		await setupPage.goto('/');
 		await setupPage.evaluate(() => localStorage.setItem('stale-should-vanish', '1'));
 		await setupPage.close();
-		await context.addCookies([
-			{ name: 'stale-cookie', value: '1', domain: 'localhost', path: '/' }
-		]);
+		await context.addCookies([{ name: 'stale-cookie', value: '1', url: 'http://127.0.0.1:4173' }]);
+		expect(
+			(await context.cookies('http://127.0.0.1:4173')).some((c) => c.name === 'stale-cookie')
+		).toBe(true);
 
 		await gameplayPage.gotoFixture();
 		await expect(gameplayPage.page.getByTestId('puzzle-board')).toBeVisible();
