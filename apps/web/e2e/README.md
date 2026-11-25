@@ -95,7 +95,8 @@ executes — stop the owning process **in its own workspace** (the terminal or
 worktree that started it) rather than killing it from here, then re-run.
 
 Playwright performs a TCP preflight against 127.0.0.1:3999 while loading its
-config, before either `webServer` availability checks or process startup. That
+config, before either `webServer` availability checks or process startup
+(`playwright test --list` skips it because listing starts no servers). That
 check is independent of HTTP status, so a listener already bound when the run
 starts fails even when `/api` returns 404/5xx or changes status during startup.
 Server readiness is still only an availability check; it does not identify
