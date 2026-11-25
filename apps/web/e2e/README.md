@@ -83,14 +83,20 @@ WebKit.
 
 ## Server ownership and ports
 
-`reuseExistingServer` is `false` locally and in CI: each run launches its
-**own** Wrangler API on port 3999 (HTTP readiness at
-`http://localhost:3999/api`) and its **own** preview on port 4173
-(`--strictPort`), so **both ports must be free** before a run. A reused server
-could be the wrong app or a stale build, so the harness always starts its own.
-If a run fails because either port is already in use, no test has executed —
-stop the owning process **in its own workspace** (the terminal or worktree that
-started it) rather than killing it from here, then re-run.
+`reuseExistingServer` is `false` locally and in CI: Playwright starts a fresh
+Wrangler API on port 3999 (HTTP readiness at `http://localhost:3999/api`) and a
+fresh preview on port 4173 (`--strictPort`) instead of reusing an existing
+server, so **both ports must be free** before a run. A reused server could be
+the wrong app or a stale build. If either port is already in use before startup,
+the run fails before any test executes — stop the owning process **in its own
+workspace** (the terminal or worktree that started it) rather than killing it
+from here, then re-run.
+
+Server readiness is only an availability check; it does not identify which
+process is listening. If a foreign process begins listening during startup, it
+can satisfy readiness before the launched child exits. Do not start competing
+processes on ports 3999 or 4173 during a run, and serialize E2E run starts
+across terminals and worktrees.
 
 The E2E API origin is fixed at `http://localhost:3999` regardless of shell
 environment: the preview `webServer` env hardcodes `PUBLIC_API_BASE` and the
