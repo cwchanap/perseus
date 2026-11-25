@@ -9,17 +9,17 @@ export default defineConfig({
 			command: 'bun run dev:e2e',
 			url: 'http://localhost:3999/api',
 			cwd: '../api',
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: false,
 			timeout: 180_000
 		},
 		{
 			command: 'bun run build:e2e && bun run preview -- --port 4173 --strictPort',
 			port: 4173,
 			cwd: '.',
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: false,
 			env: {
 				...process.env,
-				PUBLIC_API_BASE: process.env.PUBLIC_API_BASE ?? 'http://localhost:3999'
+				PUBLIC_API_BASE: 'http://localhost:3999'
 			}
 		}
 	],
