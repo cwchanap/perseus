@@ -22,6 +22,7 @@ see the source under `src/lib/services/gameplay/`.
 
 - [Project commands](#project-commands)
 - [E2E lanes](#e2e-lanes)
+- [Server ownership and ports](#server-ownership-and-ports)
 - [Fixture catalog](#fixture-catalog)
 - [Total request interception](#total-request-interception)
 - [Virtual module and import rules](#virtual-module-and-import-rules)
@@ -77,6 +78,26 @@ Manual workflow dispatch:
 Documentation-only changes do not start Build & Lint, Unit Tests, or E2E. Unit
 Tests installs Chromium only; manual broad coverage installs Chromium and
 WebKit.
+
+---
+
+## Server ownership and ports
+
+`reuseExistingServer` is `false` locally and in CI: each run launches its
+**own** Wrangler API on port 3999 (HTTP readiness at
+`http://localhost:3999/api`) and its **own** preview on port 4173
+(`--strictPort`), so **both ports must be free** before a run. A reused server
+could be the wrong app or a stale build, so the harness always starts its own.
+If a run fails because either port is already in use, no test has executed —
+stop the owning process **in its own workspace** (the terminal or worktree that
+started it) rather than killing it from here, then re-run.
+
+The E2E API origin is fixed at `http://localhost:3999` regardless of shell
+environment: the preview `webServer` env hardcodes `PUBLIC_API_BASE` and the
+harness-services spec hardcodes the same origin, so a dev value exported in the
+shell or set in `.env.local` (e.g. `PUBLIC_API_BASE=http://localhost:4690` for
+ordinary dev) cannot redirect E2E traffic. Ordinary dev and production
+configuration are unaffected.
 
 ---
 
@@ -240,8 +261,10 @@ atomic init script and a strict lifecycle order:
    controller for completion, then auth persona (defaults to `anonymous` so the
    harness never depends on the real API for auth).
 3. **Cookie reset** — `context.clearCookies()`.
-4. **Optional clock** — `initializePausedClock(startAt)` installs with a virtual
-   lead and pauses at `startAt` **before** navigation, so navigation does not
+4. **Optional clock** — `initializePausedClock(page.clock, startAt)` installs
+   one virtual hour before `startAt`, then pauses at `startAt`; the lead keeps
+   the pause target in the future despite real time elapsed between the two
+   round-trips. Both complete **before** navigation, so navigation does not
    advance `performance.now()`.
 5. **ONE atomic init script** — on the tab's first entry only, clears storage →
    seeds session/stats; on every entry it freezes the config global.

@@ -7,7 +7,7 @@
 //   1. fixture lookup        getFixture(id)
 //   2. route registration    fixture router (+ persona + completion scenario)
 //   3. cookie reset          context.clearCookies()
-//   4. optional clock        initializePausedClock(startAt) — BEFORE nav
+//   4. optional clock        initializePausedClock(page.clock, startAt) — BEFORE nav
 //   5. ONE atomic init script clears/seeds storage and freezes the config
 //   6. navigation            page.goto('/puzzle/<id>')
 //   7. ready state           puzzle-board visible + expected tray count
