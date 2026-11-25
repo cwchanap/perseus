@@ -1,4 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
+import { assertPortFree } from '../../scripts/assert-port-free';
+
+if (!process.env.TEST_WORKER_INDEX) {
+	await assertPortFree('127.0.0.1', 3999);
+}
 
 export default defineConfig({
 	use: {
