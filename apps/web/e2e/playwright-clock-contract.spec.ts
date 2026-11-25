@@ -1,12 +1,13 @@
 // Exemption: this spec intentionally imports from '@playwright/test' rather
 // than e2e/support/test — it is a runtime-contract check for the Playwright
-// clock API itself, not a gameplay test, so the gameplayPage fixture and its
-// teardown post-conditions do not apply.
+// clock API and the initializePausedClock harness helper, not a gameplay test,
+// so the gameplayPage fixture and its teardown post-conditions do not apply.
 import { expect, test } from '@playwright/test';
 import { initializePausedClock } from './support/paused-clock';
 
 test('@smoke installed clock advances performance.now exactly', async ({ page }) => {
-	await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+	// The virtual lead keeps the pause target ahead even if navigation stalls.
+	await page.clock.install({ time: new Date('2025-12-31T23:00:00Z') });
 	await page.goto('/');
 	await page.clock.pauseAt(new Date('2026-01-01T00:00:05Z'));
 	const before = await page.evaluate(() => performance.now());
@@ -25,10 +26,16 @@ test('@smoke paused clock initialization keeps Date.now at startAt despite insta
 				await page.clock.install(options);
 				await new Promise<void>((resolve) => setTimeout(resolve, 150));
 			},
-			pauseAt: (time) => page.clock.pauseAt(time)
+			pauseAt: (time) => page.clock.pauseAt(time),
+			setSystemTime: (time) => page.clock.setSystemTime(time)
 		},
 		startAt
 	);
 	await page.goto('/');
-	expect(await page.evaluate(() => Date.now())).toBe(startAt.getTime());
+	const time = await page.evaluate(() => ({
+		dateNow: Date.now(),
+		origin: performance.timeOrigin
+	}));
+	expect(time.dateNow).toBe(startAt.getTime());
+	expect(time.origin).toBe(startAt.getTime());
 });

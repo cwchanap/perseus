@@ -84,25 +84,28 @@ WebKit.
 ## Server ownership and ports
 
 `reuseExistingServer` is `false` locally and in CI: Playwright starts a fresh
-Wrangler API on port 3999 (HTTP readiness at `http://localhost:3999/api`) and a
-fresh preview on port 4173 (`--strictPort`) instead of reusing an existing
-server, so **both ports must be free** before a run. A reused server could be
-the wrong app or a stale build. If Playwright detects either port as occupied
-before startup, the run fails before any test executes — stop the owning
-process **in its own workspace** (the terminal or worktree that started it)
-rather than killing it from here, then re-run.
+Wrangler API on 127.0.0.1:3999 (HTTP readiness at `http://127.0.0.1:3999/api`)
+and a fresh preview on 127.0.0.1:4173 (`--host 127.0.0.1 --strictPort`) instead
+of reusing an existing server, so **both ports must be free** before a run. The
+harness uses explicit IPv4 loopback addresses rather than `localhost` so DNS
+ordering cannot split readiness probes, browser traffic, and server binds
+across IPv4 and IPv6. A reused server could be the wrong app or a stale build.
+If Playwright detects either port as occupied before startup, the run fails
+before any test executes — stop the owning process **in its own workspace**
+(the terminal or worktree that started it) rather than killing it from here,
+then re-run.
 
 Server readiness is only an availability check; it does not identify which
 process is listening. The API check is HTTP rather than a TCP bind check: a
-listener already on port 3999 that returns 404 or 5xx from `/api` can escape
-the initial probe even though the port is not free. The launched Wrangler child
-normally exits after failing to bind, but if that listener — or another foreign
-process that starts during startup — returns HTTP 200-403 before the child-exit
-error wins the race, Playwright can accept it as ready. Do not start competing
-processes on ports 3999 or 4173 during a run, and serialize E2E run starts
-across terminals and worktrees.
+listener already on 127.0.0.1:3999 that returns 404 or 5xx from `/api` can
+escape the initial probe even though the port is not free. The launched Wrangler
+child normally exits after failing to bind, but if that listener — or another
+foreign process that starts during startup — returns HTTP 200-403 before the
+child-exit error wins the race, Playwright can accept it as ready. Do not start
+competing processes on ports 3999 or 4173 during a run, and serialize E2E run
+starts across terminals and worktrees.
 
-The E2E API origin is fixed at `http://localhost:3999` regardless of shell
+The E2E API origin is fixed at `http://127.0.0.1:3999` regardless of shell
 environment: the preview `webServer` env hardcodes `PUBLIC_API_BASE` and the
 harness-services spec hardcodes the same origin, so a dev value exported in the
 shell or set in `.env.local` (e.g. `PUBLIC_API_BASE=http://localhost:4690` for
@@ -272,10 +275,10 @@ atomic init script and a strict lifecycle order:
    harness never depends on the real API for auth).
 3. **Cookie reset** — `context.clearCookies()`.
 4. **Optional clock** — `initializePausedClock(page.clock, startAt)` installs
-   one virtual hour before `startAt`, then pauses at `startAt`; the lead keeps
-   the pause target in the future despite real time elapsed between the two
-   round-trips. Both complete **before** navigation, so navigation does not
-   advance `performance.now()`.
+   at `startAt`, pauses at `startAt` plus one virtual hour, then resets the
+   wall clock to `startAt`; the lead keeps the pause target in the future
+   despite real time elapsed between the round-trips. These steps complete
+   **before** navigation, so navigation does not advance the paused clock.
 5. **ONE atomic init script** — on the tab's first entry only, clears storage →
    seeds session/stats; on every entry it freezes the config global.
    Synchronous, before any app script runs.
@@ -310,6 +313,11 @@ Passing `clock: { startAt }` to `gotoFixture()` installs Playwright's clock
 - `requestAnimationFrame` / `cancelAnimationFrame`.
 - `requestIdleCallback` / `cancelIdleCallback`.
 - `setTimeout` / `setInterval` (and their `Date.now`-based scheduling).
+
+`performance.timeOrigin` is the install time `startAt`. The monotonic baseline
+is not guaranteed numeric zero, and tests should use `performance.now()` only
+for deltas rather than reconstructing wall time from
+`timeOrigin + performance.now()`.
 
 Navigation with a paused clock is safe: pages do not need advancing time to
 initialize, and `fetch` is clock-independent. A test advances time explicitly via
