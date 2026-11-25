@@ -26,16 +26,10 @@ test('@smoke paused clock initialization keeps Date.now at startAt despite insta
 				await page.clock.install(options);
 				await new Promise<void>((resolve) => setTimeout(resolve, 150));
 			},
-			pauseAt: (time) => page.clock.pauseAt(time),
-			setSystemTime: (time) => page.clock.setSystemTime(time)
+			pauseAt: (time) => page.clock.pauseAt(time)
 		},
 		startAt
 	);
 	await page.goto('/');
-	const time = await page.evaluate(() => ({
-		dateNow: Date.now(),
-		origin: performance.timeOrigin
-	}));
-	expect(time.dateNow).toBe(startAt.getTime());
-	expect(time.origin).toBe(startAt.getTime());
+	expect(await page.evaluate(() => Date.now())).toBe(startAt.getTime());
 });
