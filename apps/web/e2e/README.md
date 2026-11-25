@@ -87,14 +87,18 @@ WebKit.
 Wrangler API on port 3999 (HTTP readiness at `http://localhost:3999/api`) and a
 fresh preview on port 4173 (`--strictPort`) instead of reusing an existing
 server, so **both ports must be free** before a run. A reused server could be
-the wrong app or a stale build. If either port is already in use before startup,
-the run fails before any test executes — stop the owning process **in its own
-workspace** (the terminal or worktree that started it) rather than killing it
-from here, then re-run.
+the wrong app or a stale build. If Playwright detects either port as occupied
+before startup, the run fails before any test executes — stop the owning
+process **in its own workspace** (the terminal or worktree that started it)
+rather than killing it from here, then re-run.
 
 Server readiness is only an availability check; it does not identify which
-process is listening. If a foreign process begins listening during startup, it
-can satisfy readiness before the launched child exits. Do not start competing
+process is listening. The API check is HTTP rather than a TCP bind check: a
+listener already on port 3999 that returns 404 or 5xx from `/api` can escape
+the initial probe even though the port is not free. The launched Wrangler child
+normally exits after failing to bind, but if that listener — or another foreign
+process that starts during startup — returns HTTP 200-403 before the child-exit
+error wins the race, Playwright can accept it as ready. Do not start competing
 processes on ports 3999 or 4173 during a run, and serialize E2E run starts
 across terminals and worktrees.
 
