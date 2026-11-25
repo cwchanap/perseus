@@ -8,9 +8,10 @@
 //
 // Determinism: every completion test passes `clock: { startAt }` to
 // gotoFixture, which installs AND pauses Playwright's clock before navigation
-// (see gameplay-page.ts). performance.now() stays at zero until a test calls
-// page.clock.runFor(), so the monotonic clock driving elapsedActiveSeconds
-// never accrues real wall-clock time. The timer test advances it explicitly.
+// (see gameplay-page.ts). performance.now() is a frozen monotonic baseline (not
+// guaranteed numeric zero) until a test calls page.clock.runFor(), so the
+// monotonic clock driving elapsedActiveSeconds never accrues real wall-clock
+// time. The timer test advances it explicitly.
 // The sealed run id and result class come from the frozen fixture config, so
 // the recorded server payload is byte-stable across runs.
 //

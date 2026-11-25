@@ -240,8 +240,9 @@ atomic init script and a strict lifecycle order:
    controller for completion, then auth persona (defaults to `anonymous` so the
    harness never depends on the real API for auth).
 3. **Cookie reset** — `context.clearCookies()`.
-4. **Optional clock** — `page.clock.install({ time })` + `pauseAt` **before**
-   navigation, so navigation does not advance `performance.now()`.
+4. **Optional clock** — `initializePausedClock(startAt)` installs with a virtual
+   lead and pauses at `startAt` **before** navigation, so navigation does not
+   advance `performance.now()`.
 5. **ONE atomic init script** — on the tab's first entry only, clears storage →
    seeds session/stats; on every entry it freezes the config global.
    Synchronous, before any app script runs.
@@ -271,8 +272,8 @@ interactions that re-render the board.
 Passing `clock: { startAt }` to `gotoFixture()` installs Playwright's clock
 **and pauses it** at `startAt` before navigation. An installed clock controls:
 
-- `performance.now()` — frozen at zero (relative to `startAt`) until a test calls
-  `page.clock.runFor(ms)`.
+- `performance.now()` — frozen at a monotonic baseline (not guaranteed numeric
+  zero) until a test calls `page.clock.runFor(ms)`.
 - `requestAnimationFrame` / `cancelAnimationFrame`.
 - `requestIdleCallback` / `cancelIdleCallback`.
 - `setTimeout` / `setInterval` (and their `Date.now`-based scheduling).
