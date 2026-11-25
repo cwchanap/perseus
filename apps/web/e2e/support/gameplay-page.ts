@@ -7,7 +7,7 @@
 //   1. fixture lookup        getFixture(id)
 //   2. route registration    fixture router (+ persona + completion scenario)
 //   3. cookie reset          context.clearCookies()
-//   4. optional clock        page.clock.install({ time }) + pauseAt — BEFORE nav
+//   4. optional clock        initializePausedClock(startAt) — BEFORE nav
 //   5. ONE atomic init script clears/seeds storage and freezes the config
 //   6. navigation            page.goto('/puzzle/<id>')
 //   7. ready state           puzzle-board visible + expected tray count
@@ -56,6 +56,7 @@ import {
 } from '../../src/lib/services/gameplay/session/preferences';
 import { buildSessionValidationContext, progressKey } from '../gameplay-fixtures/persisted-state';
 import { createPageDiagnostics, type PageDiagnostics } from './diagnostics';
+import { initializePausedClock } from './paused-clock';
 
 export interface GotoFixtureOptions {
 	/** Fixture to load. Defaults to DEFAULT_FIXTURE_ID ('e2e2a000-0000-4000-8000-000000000004'). */
@@ -83,14 +84,15 @@ export interface GotoFixtureOptions {
 	 */
 	seedPreferences?: GameplayPreferences;
 	/**
-	 * Clock control. `{ startAt }` installs AND pauses Playwright's clock at
-	 * `startAt` before navigation, so navigation does not advance it and
-	 * performance.now() stays at zero until a test calls page.clock.runFor();
-	 * `false` (or omitted) leaves the real wall clock in place. Installing a
-	 * paused clock also reduces motion for the page: a paused clock freezes
-	 * the route's 500 ms first-seal reveal setTimeout forever, so
-	 * paused-clock completion tests need reduced motion to keep results
-	 * immediate. Real-clock runs keep normal motion (and the reveal) intact.
+	 * Clock control. `{ startAt }` initializes Playwright's clock paused at
+	 * `startAt` before navigation, so Date.now() is frozen at `startAt` and
+	 * performance.now() is a frozen monotonic baseline (not guaranteed numeric
+	 * zero) until a test calls page.clock.runFor(); `false` (or omitted) leaves
+	 * the real wall clock in place. Installing a paused clock also reduces motion
+	 * for the page: a paused clock freezes the route's 500 ms first-seal reveal
+	 * setTimeout forever, so paused-clock completion tests need reduced motion to
+	 * keep results immediate. Real-clock runs keep normal motion (and the reveal)
+	 * intact.
 	 */
 	clock?: { startAt: Date } | false;
 	/**
@@ -249,11 +251,14 @@ export class GameplayPage {
 		await this.page.context().clearCookies();
 
 		// --- Stage 4: optional clock install + pause (BEFORE navigation) --------
-		// Pausing immediately after install freezes the clock at startAt so
-		// navigation (and everything up to the first user action) does not
-		// advance performance.now(). A test advances time explicitly via
-		// page.clock.runFor(). Navigation with a paused clock is safe: pages do
-		// not need advancing time to initialize, and fetch is clock-independent.
+		// initializePausedClock installs with a virtual lead, then pauses at
+		// startAt, absorbing real time elapsed between the two browser
+		// round-trips before the clock freezes. Navigation (and everything up to the
+		// first user action) leaves performance.now() frozen at a monotonic
+		// baseline; its numeric value is not guaranteed to be zero. A test
+		// advances time explicitly via page.clock.runFor(). Navigation with a
+		// paused clock is safe: pages do not need advancing time to initialize,
+		// and fetch is clock-independent.
 		if (options.clock && typeof options.clock === 'object') {
 			// A paused clock also freezes the route's 500 ms first-seal reveal
 			// timer (a plain setTimeout), so paused-clock runs reduce motion to
@@ -265,8 +270,7 @@ export class GameplayPage {
 			// `use.contextOptions.reducedMotion` — a bare `use.reducedMotion` is
 			// silently ignored by Playwright 1.57.)
 			await this.page.emulateMedia({ reducedMotion: 'reduce' });
-			await this.page.clock.install({ time: options.clock.startAt });
-			await this.page.clock.pauseAt(options.clock.startAt);
+			await initializePausedClock(this.page.clock, options.clock.startAt);
 		}
 
 		// --- Stage 5: ONE atomic init script ------------------------------------
