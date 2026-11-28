@@ -1,6 +1,6 @@
 # HPA-1341 — Web leaderboard redesign
 
-**Status:** Proposed; design only, revised after [design review](https://github.com/cwchanap/perseus/pull/191#pullrequestreview-6096603761).  
+**Status:** Proposed; design only, revised after [design review](https://github.com/cwchanap/perseus/pull/191#pullrequestreview-6096603761) and [follow-up review](https://github.com/cwchanap/perseus/pull/191#pullrequestreview-6099462531).  
 **Linear:** [HPA-1341](https://linear.app/cwchanap/issue/HPA-1341/web-ui-redesign-leaderboard-page-with-top-3-podium)  
 **Prerequisite:** HPA-1340 / [PR #190](https://github.com/cwchanap/perseus/pull/190), merged; shared components verified on main.  
 **Implementation:** [single-PR plan](../plans/2026-11-28-hpa-1341-leaderboard-redesign.md)
@@ -11,7 +11,7 @@ Bring the public /leaderboard page into the Galaxy Arcade page design establishe
 
 - Global rankings kicker, LEADERBOARD title, score formula chip with star. Preserve 100×Easy + 200×Normal + 300×Hard + achievement points; use compact mock wording with an accessible expansion.
 - Desktop podium: cyan #2 left, larger gold #1 centered with crown, pink #3 right; tinted rounded panels, avatar/initials, name, grouped score and E/N/H clears. Rounded rankings table below starts at #4, with rank, player, difficulty gem headers, clear counts and gold score.
-- Mobile: compact podium in the same visual order; score chip wraps below title; table shows rank, player, score and E/N/H counts under the name. Hide visual podium clear counts at the mock's ~760px breakpoint while keeping them accessible to assistive technology. No page-level horizontal scrolling.
+- Mobile: compact podium in the same visual order; score chip wraps below title and its text can wrap inside the chip; table shows rank, player, score and E/N/H counts under the name. Hide visual podium clear counts at the mock's ~760px breakpoint while keeping them accessible to assistive technology. No page-level horizontal scrolling.
 - Current viewer gets a cyan inset/tint and YOU chip on the existing row or podium card, never a duplicate row. Loading, error and empty use shared arcade presentation.
 
 ## Current code and ownership
@@ -19,14 +19,14 @@ Bring the public /leaderboard page into the Galaxy Arcade page design establishe
 | Existing seam | Proposed change |
 | --- | --- |
 | `apps/web/src/routes/leaderboard/+page.svelte` | Keep onMount, fetchOverallLeaderboard, AbortController and loading/error lifecycle unchanged. Use one derived projection from the response, PageHeader, inline podium and semantic table. |
-| `PageHeader.svelte` | Reuse kicker/title/titleTestId and actions snippet for score chip. |
+| `PageHeader.svelte` | Reuse kicker/title/titleTestId and actions snippet for score chip. Add `min-w-0 max-w-full` to the shared actions flex wrapper (currently unconstrained); keep the global `.arcade-chip` nowrap behavior for other callers. The leaderboard formula chip locally uses `white-space: normal; max-width: 100%; min-width: 0` with a shrink-resistant decorative star and one wrapping text child. |
 | `DifficultyGems.svelte` | Reuse existing default 1/2/3 gems for desktop column headers, with no piece count. Add one opt-in `singleGem?: boolean` prop (default false) for the mock's single colored gem per podium difficulty. Announce actual labeled clear counts separately; never pass a clear count as pieceCount. |
-| `EmptyState.svelte`, `routes/layout.css` | Reuse arcade-panel, arcade-chip, arcade-alert-error and shared typography for states and table. Use scoped CSS for podium accents and table responsiveness only. |
+| `EmptyState.svelte`, `routes/layout.css` | Reuse arcade-panel, arcade-chip, arcade-alert-error and shared typography for states and table. Use scoped CSS for podium accents, formula wrapping and table responsiveness only. |
 | `lib/constants/icons.ts`, `lib/utils/playerIdentity.ts` | Reuse ICONS.crown/star, playerIdentity(name) for display name/initials; no assets. |
 | `profile/ProfileBestTimes.svelte`, `ProfileHero.svelte`, `routes/profile/+page.svelte` | Reuse existing image-error visibility fallback pattern, responsive difficulty-inline/column toggle, score.toLocaleString(), and max-w-[72rem] page width. No changes to these components/routes. |
 | `packages/types/src/core.ts`, `packages/shared/src/repositories.ts`, `lib/services/api.ts` | Read-only reference. Existing typed contract and resolved avatar URLs. |
 
-One new route-local pure helper, `apps/web/src/routes/leaderboard/podium.ts` with `leaderboardLayout(board: OverallLeaderboardResponse)`, owns the tiny display projection. Return `{ podium, rows }` as arrays of `{ entry: OverallLeaderboardEntry, you: boolean }` so the same viewer marker is used everywhere. The route derives this once when board is available. Keep podium/table markup inline and share one avatar snippet (image layered over initials, alt="" next to readable player name, hide only failed image on error using the local hideBrokenThumb pattern). Use rank-based scoped styles and keyed iteration by player ID. No extra component, service, store, auth lookup, global CSS or ranking algorithm. Use correct Tailwind v4 font family syntax (`font-(family-name:--font-display)`).
+One new route-local pure helper, `apps/web/src/routes/leaderboard/podium.ts` with `leaderboardLayout(board: OverallLeaderboardResponse)`, owns the tiny display projection. Return `{ podium, rows }` as arrays of `{ entry: OverallLeaderboardEntry, you: boolean }` so the same viewer marker is used everywhere. The route derives this once when board is available. Keep podium/table markup inline and share one avatar snippet (decorative container with `aria-hidden="true"`, image layered over initials with `alt=""` and an opaque `background: var(--bg-2)` so transparent pixels cannot reveal initials; hide only failed image on error using the local hideBrokenThumb pattern). Keep the readable player name outside the hidden avatar container. Use rank-based scoped styles and keyed iteration by player ID. No extra component, service, store, auth lookup, global CSS or ranking algorithm. Use correct Tailwind v4 font family syntax (`font-(family-name:--font-display)`).
 
 ## Display rules (normal API contract)
 
@@ -46,6 +46,6 @@ No API/scoring/ranking/auth change, filters/tabs/pagination, family leaderboard 
 
 ## Risk and acceptance
 
-The main layout risk is a ~390px row containing a long player name, YOU chip and 5-digit score. Allow compact wrapping/truncation of the name and keep score and YOU readable without horizontal overflow. Verify this once via MCP in addition to the populated mockup at desktop and mobile widths.
+The main layout risks are the nowrap formula chip in a narrow PageHeader and a 390px row containing a long player name, YOU chip and 5-digit score. Allow the formula text to wrap and the name to wrap/truncate while keeping score and YOU readable without horizontal overflow. Verify both during the existing mobile MCP check; no additional screenshot matrix.
 
-Use the implemented app through browser MCP on one Chromium platform, with mockup-matched fixture data, real Ranks navigation and two final screenshots compared against the original HTML/PNG. Check visible values, order, clear-count presentation and viewer placement; list and fix meaningful visual mismatches. Run the existing progression E2E (MCP-accessible execution environment), focused unit tests and normal CI. No separate native/platform or human gate. Implementation and acceptance remain pending.
+Use the implemented app through browser MCP on one Chromium platform at **1440×900** (actual desktop sidebar shell, 232px sidebar) and **390×844** (mobile compact shell), matching the existing Playwright project viewports. At 1440px the available content area is nominally 1208px before any scrollbar; compare the leaderboard content area against the original HTML/PNG at matching available content width, not the mock's illustrative navigation shell. Use mockup-matched fixture data, real Ranks navigation and two final screenshots. Check visible values, order, clear-count presentation and viewer placement; list and fix meaningful visual mismatches. Run the existing progression E2E (MCP-accessible execution environment), focused unit tests and normal CI. No separate native/platform or human gate. Implementation and acceptance remain pending.
