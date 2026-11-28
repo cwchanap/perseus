@@ -200,10 +200,10 @@ describe('profile page', () => {
 
 		render(ProfilePage);
 
-		await expect.element(page.getByRole('heading', { name: 'Puzzle Results' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Best times' })).toBeVisible();
 		await expect.element(page.getByText('No timed bests')).toBeVisible();
 		await expect.element(page.getByText('00:42')).toBeVisible();
-		await expect.element(page.getByText('2×')).toBeVisible();
+		await expect.element(page.getByText('×2')).toBeVisible();
 		await expect.element(page.getByTestId('card-best-time')).not.toBeInTheDocument();
 		expect(formatTime).toHaveBeenCalledWith(42);
 		expect(formatTime).not.toHaveBeenCalledWith(null);
@@ -394,7 +394,7 @@ describe('profile page', () => {
 		await expect.element(page.getByText('Survivor')).toBeVisible();
 		await expect.element(page.getByText("You haven't uploaded any puzzles yet.")).toBeVisible();
 		// The puzzle-results list (from the still-loaded stats) also renders.
-		await expect.element(page.getByText('Puzzle Results')).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Best times' })).toBeVisible();
 	});
 
 	it('renders the first puzzle page and shows Load more when nextCursor is present', async () => {
@@ -416,7 +416,7 @@ describe('profile page', () => {
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats, nextCursor: undefined });
 
 		render(ProfilePage);
-		// PuzzleCard renders the name in an <h3>; the Puzzle Results list renders the
+		// PuzzleCard renders the name in an <h3>; the Best times list renders the
 		// same name in a link, so scope to the heading to stay unambiguous.
 		await expect.element(page.getByRole('heading', { name: 'Forest Puzzle' })).toBeVisible();
 		await expect
@@ -462,7 +462,7 @@ describe('profile page', () => {
 		await expect.element(page.getByTestId('load-more-puzzles')).not.toBeInTheDocument();
 	});
 
-	it('paginates the Puzzle Results list independently of My Puzzles', async () => {
+	it('paginates the Best times list independently of My puzzles', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
 			email: 'e',
@@ -528,7 +528,7 @@ describe('profile page', () => {
 
 		render(ProfilePage);
 		await expect.element(page.getByText('Stats Survivor')).toBeVisible();
-		await expect.element(page.getByText('No solves recorded yet.')).toBeVisible();
+		await expect.element(page.getByTestId('best-times-empty')).toBeVisible();
 	});
 
 	it('renders profile picture img when profile.picture is set', async () => {

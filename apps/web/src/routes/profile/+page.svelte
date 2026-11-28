@@ -17,10 +17,14 @@
 		PlayerProgressionSummary
 	} from '$lib/types/puzzle';
 	import type { PuzzleFamilySummary } from '@perseus/types';
+	import { resolve } from '$app/paths';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import ProfileHero from '$lib/components/profile/ProfileHero.svelte';
+	import ProfileStatPanels from '$lib/components/profile/ProfileStatPanels.svelte';
+	import ProfileBestTimes from '$lib/components/profile/ProfileBestTimes.svelte';
+	import { ICONS } from '$lib/constants/icons';
 	import { ownedFamilyToGalleryFamily, hasPlayableVariantIds } from '$lib/utils/familyCard';
-	import { playerIdentity } from '$lib/utils/playerIdentity';
-	import { formatTime } from '$lib/stores/timer';
 
 	let profile = $state<PlayerProfile | null>(null);
 	let progression = $state<PlayerProgressionSummary | null>(null);
@@ -48,8 +52,6 @@
 	// away from the profile page cancels pending profile/puzzles/stats fetches
 	// rather than letting them resolve and write state to an unmounted component.
 	let abortController: AbortController | null = null;
-
-	const initials = $derived(playerIdentity(profile?.name, profile?.email).initials);
 
 	function toGalleryFamily(p: PlayerOwnedFamilySummary): PuzzleFamilySummary {
 		return ownedFamilyToGalleryFamily(p);
@@ -273,217 +275,120 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Profile | Perseus</title>
+</svelte:head>
+
 {#if loading}
-	<p data-testid="profile-loading">Loading…</p>
+	<div
+		class="flex flex-col items-center justify-center gap-4 py-24"
+		role="status"
+		data-testid="profile-loading"
+	>
+		<div
+			class="h-9 w-9 rounded-full border-2 border-(--border) border-t-(--accent)
+			[box-shadow:0_0_20px_var(--accent-glow)] motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
+		></div>
+		<span
+			class="font-(family-name:--font-mono) text-xs tracking-[0.25em] text-(--accent) uppercase"
+		>
+			Loading profile…
+		</span>
+	</div>
 {:else if loadError}
-	<section class="mx-auto max-w-4xl px-4 py-8">
-		<p data-testid="profile-error" class="text-(--text-1)">Failed to load your profile.</p>
-		<button type="button" class="mt-3 text-sm text-(--accent)" onclick={loadAll}>Try again</button>
+	<section class="mx-auto w-full max-w-[72rem] px-4 pt-2 pb-12 md:px-7">
+		<div class="arcade-panel flex flex-col items-center gap-4 px-6 py-10 text-center">
+			<p data-testid="profile-error" class="text-lg font-semibold text-(--text-1)">
+				Failed to load your profile.
+			</p>
+			<button type="button" class="arcade-btn-ghost" onclick={loadAll}>Try again</button>
+		</div>
 	</section>
 {:else if profile}
-	<section class="mx-auto max-w-4xl px-4 py-8">
-		<div class="flex items-center gap-4 border border-(--border) bg-(--bg-1) p-5">
-			{#if profile.picture}
-				<img src={profile.picture} alt={profile.name} class="h-16 w-16 rounded-full object-cover" />
-			{:else}
-				<div
-					class="flex h-16 w-16 items-center justify-center rounded-full bg-(--bg-2) text-(--accent)"
-				>
-					{initials}
-				</div>
-			{/if}
-			<div class="min-w-0">
-				{#if editing}
-					<input
-						data-testid="display-name-input"
-						aria-label="Display name"
-						bind:value={displayName}
-						class="border border-(--border) bg-(--bg-2) px-2 py-1 text-(--text-0)"
-					/>
-					<button type="button" onclick={saveName} disabled={saving}>Save</button>
-					<button
-						type="button"
-						data-testid="reset-name"
-						onclick={resetName}
-						disabled={saving}
-						class="text-sm text-(--text-2)"
+	<div
+		class="mx-auto grid w-full max-w-[72rem] gap-4 px-4 pt-1 pb-12 md:gap-[22px] md:px-7 md:pt-2 md:pb-16"
+	>
+		<ProfileHero
+			{profile}
+			score={progression?.score ?? 0}
+			rank={progression?.rank ?? null}
+			{editing}
+			bind:displayName
+			{saving}
+			{saveError}
+			onEdit={() => (editing = true)}
+			onCancel={cancelEditing}
+			onSave={saveName}
+			onReset={resetName}
+			{onAvatarChosen}
+		/>
+
+		<ProfileStatPanels {progression} summary={profile.summary} />
+
+		<div class="mt-2.5">
+			<ProfileBestTimes
+				{stats}
+				hasMore={statsCursor !== undefined}
+				loadingMore={loadingMoreStats}
+				onLoadMore={loadMoreStats}
+			/>
+		</div>
+
+		<section class="mt-2.5 grid gap-3.5">
+			<div class="flex items-center gap-3">
+				<h2 class="arcade-section-title">My puzzles</h2>
+				{#if families.length > 0}
+					<span class="arcade-chip">{profile.summary.puzzlesUploaded} UPLOADED</span>
+					<span class="flex-1"></span>
+					<a
+						class="arcade-btn-ghost px-3 md:px-5"
+						href={resolve('/upload')}
+						aria-label="Upload a puzzle"
 					>
-						Reset to Google default
-					</button>
-					<input
-						data-testid="avatar-input"
-						aria-label="Upload avatar image"
-						type="file"
-						accept="image/*"
-						onchange={onAvatarChosen}
-						class="mt-2 text-xs text-(--text-2)"
-					/>
-				{:else}
-					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
-						{profile.name}
-					</h1>
-					<p class="text-sm text-(--text-2)">{profile.email}</p>
-					<p class="text-xs text-(--text-2)" data-testid="profile-join-date">
-						Joined {new Date(profile.createdAt).toLocaleDateString()}
-					</p>
-					<p class="text-xs text-(--text-2)" data-testid="profile-last-login">
-						Last login {new Date(profile.lastLoginAt).toLocaleString()}
-					</p>
+						<svg
+							viewBox="0 0 24 24"
+							fill="currentColor"
+							class="h-[15px] w-[15px]"
+							aria-hidden="true"
+						>
+							<path d={ICONS.bolt} />
+						</svg>
+						<span class="ml-2 hidden md:inline">Upload</span>
+					</a>
 				{/if}
 			</div>
-		</div>
-
-		{#if saveError}
-			<p data-testid="profile-save-error" class="mt-2 text-sm text-red-500">{saveError}</p>
-		{/if}
-
-		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
-			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)" data-testid="profile-progression-score">
-					{progression?.score ?? 0}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Score</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)" data-testid="profile-progression-rank">
-					{progression?.rank ?? '—'}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Rank</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div
-					class="text-xl font-bold text-(--accent)"
-					data-testid="profile-progression-achievements"
+			{#if families.length === 0}
+				<EmptyState
+					icon={ICONS.bolt}
+					title="No uploads yet"
+					message="You haven't uploaded any puzzles yet."
+					testId="my-puzzles-empty"
 				>
-					{progression?.achievementsUnlocked ?? 0}/{progression?.achievementsTotal ?? 9}
+					<a class="arcade-btn" href={resolve('/upload')}>Upload a puzzle</a>
+				</EmptyState>
+			{:else}
+				<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-[18px] xl:grid-cols-4">
+					{#each families as p (p.id)}
+						<PuzzleCard
+							family={p}
+							playableLinks={p.status === 'ready' && hasPlayableVariantIds(p)}
+						/>
+					{/each}
 				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Achievements</div>
-			</div>
-		</div>
-
-		<div class="mt-3 grid grid-cols-4 gap-3 text-center">
-			<div class="border border-(--border) bg-(--bg-1) p-3">
-				<div class="text-lg font-bold text-(--accent)" data-testid="profile-difficulty-easy">
-					{progression?.easyClears ?? 0}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Easy</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-3">
-				<div class="text-lg font-bold text-(--accent)" data-testid="profile-difficulty-normal">
-					{progression?.normalClears ?? 0}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Normal</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-3">
-				<div class="text-lg font-bold text-(--accent)" data-testid="profile-difficulty-hard">
-					{progression?.hardClears ?? 0}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Hard</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-3">
-				<div class="text-lg font-bold text-(--accent)" data-testid="profile-mastery-earned">
-					{progression?.masteryEarned ?? 0}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Mastery</div>
-			</div>
-		</div>
-
-		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
-			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-uploaded">
-					{profile.summary.puzzlesUploaded}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Uploaded</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-solved">
-					{profile.summary.puzzlesSolved}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Solved</div>
-			</div>
-			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-completions">
-					{profile.summary.totalCompletions}
-				</div>
-				<div class="text-xs tracking-wider text-(--text-2) uppercase">Completions</div>
-			</div>
-		</div>
-
-		<button
-			type="button"
-			class="mt-4 text-sm text-(--accent)"
-			onclick={() => (editing ? cancelEditing() : (editing = true))}
-		>
-			{editing ? 'Cancel' : 'Edit profile'}
-		</button>
-
-		<h2 class="mt-8 font-(--font-display) text-(--text-0)">My Puzzles</h2>
-		{#if families.length === 0}
-			<p class="text-sm text-(--text-2)">You haven't uploaded any puzzles yet.</p>
-		{:else}
-			<div class="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
-				{#each families as p (p.id)}
-					<PuzzleCard family={p} playableLinks={p.status === 'ready' && hasPlayableVariantIds(p)} />
-				{/each}
-			</div>
-			{#if puzzlesCursor !== undefined}
-				<button
-					type="button"
-					data-testid="load-more-puzzles"
-					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
-					onclick={loadMorePuzzles}
-					disabled={loadingMorePuzzles}
-				>
-					{loadingMorePuzzles ? 'Loading…' : 'Load more'}
-				</button>
+				{#if puzzlesCursor !== undefined}
+					<div class="flex justify-center">
+						<button
+							type="button"
+							data-testid="load-more-puzzles"
+							class="arcade-btn-ghost"
+							onclick={loadMorePuzzles}
+							disabled={loadingMorePuzzles}
+						>
+							{loadingMorePuzzles ? 'Loading…' : 'Load more'}
+						</button>
+					</div>
+				{/if}
 			{/if}
-		{/if}
-
-		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Puzzle Results</h2>
-		{#if stats.length === 0}
-			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
-		{:else}
-			<ul class="mt-3 divide-y divide-(--border)" data-testid="best-times-list">
-				{#each stats as s (`${s.familyId}-${s.difficulty}`)}
-					<li class="flex items-center justify-between gap-3 py-2 text-sm">
-						<div class="min-w-0">
-							{#if s.familyName}
-								<span class="truncate text-(--text-1)">{s.familyName}</span>
-							{:else}
-								<span class="truncate text-(--text-2)">{s.familyId}</span>
-							{/if}
-							<span class="ml-2 text-xs tracking-wider text-(--text-2) uppercase">
-								{s.difficulty}
-							</span>
-						</div>
-						<span class="shrink-0 text-xs text-(--text-2)">
-							{s.totalCompletions}×
-						</span>
-						<div class="shrink-0 text-right text-xs font-(--font-mono)">
-							{#if s.standardBestTimeSeconds !== null}
-								<div class="text-(--gold)">S {formatTime(s.standardBestTimeSeconds)}</div>
-							{/if}
-							{#if s.rotationBestTimeSeconds !== null}
-								<div class="text-(--accent)">R {formatTime(s.rotationBestTimeSeconds)}</div>
-							{/if}
-							{#if s.standardBestTimeSeconds === null && s.rotationBestTimeSeconds === null}
-								<span class="text-(--text-2)">No timed bests</span>
-							{/if}
-						</div>
-					</li>
-				{/each}
-			</ul>
-			{#if statsCursor !== undefined}
-				<button
-					type="button"
-					data-testid="load-more-stats"
-					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
-					onclick={loadMoreStats}
-					disabled={loadingMoreStats}
-				>
-					{loadingMoreStats ? 'Loading…' : 'Load more'}
-				</button>
-			{/if}
-		{/if}
-	</section>
+		</section>
+	</div>
 {/if}

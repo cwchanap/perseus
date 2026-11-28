@@ -1,10 +1,14 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
+
 	interface Props {
 		percent: number;
 		size?: number;
 		accent?: 'cyan' | 'magenta' | 'gold';
 		showValue?: boolean;
 		label: string;
+		/** Custom centre content; replaces the default percent value. */
+		children?: Snippet;
 	}
 
 	const accentColors = {
@@ -13,7 +17,7 @@
 		gold: 'var(--gold)'
 	} as const;
 
-	let { percent, size = 58, accent = 'cyan', showValue = true, label }: Props = $props();
+	let { percent, size = 58, accent = 'cyan', showValue = true, label, children }: Props = $props();
 
 	const clampedPercent = $derived(
 		Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0
@@ -34,7 +38,9 @@
 	style={ringStyle}
 >
 	<div class="progress-ring-inner">
-		{#if showValue}
+		{#if children}
+			{@render children()}
+		{:else if showValue}
 			<span data-testid="progress-ring-value" aria-hidden="true">{Math.round(clampedPercent)}</span>
 		{/if}
 	</div>
