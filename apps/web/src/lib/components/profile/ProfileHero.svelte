@@ -114,13 +114,15 @@
 		{:else}
 			<p class="arcade-kicker mb-1.5">Player profile</p>
 			<h1
-				class="truncate font-(family-name:--font-display) text-[1.5rem] leading-[1.15] font-black tracking-[0.03em]
+				class="font-(family-name:--font-display) text-[1.5rem] leading-[1.15] font-black tracking-[0.03em] [overflow-wrap:anywhere]
 				uppercase [text-shadow:0_2px_14px_rgba(0,0,0,0.6)] md:text-[2rem]"
 				data-testid="profile-name"
 			>
 				{profile.name}
 			</h1>
-			<p class="mt-1 truncate text-[1.05rem] font-medium text-(--text-1)">{profile.email}</p>
+			<p class="mt-1 text-[1.05rem] font-medium [overflow-wrap:anywhere] text-(--text-1)">
+				{profile.email}
+			</p>
 			<div class="mt-3.5 flex flex-wrap justify-center gap-2 md:justify-start">
 				<span class="meta-chip" data-testid="profile-join-date">
 					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
