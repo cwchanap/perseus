@@ -58,9 +58,11 @@
 						</span>
 						<div class="min-w-0">
 							{#if s.familyName}
-								<div class="truncate text-[1.1rem] font-bold">{s.familyName}</div>
+								<div class="text-[1.1rem] font-bold [overflow-wrap:anywhere]">{s.familyName}</div>
 							{:else}
-								<div class="truncate font-(family-name:--font-mono) text-[0.85rem] text-(--text-2)">
+								<div
+									class="font-(family-name:--font-mono) text-[0.85rem] [overflow-wrap:anywhere] text-(--text-2)"
+								>
 									{s.familyId}
 								</div>
 							{/if}
@@ -240,7 +242,7 @@
 		display: none;
 	}
 
-	@media (min-width: 768px) {
+	@media (min-width: 1024px) {
 		.results-row {
 			grid-template-areas: none;
 			grid-template-columns: minmax(0, 1fr) 150px 70px 118px 118px;
