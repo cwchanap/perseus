@@ -25,7 +25,7 @@
 		"hono": "^4.13.19"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^5.20261117.1",
+		"@cloudflare/workers-types": "^5.20261120.1",
 		"@eslint/compat": "^2.1.1",
 		"@eslint/js": "^10.0.1",
 		"@perseus/web": "workspace:*",
@@ -38,6 +38,6 @@
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.73.0",
 		"vitest": "^5.0.5",
-		"wrangler": "4.163.0"
+		"wrangler": "4.165.0"
 	}
 }
