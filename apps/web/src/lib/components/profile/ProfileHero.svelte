@@ -92,7 +92,6 @@
 					data-testid="display-name-input"
 					aria-label="Display name"
 					bind:value={displayName}
-					maxlength="80"
 					class="arcade-input md:max-w-[360px]"
 				/>
 				<div class="mt-3.5 flex flex-wrap items-center justify-center gap-2.5 md:justify-start">

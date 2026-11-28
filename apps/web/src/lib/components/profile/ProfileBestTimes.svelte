@@ -84,14 +84,18 @@
 						{:else}
 							{#if s.standardBestTimeSeconds !== null}
 								<span class="time-pill time-pill-standard">
-									<span class="time-tag">STD</span>{formatTime(s.standardBestTimeSeconds)}
+									<span class="time-tag" aria-hidden="true">STD</span><span class="sr-only"
+										>Standard best
+									</span>{formatTime(s.standardBestTimeSeconds)}
 								</span>
 							{:else}
 								<span class="no-time no-time-dash">—</span>
 							{/if}
 							{#if s.rotationBestTimeSeconds !== null}
 								<span class="time-pill time-pill-rotation">
-									<span class="time-tag">ROT</span>{formatTime(s.rotationBestTimeSeconds)}
+									<span class="time-tag" aria-hidden="true">ROT</span><span class="sr-only"
+										>Rotation best
+									</span>{formatTime(s.rotationBestTimeSeconds)}
 								</span>
 							{:else}
 								<span class="no-time no-time-dash">—</span>
