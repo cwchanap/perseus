@@ -63,6 +63,8 @@ describe('ProfileBestTimes', () => {
 		await expect.element(page.getByText('fam-raw')).toBeVisible();
 		await expect.element(page.getByText('Kyoto Alley')).toBeVisible();
 		await expect.element(page.getByText('No timed bests')).toBeInTheDocument();
+		await expect.element(page.getByText('No standard best', { exact: true })).toBeInTheDocument();
+		await expect.element(page.getByText('No rotation best', { exact: true })).toBeInTheDocument();
 	});
 
 	it('requests more rows and disables the button while loading', async () => {

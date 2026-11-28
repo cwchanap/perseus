@@ -89,7 +89,10 @@
 									</span>{formatTime(s.standardBestTimeSeconds)}
 								</span>
 							{:else}
-								<span class="no-time no-time-dash">—</span>
+								<span class="no-time no-time-dash"
+									><span aria-hidden="true">—</span><span class="sr-only">No standard best</span
+									></span
+								>
 							{/if}
 							{#if s.rotationBestTimeSeconds !== null}
 								<span class="time-pill time-pill-rotation">
@@ -98,7 +101,10 @@
 									</span>{formatTime(s.rotationBestTimeSeconds)}
 								</span>
 							{:else}
-								<span class="no-time no-time-dash">—</span>
+								<span class="no-time no-time-dash"
+									><span aria-hidden="true">—</span><span class="sr-only">No rotation best</span
+									></span
+								>
 							{/if}
 						{/if}
 					</div>
