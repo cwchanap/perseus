@@ -65,13 +65,16 @@
 								</div>
 							{/if}
 							<div class="difficulty difficulty-inline">
-								<span aria-hidden="true"><DifficultyGems difficulty={s.difficulty} /></span>
+								<span class="flex" aria-hidden="true"
+									><DifficultyGems difficulty={s.difficulty} /></span
+								>
 								<span class="capitalize">{s.difficulty}</span>
 							</div>
 						</div>
 					</div>
 					<div class="difficulty difficulty-column">
-						<span aria-hidden="true"><DifficultyGems difficulty={s.difficulty} /></span>
+						<span class="flex" aria-hidden="true"><DifficultyGems difficulty={s.difficulty} /></span
+						>
 						<span class="capitalize">{s.difficulty}</span>
 					</div>
 					<span class="plays">×{s.totalCompletions}</span>
@@ -191,6 +194,7 @@
 	.time-pill {
 		display: inline-flex;
 		align-items: center;
+		justify-self: start;
 		gap: 6px;
 		padding: 5px 10px;
 		border-radius: 12px;

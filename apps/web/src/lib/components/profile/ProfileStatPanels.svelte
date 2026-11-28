@@ -73,7 +73,7 @@
 		</div>
 		{#each clears as row (row.difficulty)}
 			<div class="clear-row" style={`--row-color: ${row.color}`}>
-				<span aria-hidden="true"><DifficultyGems difficulty={row.difficulty} /></span>
+				<span class="flex" aria-hidden="true"><DifficultyGems difficulty={row.difficulty} /></span>
 				<span class="text-base font-semibold text-(--text-1)">{row.label}</span>
 				<span class="clear-bar" aria-hidden="true">
 					<span style={`width: ${(row.count / maxClears) * 100}%`}></span>
