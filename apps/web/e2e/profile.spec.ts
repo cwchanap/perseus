@@ -129,7 +129,7 @@ test('authenticated profile shows identity, stats, puzzles, and best times', asy
 		page.locator('[data-testid="puzzle-card"]').filter({ hasText: 'Ocean Puzzle' })
 	).toBeVisible();
 
-	await expect(page.getByText('3×')).toBeVisible();
+	await expect(page.getByText('×3')).toBeVisible();
 	await expect(page.getByText('pz-1')).toHaveCount(0);
 });
 

@@ -17,11 +17,20 @@ const PROGRESSION_AWARDS = {
 	puzzleRank: 5
 };
 
+const THUMBNAIL_SVG =
+	'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
+	'<rect width="64" height="64" fill="#385" /></svg>';
+
 async function mockProgressionApis(
 	page: import('@playwright/test').Page,
 	familyId: string,
 	familyName: string
 ) {
+	// The profile best-times table shows a family thumbnail; serve a decodable
+	// image so the page diagnostics see no failed request.
+	await page.route(`**/api/puzzle-families/${familyId}/thumbnail**`, (route) =>
+		route.fulfill({ contentType: 'image/svg+xml', body: THUMBNAIL_SVG })
+	);
 	await page.route(`**/api/puzzle-families/${familyId}/leaderboard**`, (route) =>
 		route.fulfill({
 			json: {
