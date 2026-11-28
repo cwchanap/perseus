@@ -50,7 +50,9 @@
 			class="h-9 w-9 rounded-full border-2 border-(--border) border-t-(--accent)
 [box-shadow:0_0_20px_var(--accent-glow)] motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
 		></div>
-		<span class="text-xs font-(--font-mono) tracking-[0.25em] text-(--accent) uppercase">
+		<span
+			class="font-(family-name:--font-mono) text-xs tracking-[0.25em] text-(--accent) uppercase"
+		>
 			VERIFYING ACCESS…
 		</span>
 	</div>
@@ -62,7 +64,9 @@
 		role="status"
 		aria-live="polite"
 	>
-		<span class="text-xs font-(--font-mono) tracking-[0.25em] text-(--accent) uppercase">
+		<span
+			class="font-(family-name:--font-mono) text-xs tracking-[0.25em] text-(--accent) uppercase"
+		>
 			REDIRECTING…
 		</span>
 	</div>

@@ -236,6 +236,185 @@ body {
 	outline-offset: 3px;
 }
 
+.arcade-btn:disabled,
+.arcade-btn-ghost:disabled,
+.arcade-btn-danger:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+	transform: none;
+	filter: none;
+}
+
+/* ===== Shared page primitives ===== */
+
+/* Rounded content surface used for every card, list, and form panel. */
+.arcade-panel {
+	border: 1px solid var(--border);
+	border-radius: 22px;
+	background: var(--bg-1);
+	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+
+/* Featured neon card: profile player card, sign-in card, error card. */
+.arcade-panel-hero {
+	position: relative;
+	isolation: isolate;
+	overflow: hidden;
+	border: 1px solid var(--accent-dim);
+	border-radius: 26px;
+	background:
+		radial-gradient(circle at 0% 0%, rgba(255, 46, 166, 0.24), transparent 42%),
+		radial-gradient(circle at 100% 100%, rgba(0, 240, 255, 0.18), transparent 46%),
+		linear-gradient(110deg, rgba(21, 13, 51, 0.97), rgba(28, 20, 64, 0.9));
+	box-shadow:
+		0 14px 34px rgba(0, 0, 0, 0.5),
+		0 0 0 1px var(--accent-glow);
+}
+
+.arcade-panel-hero::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	background-image:
+		linear-gradient(rgba(58, 255, 255, 0.07) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(58, 255, 255, 0.07) 1px, transparent 1px);
+	background-size: 34px 34px;
+	mask-image: linear-gradient(100deg, transparent 35%, #000 100%);
+	pointer-events: none;
+}
+
+.arcade-kicker {
+	margin: 0;
+	color: var(--accent);
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+	letter-spacing: 0.28em;
+	text-transform: uppercase;
+}
+
+.arcade-page-title {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: clamp(1.5rem, 4vw, 2rem);
+	font-weight: 900;
+	letter-spacing: 0.04em;
+	line-height: 1.15;
+	text-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+	text-transform: uppercase;
+}
+
+.arcade-section-title {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: 1.15rem;
+	font-weight: 900;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.arcade-panel-title {
+	margin: 0;
+	color: var(--text-1);
+	font-family: var(--font-display);
+	font-size: 0.78rem;
+	font-weight: 700;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+}
+
+.arcade-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 9px;
+	border-radius: 999px;
+	background: var(--bg-2);
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+	letter-spacing: 0.08em;
+	white-space: nowrap;
+}
+
+/* Form fields */
+.arcade-label {
+	display: block;
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+}
+
+.arcade-input {
+	width: 100%;
+	padding: 0.7rem 0.9rem;
+	border: 1px solid var(--border-bright);
+	border-radius: 14px;
+	outline: none;
+	background: var(--bg-0);
+	color: var(--text-0);
+	font-family: var(--font-body);
+	font-size: 1.1rem;
+	font-weight: 600;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.arcade-input::placeholder {
+	color: var(--text-2);
+	font-weight: 500;
+}
+
+.arcade-input:focus {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 4px var(--accent-glow);
+}
+
+.arcade-input:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+select.arcade-input {
+	appearance: none;
+	padding-right: 2.5rem;
+	background-image:
+		linear-gradient(45deg, transparent 50%, var(--text-1) 50%),
+		linear-gradient(135deg, var(--text-1) 50%, transparent 50%);
+	background-position:
+		calc(100% - 20px) 52%,
+		calc(100% - 14px) 52%;
+	background-size: 6px 6px;
+	background-repeat: no-repeat;
+}
+
+/* Inline alerts */
+.arcade-alert {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 14px;
+	padding: 0.7rem 1rem;
+	border-radius: 14px;
+	font-size: 1rem;
+	font-weight: 600;
+}
+
+.arcade-alert-error {
+	border: 1px solid rgba(255, 46, 166, 0.45);
+	background: rgba(255, 46, 166, 0.1);
+	color: var(--hot);
+}
+
+.arcade-alert-success {
+	border: 1px solid rgba(0, 255, 136, 0.4);
+	background: rgba(0, 255, 136, 0.08);
+	color: var(--green);
+}
+
 /* Skeleton loading */
 .skeleton {
 	animation: skeleton-pulse 1.5s ease-in-out infinite;
